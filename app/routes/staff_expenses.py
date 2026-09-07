@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, render_template, session
 
+from app import csrf
 from app.repositories.expense_repository import ExpenseRepository
 from app.services.expense_service import ExpenseService
 from app.utils.auth import login_required
+from app.core.socketio_handlers import emit_expenses_update
 
 staff_expenses_bp = Blueprint("staff_expenses", __name__, url_prefix="/expenses-view")
 
@@ -29,6 +31,7 @@ def api_list_expenses() -> tuple:
 
 @staff_expenses_bp.route("/api/expenses", methods=["POST"])
 @login_required
+@csrf.exempt
 def api_create_expense() -> tuple:
     data = request.get_json(silent=True) or {}
     user_id = session.get("user_id")
@@ -48,4 +51,6 @@ def api_create_expense() -> tuple:
         expense_date=data.get("expense_date"),
         logged_by=user_id,
     )
+    if result.get("success"):
+        emit_expenses_update('create', result.get("data", {}))
     return jsonify(result), 201

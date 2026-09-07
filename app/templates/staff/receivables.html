@@ -52,7 +52,18 @@
             </tr>
           </thead>
           <tbody id="receivables-table-body">
-            <tr><td colspan="6" class="text-center text-muted py-3">Loading receivables...</td></tr>
+            {% for r in receivables %}
+            <tr>
+              <td>{{ r.customer_name }}</td>
+              <td>{{ r.customer_contact or '-' }}</td>
+              <td>₱{{ "%.2f"|format(r.amount_owed) }}</td>
+              <td>{{ r.due_date }}</td>
+              <td>{{ r.approved_by_staff or '-' }}</td>
+              <td>{{ 'Paid' if r.paid else 'Unpaid' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-3">No receivables found.</td></tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>

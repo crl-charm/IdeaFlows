@@ -13,7 +13,7 @@ class PayableRepository:
         return Payable.query.filter_by(id=payable_id).first()
 
     def list_all(self) -> list[Payable]:
-        return Payable.query.order_by(Payable.due_date.asc()).all()
+        return Payable.query.order_by(Payable.incurred_date.desc(), Payable.id.desc()).all()
 
     def create(
         self,

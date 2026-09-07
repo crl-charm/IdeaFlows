@@ -8,8 +8,11 @@
   <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
       <h3 class="mb-0">Expenses Log</h3>
-      <small id="expense-count" class="text-muted">0 records</small>
+      <small id="expense-count" class="text-muted">{{ expenses|length }} record(s)</small>
     </div>
+    <button class="btn btn-warning shadow-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#addExpenseModal">
+      <i class="bi bi-plus-lg me-1"></i> Log Expense
+    </button>
   </div>
 
   <!-- Desktop Table View -->
@@ -30,6 +33,17 @@
             </tr>
           </thead>
           <tbody id="expenses-table-body">
+            {% for exp in expenses %}
+            <tr>
+              <td><span class="badge bg-secondary">{{ exp.category }}</span></td>
+              <td>{{ exp.description }}</td>
+              <td class="fw-semibold">₱{{ "%.2f"|format(exp.amount) }}</td>
+              <td>{{ exp.expense_date }}</td>
+              <td>{{ exp.logged_by or exp.logged_by_username or 'Staff' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">No expenses recorded.</td></tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -39,6 +53,55 @@
   <!-- Mobile Card View -->
   <div class="d-md-none" id="expenses-card-container">
     <p class="text-center text-muted py-4">Loading...</p>
+  </div>
+</div>
+
+<!-- Add Expense Modal (Staff - Log Only) -->
+<div class="modal fade" id="addExpenseModal" tabindex="-1" aria-labelledby="addExpenseModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addExpenseModalLabel">
+          <i class="bi bi-receipt me-2 text-warning"></i>Log Expense
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="addExpenseForm" onsubmit="event.preventDefault(); createExpense();">
+          <div class="mb-3">
+            <label class="form-label fw-semibold" for="expenseCategory">Category <span class="text-danger">*</span></label>
+            <select id="expenseCategory" class="form-select" required>
+              <option value="">Select category...</option>
+              {% for cat in categories %}
+              <option value="{{ cat }}">{{ cat|capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" for="expenseDescription">Description <span class="text-danger">*</span></label>
+            <textarea id="expenseDescription" class="form-control" rows="3" placeholder="Details about this expense..." required></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" for="expenseAmount">Amount (₱) <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text">₱</span>
+              <input type="number" id="expenseAmount" class="form-control" step="0.01" min="0.01" placeholder="0.00" required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" for="expenseDate">Expense Date <span class="text-danger">*</span></label>
+            <input type="date" id="expenseDate" class="form-control" required>
+          </div>
+          <div class="modal-footer px-0 pb-0 pt-3">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-warning fw-semibold" id="saveExpenseBtn">
+              <span class="spinner-border spinner-border-sm me-1 d-none" id="saveExpenseSpinner"></span>
+              Log Expense
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -58,100 +121,226 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   loadExpenses();
+
+  const modalEl = document.getElementById('addExpenseModal');
+  if (modalEl) {
+    modalEl.addEventListener('show.bs.modal', function() {
+      const today = new Date().toISOString().split('T')[0];
+      const dateInput = document.getElementById('expenseDate');
+      if (dateInput && !dateInput.value) {
+        dateInput.value = today;
+      }
+    });
+  }
+
+  // Socket.IO for real-time live synchronization
+  if (typeof io !== 'undefined') {
+    try {
+      const socket = io();
+      socket.on('expenses_update', function(data) {
+        loadExpenses();
+      });
+    } catch (e) {
+      console.warn('Socket connection note:', e);
+    }
+  }
 });
 
 function loadExpenses() {
-  fetch('/expenses-view/api/expenses').then(r => r.json()).then(data => {
-    if (data.success) {
-      const today = new Date().toISOString().split('T')[0];
-      const expensesByDate = {};
-      
-      // Group by date
-      data.data.forEach(exp => {
-        const date = exp.expense_date;
-        if (!expensesByDate[date]) {
-          expensesByDate[date] = [];
-        }
-        expensesByDate[date].push(exp);
-      });
-
-      // Desktop table
-      const tbody = document.getElementById('expenses-table-body');
-      tbody.innerHTML = '';
-      data.data.forEach(exp => {
-        const isToday = exp.expense_date === today;
-        const rowClass = isToday ? 'today-expense' : '';
-        tbody.innerHTML += `
-          <tr class="${rowClass}">
-            <td>${exp.category}</td>
-            <td>${exp.description}</td>
-            <td>₱${exp.amount.toFixed(2)}</td>
-            <td>${exp.expense_date}</td>
-            <td>${exp.logged_by_username || 'Unknown'}</td>
-          </tr>
-        `;
-      });
-
-      // Mobile cards
-      const cardContainer = document.getElementById('expenses-card-container');
-      document.getElementById('expense-count').innerText = `${data.data.length} record(s)`;
-
-      if (!data.data.length) {
-        cardContainer.innerHTML = `<p class="text-center text-muted py-4">No expenses recorded.</p>`;
-        return;
-      }
-
-      let html = '';
-      const sortedDates = Object.keys(expensesByDate).sort((a, b) => b.localeCompare(a));
-
-      for (const date of sortedDates) {
-        const expenses = expensesByDate[date];
-        const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { 
-          weekday: 'short', 
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric' 
+  fetch('/expenses-view/api/expenses')
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        const today = new Date().toISOString().split('T')[0];
+        const expensesByDate = {};
+        
+        // Group by date
+        data.data.forEach(exp => {
+          const date = exp.expense_date;
+          if (!expensesByDate[date]) {
+            expensesByDate[date] = [];
+          }
+          expensesByDate[date].push(exp);
         });
 
-        html += `
-          <div class="mb-3">
-            <h6 class="text-muted fw-semibold mb-2 border-bottom pb-1">${dateLabel}</h6>
-            <div class="d-flex flex-column gap-2">
-              ${expenses.map(exp => {
-                const isToday = exp.expense_date === today;
-                const highlightClass = isToday ? 'border-warning' : '';
-                return `
-                  <div class="record-card ${highlightClass}">
-                    <div class="record-card-header">
-                      <div>
-                        <div class="record-card-title">${exp.category}</div>
-                        <div class="record-card-subtitle">${exp.description}</div>
+        // Desktop table
+        const tbody = document.getElementById('expenses-table-body');
+        tbody.innerHTML = '';
+        data.data.forEach(exp => {
+          const isToday = exp.expense_date === today;
+          const rowClass = isToday ? 'today-expense' : '';
+          tbody.innerHTML += `
+            <tr class="${rowClass}">
+              <td><span class="badge bg-secondary">${exp.category}</span></td>
+              <td>${escapeHTML(exp.description || '')}</td>
+              <td class="fw-semibold">₱${parseFloat(exp.amount || 0).toFixed(2)}</td>
+              <td>${exp.expense_date}</td>
+              <td>${escapeHTML(exp.logged_by || exp.logged_by_username || 'Staff')}</td>
+            </tr>
+          `;
+        });
+
+        // Mobile cards
+        const cardContainer = document.getElementById('expenses-card-container');
+        document.getElementById('expense-count').innerText = `${data.data.length} record(s)`;
+
+        if (!data.data.length) {
+          cardContainer.innerHTML = `<p class="text-center text-muted py-4">No expenses recorded.</p>`;
+          return;
+        }
+
+        let html = '';
+        const sortedDates = Object.keys(expensesByDate).sort((a, b) => b.localeCompare(a));
+
+        for (const date of sortedDates) {
+          const expenses = expensesByDate[date];
+          const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+
+          html += `
+            <div class="mb-3">
+              <h6 class="text-muted fw-semibold mb-2 border-bottom pb-1">${dateLabel}</h6>
+              <div class="d-flex flex-column gap-2">
+                ${expenses.map(exp => {
+                  const isToday = exp.expense_date === today;
+                  const highlightClass = isToday ? 'border-warning' : '';
+                  return `
+                    <div class="record-card ${highlightClass}">
+                      <div class="record-card-header">
+                        <div>
+                          <div class="record-card-title text-capitalize">${escapeHTML(exp.category || '')}</div>
+                          <div class="record-card-subtitle">${escapeHTML(exp.description || '')}</div>
+                        </div>
+                      </div>
+                      <div class="record-card-body">
+                        <div class="record-card-row">
+                          <span class="record-card-label">Logged By:</span>
+                          <span class="record-card-value">${escapeHTML(exp.logged_by || exp.logged_by_username || 'Staff')}</span>
+                        </div>
+                        <div class="record-card-row">
+                          <span class="record-card-label">Date:</span>
+                          <span class="record-card-value">${exp.expense_date}</span>
+                        </div>
+                      </div>
+                      <div class="record-card-footer">
+                        <span class="record-card-total">₱${parseFloat(exp.amount || 0).toFixed(2)}</span>
                       </div>
                     </div>
-                    <div class="record-card-body">
-                      <div class="record-card-row">
-                        <span class="record-card-label">Logged By:</span>
-                        <span class="record-card-value">${exp.logged_by_username || 'Unknown'}</span>
-                      </div>
-                      <div class="record-card-row">
-                        <span class="record-card-label">Date:</span>
-                        <span class="record-card-value">${exp.expense_date}</span>
-                      </div>
-                    </div>
-                    <div class="record-card-footer">
-                      <span class="record-card-total">₱${exp.amount.toFixed(2)}</span>
-                    </div>
-                  </div>
-                `;
-              }).join('')}
+                  `;
+                }).join('')}
+              </div>
             </div>
-          </div>
-        `;
+          `;
+        }
+
+        cardContainer.innerHTML = html;
+      }
+    })
+    .catch(err => {
+      console.error('Error loading expenses:', err);
+    });
+}
+
+function createExpense() {
+  const category = document.getElementById('expenseCategory').value.trim();
+  const description = document.getElementById('expenseDescription').value.trim();
+  const amountVal = document.getElementById('expenseAmount').value;
+  const expenseDate = document.getElementById('expenseDate').value;
+  const saveBtn = document.getElementById('saveExpenseBtn');
+  const spinner = document.getElementById('saveExpenseSpinner');
+
+  if (!category || !description || !amountVal || !expenseDate) {
+    if (typeof showToast === 'function') {
+      showToast('Please fill in all required fields.', 'warning');
+    } else {
+      alert('Please fill in all required fields.');
+    }
+    return;
+  }
+
+  const amount = parseFloat(amountVal);
+  if (isNaN(amount) || amount <= 0) {
+    if (typeof showToast === 'function') {
+      showToast('Please enter a valid amount greater than 0.', 'warning');
+    } else {
+      alert('Please enter a valid amount greater than 0.');
+    }
+    return;
+  }
+
+  saveBtn.disabled = true;
+  spinner.classList.remove('d-none');
+
+  fetch('/expenses-view/api/expenses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      category: category,
+      description: description,
+      amount: amount,
+      expense_date: expenseDate
+    })
+  })
+  .then(res => res.json().then(data => ({ status: res.status, body: data })))
+  .then(({ status, body }) => {
+    saveBtn.disabled = false;
+    spinner.classList.add('d-none');
+
+    if (status === 201 && (body.success !== false)) {
+      if (typeof showToast === 'function') {
+        showToast('✓ Expense logged successfully!', 'success');
       }
 
-      cardContainer.innerHTML = html;
+      // Close modal
+      const modalEl = document.getElementById('addExpenseModal');
+      const modalInstance = bootstrap.Modal.getInstance(modalEl);
+      if (modalInstance) {
+        modalInstance.hide();
+      }
+
+      // Reset form
+      document.getElementById('addExpenseForm').reset();
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('expenseDate').value = today;
+
+      // Reload expenses list
+      loadExpenses();
+    } else {
+      const errMsg = body.error || 'Failed to log expense.';
+      if (typeof showToast === 'function') {
+        showToast(errMsg, 'error');
+      } else {
+        alert(errMsg);
+      }
+    }
+  })
+  .catch(err => {
+    saveBtn.disabled = false;
+    spinner.classList.add('d-none');
+    console.error('Error logging expense:', err);
+    if (typeof showToast === 'function') {
+      showToast('Network error while logging expense.', 'error');
+    } else {
+      alert('Network error while logging expense.');
     }
   });
+}
+
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 </script>
 {% endblock %}

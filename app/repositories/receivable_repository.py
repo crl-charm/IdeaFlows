@@ -13,7 +13,7 @@ class ReceivableRepository:
         return Receivable.query.filter_by(id=receivable_id).first()
 
     def list_all(self) -> list[Receivable]:
-        return Receivable.query.order_by(Receivable.due_date).all()
+        return Receivable.query.order_by(Receivable.incurred_date.desc(), Receivable.id.desc()).all()
 
     def list_unpaid(self) -> list[Receivable]:
         return Receivable.query.filter(
