@@ -1,10 +1,11 @@
-import os
+# eventlet.monkey_patch() MUST be the very first statement before any other
+# import, including 'import os'. Even importing os creates threading.RLock
+# objects that eventlet cannot re-green after the fact, causing
+# RuntimeError: greenlet is being finalized.
+import eventlet
+eventlet.monkey_patch()
 
-try:
-    import eventlet
-    eventlet.monkey_patch()
-except Exception:
-    pass
+import os
 
 from app import create_app, db, socketio
 from app.db.migrator import SchemaMigrator
@@ -22,7 +23,8 @@ if not os.environ.get("VERCEL"):
 
 
 if __name__ == "__main__":
-    # Disable debug mode in production
+    # In production use: gunicorn --worker-class eventlet -w 1 wsgi:application
+    # Direct python app.py is for development only.
     debug_mode = os.environ.get('FLASK_ENV') != 'production'
     socketio.run(app, host="0.0.0.0", port=5000, debug=debug_mode, allow_unsafe_werkzeug=True)
 

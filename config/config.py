@@ -1,6 +1,20 @@
 import os
 import secrets
 
+# Load .env configuration if present
+try:
+    from dotenv import load_dotenv
+    for _env_file in [
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        "/var/www/pos/.env",
+        "/var/www/ideahub/.env",
+        ".env",
+    ]:
+        if os.path.exists(_env_file):
+            load_dotenv(_env_file, override=False)
+except ImportError:
+    pass
+
 class Config:
     FLASK_ENV = os.environ.get("FLASK_ENV", "development")
     DEBUG = FLASK_ENV != "production"
@@ -23,7 +37,28 @@ class Config:
     SECRET_KEY = _secret_key
 
     # Database
-    _raw_db_uri = os.environ.get("DATABASE_URL") or "mysql+pymysql://root:@localhost/ideahub_pos"
+    from urllib.parse import urlsplit, urlunsplit
+
+    _input_db_uri = os.environ.get("DATABASE_URL") or "mysql+pymysql://pos_user:@localhost/pos_db"
+    try:
+        _parsed = urlsplit(_input_db_uri)
+        _pwd = (
+            _parsed.password
+            or os.environ.get("DB_PASSWORD")
+            or os.environ.get("DATABASE_PASSWORD")
+            or os.environ.get("MYSQL_PASSWORD")
+            or "k8F9vP2xM7wQ1tZ4_9B!"
+        )
+        _hostname = _parsed.hostname or "localhost"
+        _port_str = f":{_parsed.port}" if _parsed.port else ""
+        _netloc = f"pos_user:{_pwd}@{_hostname}{_port_str}"
+        _scheme = _parsed.scheme or "mysql+pymysql"
+        _path = "/pos_db"
+        _raw_db_uri = urlunsplit((_scheme, _netloc, _path, _parsed.query, _parsed.fragment))
+    except Exception:
+        _pwd = os.environ.get("DB_PASSWORD") or "k8F9vP2xM7wQ1tZ4_9B!"
+        _raw_db_uri = f"mysql+pymysql://pos_user:{_pwd}@localhost/pos_db"
+
     # PyMySQL does not support ssl_mode/ssl-mode in query string directly; handle SSL via connect_args
     _needs_ssl = "aivencloud.com" in _raw_db_uri or "ssl_mode" in _raw_db_uri or "ssl-mode" in _raw_db_uri
     if "?" in _raw_db_uri and ("ssl_mode" in _raw_db_uri or "ssl-mode" in _raw_db_uri):
