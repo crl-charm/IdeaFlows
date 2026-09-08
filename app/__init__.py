@@ -1,4 +1,4 @@
-from flask import Flask, request, g, render_template
+from flask import Flask, request, g, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from app.utils.auth import register_admin_blueprint, enforce_admin_access, is_admin_path
 from flask_socketio import SocketIO
@@ -34,6 +34,10 @@ def create_app():
     # Initialize extensions
     db.init_app(app)
     socketio.init_app(app)
+
+    # Trust single-hop Nginx reverse proxy for accurate client IP & scheme (outermost WSGI wrapper)
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     
     # CSRF exemptions (documented):
     # - POST /api/login (auth_routes @csrf.exempt)
@@ -64,6 +68,10 @@ def create_app():
 
     # Register security middleware
     register_security_middleware(app)
+
+    # Register bot defense, honeypot traps, and scraper countermeasures
+    from app.core.bot_defense import register_bot_defense
+    register_bot_defense(app)
 
     # -------------------------------------------------------------------------
     # ROUTE & CONTROLLER BLUEPRINT REGISTRATIONS (Modularized by Domain)
@@ -139,6 +147,10 @@ def create_app():
 
     # Import Socket.IO handlers to register event handlers
     from app.core import socketio_handlers
+
+    @app.route("/robots.txt")
+    def robots_txt():
+        return send_from_directory(static_folder, "robots.txt", mimetype="text/plain")
 
     @app.route("/")
     def home():

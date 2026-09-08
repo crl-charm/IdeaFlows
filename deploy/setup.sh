@@ -165,6 +165,12 @@ cp "${APP_DIR}/deploy/nginx.conf" "${NGINX_AVAILABLE}"
 nginx -t && systemctl reload nginx
 info "Nginx updated to HTTPS config."
 
+section "Step 14: Anti-DDoS, Rate Limiting & Bot Scraping Defense"
+if [ -f "${APP_DIR}/deploy/setup_ddos_bot_defense.sh" ]; then
+    bash "${APP_DIR}/deploy/setup_ddos_bot_defense.sh"
+    info "Anti-DDoS & Fail2ban configured."
+fi
+
 section "✅ Setup Complete!"
 echo ""
 echo "  App URL:      https://idea-flows.online"

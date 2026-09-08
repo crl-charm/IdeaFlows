@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, jsonify, session, redirect
 from app.models import Admin, User, StaffAttendance
 from app import db, limiter, csrf
+from app.core.bot_defense import get_login_rate_limit_key
 from datetime import datetime
 import logging
 from app.core.socketio_handlers import emit_staff_status_change
@@ -68,7 +69,7 @@ def login_page():
 
 
 @bp.route("/api/login", methods=["POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("10 per minute", key_func=get_login_rate_limit_key)
 @csrf.exempt
 def login_api():
     """Secure login with rate limiting and account lockout"""

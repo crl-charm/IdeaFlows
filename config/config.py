@@ -98,3 +98,15 @@ class Config:
     MAX_LOGIN_ATTEMPTS = 5
     LOCKOUT_DURATION = 900  # 15 minutes
 
+    # Bot Defense & Honeypot Configuration
+    # Uses HONEYPOT_SECRET_PATH from env if provided; otherwise derives a stable
+    # pseudorandom route from SECRET_KEY hash so it is never a predictable hardcoded string.
+    _hp_env = os.environ.get("HONEYPOT_SECRET_PATH")
+    if _hp_env:
+        HONEYPOT_SECRET_PATH = _hp_env if _hp_env.startswith("/") else f"/{_hp_env}"
+    else:
+        import hashlib
+        _hp_token = hashlib.sha256((SECRET_KEY + "honeypot_seed").encode("utf-8")).hexdigest()[:16]
+        HONEYPOT_SECRET_PATH = f"/_trap_{_hp_token}"
+
+
