@@ -26,21 +26,22 @@ class SchemaMigrator:
             db.session.commit()
             
             # Safe MySQL column modifications to support decimal stock
-            try:
-                db.session.execute(text("ALTER TABLE inventory_items MODIFY COLUMN stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00"))
-                db.session.execute(text("ALTER TABLE inventory_logs MODIFY COLUMN change_qty DECIMAL(10,2) NOT NULL"))
-                db.session.commit()
-            except Exception as e:
-                db.session.rollback()
-                print(f"⚠ Database column modification failed/skipped (possibly SQLite or already modified): {e}")
+            if db.engine.dialect.name == "mysql":
+                try:
+                    db.session.execute(text("ALTER TABLE inventory_items MODIFY COLUMN stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00"))
+                    db.session.execute(text("ALTER TABLE inventory_logs MODIFY COLUMN change_qty DECIMAL(10,2) NOT NULL"))
+                    db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"[WARNING] Database column modification failed/skipped: {e}")
         except Exception as e:
-            print(f"⚠ Database migration skipped (database unavailable): {e}")
+            print(f"[WARNING] Database migration skipped (database unavailable): {e}")
             return
 
         try:
             inspector = inspect(db.engine)
         except Exception as e:
-            print(f"⚠ Database migration inspector failed: {e}")
+            print(f"[WARNING] Database migration inspector failed: {e}")
             return
 
         checks = [
@@ -174,7 +175,7 @@ class SchemaMigrator:
                 table_columns[table_name].add(column_name)
             except Exception as e:
                 db.session.rollback()
-                print(f"⚠ Column {column_name} on {table_name} skipped/failed: {e}")
+                print(f"[WARNING] Column {column_name} on {table_name} skipped/failed: {e}")
 
         self._ensure_indexes(db, inspector)
 
