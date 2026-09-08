@@ -1,0 +1,51 @@
+# ============================================================
+# IdeaHub — systemd service unit
+# Manages the gunicorn process: auto-start on boot, auto-restart on crash.
+#
+# Usage:
+#   sudo cp deploy/ideahub.service /etc/systemd/system/ideahub.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ideahub
+#   sudo systemctl start ideahub
+#   sudo systemctl status ideahub
+# ============================================================
+
+[Unit]
+Description=IdeaHub POS — Gunicorn + Flask-SocketIO
+# Wait for network and MySQL to be ready before starting
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+# Run as a dedicated non-root user (created during setup)
+User=ideahub
+Group=www-data
+WorkingDirectory=/var/www/ideahub
+
+# Load all environment variables from .env file
+EnvironmentFile=/var/www/ideahub/.env
+
+# The gunicorn command:
+#   --worker-class eventlet  = required for Flask-SocketIO
+#   -w 1                     = eventlet requires exactly 1 worker
+#   --timeout 120            = kills hung workers after 2 minutes
+#   wsgi:application         = uses the socketio-wrapped WSGI callable
+ExecStart=/var/www/ideahub/.venv/bin/gunicorn \
+    --worker-class eventlet \
+    -w 1 \
+    --timeout 120 \
+    --bind 127.0.0.1:5000 \
+    --access-logfile /var/log/ideahub/access.log \
+    --error-logfile  /var/log/ideahub/error.log \
+    wsgi:application
+
+# Restart policy: always restart on crash, wait 5s between attempts
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

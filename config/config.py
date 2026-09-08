@@ -58,13 +58,18 @@ class Config:
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB max total request size
     UPLOAD_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB max per file
     ALLOWED_UPLOAD_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
-    UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'uploads', 'menu')
+    # On VPS, set UPLOAD_FOLDER=/var/www/ideahub/static/uploads/menu in .env
+    # Falls back to local static dir for development
+    UPLOAD_FOLDER = os.environ.get(
+        'UPLOAD_FOLDER',
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'uploads', 'menu')
+    )
 
     # Session Security
     SESSION_COOKIE_HTTPONLY = True
-    # Use Lax in development/local mode so cookies work over HTTP.
-    # Use None in production only when HTTPS is enabled and cross-site access is required.
-    SESSION_COOKIE_SAMESITE = 'Lax' if os.environ.get('FLASK_ENV') != 'production' else 'None'
+    # Lax works correctly when HTTPS termination is handled by Nginx (our VPS setup).
+    # Using 'None' would require Secure=True AND cross-site context — not needed here.
+    SESSION_COOKIE_SAMESITE = 'Lax'
     SESSION_COOKIE_SECURE = os.environ.get('FLASK_ENV') == 'production'
     PERMANENT_SESSION_LIFETIME = 7200  # 2 hours
 
@@ -73,7 +78,14 @@ class Config:
     RATELIMIT_STORAGE_URL = "memory://"
 
     # CORS Settings (restrictive)
-    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://localhost:5000,http://127.0.0.1:5000,http://192.168.68.106:5000').split(',')
+    # In production, CORS_ORIGINS env var must be set to your domain.
+    # Default below covers local dev; VPS .env sets: https://idea-flows.online,https://www.idea-flows.online
+    _default_cors = (
+        'https://idea-flows.online,https://www.idea-flows.online'
+        if FLASK_ENV == 'production'
+        else 'http://localhost:5000,http://127.0.0.1:5000'
+    )
+    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', _default_cors).split(',')
 
     # Password Policy
     PASSWORD_MIN_LENGTH = 12
