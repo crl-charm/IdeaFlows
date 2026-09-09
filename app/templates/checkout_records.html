@@ -41,6 +41,7 @@
         <option value="gcash">GCash</option>
         <option value="bdo">BDO</option>
         <option value="bpi">BPI</option>
+        <option value="queenbank">QueenBank</option>
       </select>
       <button class="btn btn-outline-secondary btn-sm py-2 w-100" onclick="clearFilters()">Clear</button>
     </div>
@@ -80,6 +81,8 @@ function paymentBadge(method) {
     return '<span class="badge bg-danger">BDO</span>';
   } else if (method === "bpi") {
     return '<span class="badge bg-warning text-dark">BPI</span>';
+  } else if (method === "queenbank") {
+    return '<span class="badge bg-warning text-dark">QueenBank</span>';
   }
   return '<span class="badge bg-success">Cash</span>';
 }
@@ -104,10 +107,12 @@ function renderPaymentSummary(records) {
   let gcashTotal = 0;
   let bdoTotal = 0;
   let bpiTotal = 0;
+  let queenbankTotal = 0;
   let cashCount = 0;
   let gcashCount = 0;
   let bdoCount = 0;
   let bpiCount = 0;
+  let queenbankCount = 0;
 
   for (const record of records) {
     if (record.payment_method === "gcash") {
@@ -119,6 +124,9 @@ function renderPaymentSummary(records) {
     } else if (record.payment_method === "bpi") {
       bpiTotal += record.total_bill;
       bpiCount += 1;
+    } else if (record.payment_method === "queenbank") {
+      queenbankTotal += record.total_bill;
+      queenbankCount += 1;
     } else {
       cashTotal += record.total_bill;
       cashCount += 1;
@@ -159,11 +167,19 @@ function renderPaymentSummary(records) {
         </div>
       </div>
     </div>
+    <div class="col-6 col-md-2">
+      <div class="card border-warning h-100 shadow-sm">
+        <div class="card-body py-2 px-3">
+          <small class="text-muted">QueenBank</small>
+          <div class="fw-bold">₱${queenbankTotal.toFixed(2)} <span class="text-muted fw-normal" style="font-size:0.75rem;">(${queenbankCount})</span></div>
+        </div>
+      </div>
+    </div>
     <div class="col-12 col-md-4">
       <div class="card border-dark h-100 shadow-sm">
         <div class="card-body py-2 px-3">
           <small class="text-muted">Grand Total</small>
-          <div class="fw-bold text-primary">₱${(cashTotal + gcashTotal + bdoTotal + bpiTotal).toFixed(2)} <span class="text-muted fw-normal" style="font-size:0.75rem;">(${records.length})</span></div>
+          <div class="fw-bold text-primary">₱${(cashTotal + gcashTotal + bdoTotal + bpiTotal + queenbankTotal).toFixed(2)} <span class="text-muted fw-normal" style="font-size:0.75rem;">(${records.length})</span></div>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
-VALID_PAYMENT_METHODS = frozenset({"cash", "gcash", "bdo", "bpi"})
+VALID_PAYMENT_METHODS = frozenset({"cash", "gcash", "bdo", "bpi", "queenbank"})
 
 
 def normalize_payment_method(value: str | None) -> str:
@@ -16,6 +16,8 @@ def payment_method_label(value: str | None) -> str:
         return "BDO"
     elif method == "bpi":
         return "BPI"
+    elif method == "queenbank":
+        return "QueenBank"
     return "Cash"
 
 

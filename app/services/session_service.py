@@ -5,6 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
+from app.utils.billing import calculate_time_bill
 from app.core.interfaces import Clock, Notifier
 from app.models import CustomerSession, Transaction
 from app.repositories.session_repository import SessionRepository
@@ -72,7 +73,7 @@ class SessionService:
             time_difference = now - sess.time_in
             minutes_used = time_difference.total_seconds() / 60
             rate = sess.space_type.rate_per_minute
-            current_bill = (Decimal(str(minutes_used)) * rate).quantize(Decimal("0.01"))
+            current_bill = calculate_time_bill(sess.space_type, minutes_used)
 
             linked = boardroom_by_session.get(sess.id)
             purpose = linked.purpose if linked and sess.space_type.name == "Boardroom" else None
@@ -102,7 +103,7 @@ class SessionService:
         now = self.clock.now()
         minutes_used = (now - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute
-        time_bill = (Decimal(str(minutes_used)) * rate).quantize(Decimal("0.01"))
+        time_bill = calculate_time_bill(sess.space_type, minutes_used)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
         total_bill = (time_bill + food_total).quantize(Decimal("0.01"))
 
@@ -128,7 +129,7 @@ class SessionService:
         time_out = self.clock.now()
         minutes_used = (time_out - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute
-        time_bill = (Decimal(str(minutes_used)) * rate).quantize(Decimal("0.01"))
+        time_bill = calculate_time_bill(sess.space_type, minutes_used)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
         total_bill = (time_bill + food_total).quantize(Decimal("0.01"))
 

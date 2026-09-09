@@ -7,6 +7,7 @@ from flask import Blueprint, request, render_template, session
 
 from app.dto.api_response import api_error, api_ok
 
+from app.utils.billing import calculate_time_bill
 from app import db, csrf
 from app.repositories.sales_repository import SalesRepository
 from app.services.daily_balance_export_service import DailyBalanceExportService
@@ -150,7 +151,7 @@ def api_today_stats() -> tuple:
     for sess in active_sessions:
         minutes_used = (now - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute if sess.space_type else Decimal("0.00")
-        time_bill = Decimal(str(max(minutes_used, 0.0))) * rate
+        time_bill = calculate_time_bill(sess.space_type, minutes_used)
         
         food_total = (
             db.session.query(func.coalesce(func.sum(OrderItem.quantity * OrderItem.price), 0))

@@ -163,6 +163,15 @@
         </div>
       </div>
     </div>
+    <div class="col-6 col-md-3">
+      <div class="card bg-light border-0 shadow-sm">
+        <div class="card-body p-3">
+          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total QueenBank (Checked Out)</small>
+          <div class="fs-6 fw-semibold text-dark mt-1">₱<span id="total-queenbank">0.00</span></div>
+          <small class="text-muted" style="font-size: 0.75rem;"><span id="queenbank-count">0</span> checkouts</small>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="card">
@@ -181,6 +190,7 @@
               <th>GCash</th>
               <th>BDO</th>
               <th>BPI</th>
+              <th>QueenBank</th>
               <th>Expenses</th>
               <th>Net</th>
               <th>Orders</th>
@@ -198,6 +208,7 @@
               <td>₱{{ "%.2f"|format(report.gcash_total or 0.0) }}</td>
               <td>₱{{ "%.2f"|format(report.bdo_total or 0.0) }}</td>
               <td>₱{{ "%.2f"|format(report.bpi_total or 0.0) }}</td>
+              <td>₱{{ "%.2f"|format(report.queenbank_total or 0.0) }}</td>
               <td>₱{{ "%.2f"|format(report.total_expenses) }}</td>
               <td>₱{{ "%.2f"|format(report.net_balance) }}</td>
               <td>{{ report.total_orders }}</td>
@@ -395,8 +406,8 @@ function renderFilteredReports() {
   tbody.innerHTML = '';
   mobileCards.innerHTML = '';
 
-  let sumRevenue = 0, sumExpenses = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0;
-  let cashCount = 0, gcashCount = 0, bdoCount = 0, bpiCount = 0;
+  let sumRevenue = 0, sumExpenses = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
+  let cashCount = 0, gcashCount = 0, bdoCount = 0, bpiCount = 0, queenbankCount = 0;
 
   filteredReports.forEach(report => {
     sumRevenue += report.total_revenue;
@@ -406,10 +417,12 @@ function renderFilteredReports() {
     sumGcash += report.gcash_total || 0;
     sumBdo += report.bdo_total || 0;
     sumBpi += report.bpi_total || 0;
+    sumQueenbank += report.queenbank_total || 0;
     cashCount += report.cash_count || 0;
     gcashCount += report.gcash_count || 0;
     bdoCount += report.bdo_count || 0;
     bpiCount += report.bpi_count || 0;
+    queenbankCount += report.queenbank_count || 0;
     
     // Desktop table row
     tbody.innerHTML += `
@@ -420,6 +433,7 @@ function renderFilteredReports() {
         <td>₱${(report.gcash_total || 0).toFixed(2)}</td>
         <td>₱${(report.bdo_total || 0).toFixed(2)}</td>
         <td>₱${(report.bpi_total || 0).toFixed(2)}</td>
+        <td>₱${(report.queenbank_total || 0).toFixed(2)}</td>
         <td>₱${report.total_expenses.toFixed(2)}</td>
         <td>₱${report.net_balance.toFixed(2)}</td>
         <td>${report.total_orders}</td>
@@ -476,6 +490,12 @@ function renderFilteredReports() {
             </div>
             <div class="col-6">
               <div class="metric-item">
+                <span class="metric-label">QueenBank</span>
+                <span class="metric-value">₱${(report.queenbank_total || 0).toFixed(2)}</span>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="metric-item">
                 <span class="metric-label">Net</span>
                 <span class="metric-value text-success">₱${report.net_balance.toFixed(2)}</span>
               </div>
@@ -494,7 +514,7 @@ function renderFilteredReports() {
   });
 
   if (filteredReports.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No reports found for this range.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted py-3">No reports found for this range.</td></tr>';
     mobileCards.innerHTML = '<p class="text-center text-muted py-4">No reports found for this range.</p>';
   }
 
@@ -505,10 +525,12 @@ function renderFilteredReports() {
   document.getElementById('total-gcash').textContent = sumGcash.toFixed(2);
   document.getElementById('total-bdo').textContent = sumBdo.toFixed(2);
   document.getElementById('total-bpi').textContent = sumBpi.toFixed(2);
+  document.getElementById('total-queenbank').textContent = sumQueenbank.toFixed(2);
   document.getElementById('cash-count').textContent = cashCount;
   document.getElementById('gcash-count').textContent = gcashCount;
   document.getElementById('bdo-count').textContent = bdoCount;
   document.getElementById('bpi-count').textContent = bpiCount;
+  document.getElementById('queenbank-count').textContent = queenbankCount;
 
   renderFilteredSoftBalances(startDate, endDate);
 }

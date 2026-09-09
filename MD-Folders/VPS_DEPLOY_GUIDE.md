@@ -44,7 +44,7 @@ This is the fastest path. The `deploy/setup.sh` script handles everything.
 ssh root@<YOUR-VPS-IP>
 
 # 2. Clone the project
-git clone https://github.com/<your-username>/vercelIdeahub.git /var/www/ideahub
+git clone <your-repository-url> /var/www/ideahub
 cd /var/www/ideahub
 
 # 3. Run the setup script
@@ -100,7 +100,7 @@ usermod -aG www-data ideahub
 
 ```bash
 mkdir -p /var/www/ideahub
-git clone https://github.com/<your-username>/vercelIdeahub.git /var/www/ideahub
+git clone <your-repository-url> /var/www/ideahub
 chown -R ideahub:www-data /var/www/ideahub
 ```
 

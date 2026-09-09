@@ -6,12 +6,11 @@ try:
     from dotenv import load_dotenv
     for _env_file in [
         os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
-        "/var/www/pos/.env",
         "/var/www/ideahub/.env",
         ".env",
     ]:
         if os.path.exists(_env_file):
-            load_dotenv(_env_file, override=True)
+            load_dotenv(_env_file, override=False)
             break
 except ImportError:
     pass
@@ -38,58 +37,28 @@ class Config:
     SECRET_KEY = _secret_key
 
     # Database
-    from urllib.parse import urlsplit, urlunsplit
-
     _input_db_uri = os.environ.get("DATABASE_URL", "").strip()
-    if _input_db_uri.startswith("sqlite") or (not _input_db_uri and FLASK_ENV != "production"):
-        if not _input_db_uri:
-            _raw_db_uri = f"sqlite:///{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'ideahub_local.db')}"
-        else:
-            _raw_db_uri = _input_db_uri
-        SQLALCHEMY_DATABASE_URI = _raw_db_uri
+    if not _input_db_uri and FLASK_ENV == "production":
+        raise RuntimeError(
+            "DATABASE_URL environment variable is required when FLASK_ENV=production"
+        )
+
+    if not _input_db_uri:
+        _input_db_uri = (
+            f"sqlite:///{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'ideahub_local.db')}"
+        )
+
+    SQLALCHEMY_DATABASE_URI = _input_db_uri
+    if _input_db_uri.startswith("sqlite"):
         SQLALCHEMY_ENGINE_OPTIONS = {}
     else:
-        if not _input_db_uri:
-            _input_db_uri = "mysql+pymysql://pos_user:@localhost/pos_db"
-        try:
-            _parsed = urlsplit(_input_db_uri)
-            _user = _parsed.username or "pos_user"
-            _pwd = (
-                _parsed.password
-                or os.environ.get("DB_PASSWORD")
-                or os.environ.get("DATABASE_PASSWORD")
-                or os.environ.get("MYSQL_PASSWORD")
-                or "k8F9vP2xM7wQ1tZ4_9B!"
-            )
-            _hostname = _parsed.hostname or "localhost"
-            _port_str = f":{_parsed.port}" if _parsed.port else ""
-            _netloc = f"{_user}:{_pwd}@{_hostname}{_port_str}"
-            _scheme = _parsed.scheme or "mysql+pymysql"
-            _path = _parsed.path or "/pos_db"
-            _raw_db_uri = urlunsplit((_scheme, _netloc, _path, _parsed.query, _parsed.fragment))
-        except Exception:
-            _pwd = os.environ.get("DB_PASSWORD") or "k8F9vP2xM7wQ1tZ4_9B!"
-            _raw_db_uri = f"mysql+pymysql://pos_user:{_pwd}@localhost/pos_db"
-
-        # PyMySQL does not support ssl_mode/ssl-mode in query string directly; handle SSL via connect_args
-        _needs_ssl = "aivencloud.com" in _raw_db_uri or "ssl_mode" in _raw_db_uri or "ssl-mode" in _raw_db_uri
-        if "?" in _raw_db_uri and ("ssl_mode" in _raw_db_uri or "ssl-mode" in _raw_db_uri):
-            _base_uri = _raw_db_uri.split("?")[0]
-            SQLALCHEMY_DATABASE_URI = _base_uri
-        else:
-            SQLALCHEMY_DATABASE_URI = _raw_db_uri
-
-        _engine_options = {
+        SQLALCHEMY_ENGINE_OPTIONS = {
             "pool_pre_ping": True,
             "pool_recycle": 280,
             "pool_timeout": 15,
             "pool_size": 20,
             "max_overflow": 10,
         }
-        if _needs_ssl:
-            _engine_options["connect_args"] = {"ssl": {}}
-
-        SQLALCHEMY_ENGINE_OPTIONS = _engine_options
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
