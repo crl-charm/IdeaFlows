@@ -12,6 +12,7 @@ from app.services.menu_service import MenuService
 from app.utils.auth import admin_required
 from app.utils.uploads import validate_and_save_image, delete_old_image
 from app.core.socketio_handlers import emit_menu_update
+from app.core.cache import get_or_set_json, invalidate_menu_cache
 from functools import wraps
 
 # Import CSRF protection from app module
@@ -28,7 +29,10 @@ logger = logging.getLogger(__name__)
 def get_valid_categories():
     try:
         from app.models.menu_category import MenuCategory
-        return [c.name for c in MenuCategory.query.order_by(MenuCategory.id).all()]
+        return get_or_set_json(
+            "menu:categories",
+            lambda: [c.name for c in MenuCategory.query.order_by(MenuCategory.id).all()],
+        )
     except Exception as e:
         logger.warning(f"Error fetching categories from DB: {e}")
         return ["Main Dish", "Snack", "Beverages"]
@@ -89,6 +93,7 @@ def api_create_category() -> tuple:
         new_cat = MenuCategory(name=name)
         db.session.add(new_cat)
         db.session.commit()
+        invalidate_menu_cache()
         
         emit_menu_update('create_category', {'name': name})
         

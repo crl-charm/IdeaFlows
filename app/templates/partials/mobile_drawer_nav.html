@@ -29,20 +29,9 @@
   <i class="bi bi-building me-2"></i>Boardroom
 </button>
 
-{% if session.get("role") in ["admin", "staff"] %}
+{% if session.get("role") == "staff" %}
 <div class="sidebar-section-label">Operations</div>
 
-{% if session.get("role") == "admin" %}
-<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/inventory">
-  <i class="bi bi-boxes me-2"></i>Inventory
-</button>
-<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/menu">
-  <i class="bi bi-menu-button-wide me-2"></i>Menu
-</button>
-<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/expenses">
-  <i class="bi bi-wallet2 me-2"></i>Expenses
-</button>
-{% else %}
 <button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/inventory">
   <i class="bi bi-boxes me-2"></i>Inventory
 </button>
@@ -52,18 +41,32 @@
 <button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/expenses-view">
   <i class="bi bi-wallet2 me-2"></i>Expenses
 </button>
-{% endif %}
 
-<button type="button" class="btn w-100 text-start mb-2 drawer-nav-btn nav-btn" data-href="{{ '/admin/receivables' if session.get('role') == 'admin' else '/receivables-view' }}">
+<button type="button" class="btn w-100 text-start mb-2 drawer-nav-btn nav-btn" data-href="/receivables-view">
   <i class="bi bi-people me-2"></i>Receivables
   <span class="debt-badge-drawer badge bg-danger ms-1" style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
 </button>
 {% endif %}
 
 {% if session.get("role") == "admin" %}
+<div class="sidebar-section-label">Management</div>
+<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/inventory">
+  <i class="bi bi-boxes me-2"></i>Inventory
+</button>
+<button type="button" class="btn w-100 text-start mb-2 drawer-nav-btn nav-btn" data-href="/admin/menu">
+  <i class="bi bi-menu-button-wide me-2"></i>Menu
+</button>
+
 <div class="sidebar-section-label">Finance</div>
 <button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/daily-balance">
   <i class="bi bi-cash-stack me-2"></i>Daily Balance
+</button>
+<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/expenses">
+  <i class="bi bi-wallet2 me-2"></i>Expenses
+</button>
+<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/receivables">
+  <i class="bi bi-people me-2"></i>Receivables
+  <span class="debt-badge-drawer badge bg-danger ms-1" style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
 </button>
 <button type="button" class="btn w-100 text-start mb-2 drawer-nav-btn nav-btn" data-href="/admin/payables">
   <i class="bi bi-card-checklist me-2"></i>Payables

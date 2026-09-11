@@ -16,6 +16,7 @@ openpyxl
 gunicorn
 eventlet
 flask-compress
+redis
 
 
 

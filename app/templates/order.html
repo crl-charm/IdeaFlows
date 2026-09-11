@@ -1016,48 +1016,41 @@ function removeFromCart(id) {
   renderCart();
 }
 
-function submitOrder() {
+async function submitOrder() {
   if (cart.length === 0) {
     showToast("Cart is empty!", "error");
     return;
   }
   const submitBtn = document.getElementById("submit-btn");
-  submitBtn.disabled = true;
-  submitBtn.innerText = "Placing Order...";
   const items = cart.map(item => ({
     menu_item_id: item.id,
     quantity: item.quantity
   }));
-  csrfFetch("/api/add-order", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, items: items })
-  })
-    .then(async res => {
-      let data;
-      try {
-        data = await res.json();
-      } catch (e) {
-        data = {};
-      }
-      if (!res.ok) {
-        throw new Error(data.message || data.error || "Unable to place order.");
-      }
-      return data;
-    })
-    .then(data => {
-      showToast("Order placed successfully! 🎉", "success");
-      cart = [];
-      renderCart();
+  try {
+    const data = await runButtonAction(submitBtn, {
+      label: "Placing order...",
+      slowLabel: "Still placing order..."
+    }, requestKey => fetchJSON("/api/add-order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": requestKey
+      },
+      body: JSON.stringify({ session_id: sessionId, items: items })
+    }));
+    if (!data) return;
+    showToast("Order placed successfully! 🎉", "success");
+    cart = [];
+    renderCart();
+    loadCurrentOrders();
+  } catch (err) {
+    if (err.data && err.data.duplicate) {
+      showToast("This order is already being processed. Current orders will refresh.", "info");
       loadCurrentOrders();
-      submitBtn.disabled = false;
-      submitBtn.innerText = "Place Order";
-    })
-    .catch(err => {
+    } else {
       showToast(err.message || "Failed to place order. Please try again.", "error");
-      submitBtn.disabled = false;
-      submitBtn.innerText = "Place Order";
-    });
+    }
+  }
 }
 
 function goBack() {

@@ -116,6 +116,6 @@ def register_bot_defense(app):
     def add_bot_prevention_headers(response):
         path = request.path or ""
         # The landing page can be indexed, all other internal POS / management routes are strictly noindex
-        if path != "/" and not path.startswith("/static/"):
+        if path != "/" and not path.startswith(("/static/", "/health/")):
             response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         return response

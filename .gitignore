@@ -16,6 +16,7 @@ htmlcov/
 
 # Runtime output
 *.log
+.flask_secret
 
 # Editor and operating-system files
 .idea/

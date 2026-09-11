@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, session as flask
 from app.utils.auth import login_required
 
 from app.core import get_notifier
+from app.core.idempotency import idempotent_request
 from app.repositories.order_repository import OrderRepository
 from app.services.order_service import OrderService
 
@@ -32,6 +33,7 @@ def get_menu():
 # ----------------------------------
 @order_bp.route("/api/add-order", methods=["POST"])
 @login_required
+@idempotent_request("add-order")
 def add_order():
 
     data = request.get_json()

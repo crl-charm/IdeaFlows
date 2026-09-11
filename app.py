@@ -1,29 +1,17 @@
-# eventlet.monkey_patch() MUST be the very first statement before any other
-# import, including 'import os'. Even importing os creates threading.RLock
-# objects that eventlet cannot re-green after the fact, causing
-# RuntimeError: greenlet is being finalized.
-import eventlet
-eventlet.monkey_patch()
-
 import os
 
-from app import create_app, db, socketio
-from app.db.migrator import SchemaMigrator
-from app.db.seeder import DatabaseSeeder
+from app import create_app, socketio
+from app.db.bootstrap import initialize_database
 
 app = create_app()
 
-try:
-    with app.app_context():
-        SchemaMigrator(db, app).run()
-        DatabaseSeeder(db, app).run()
-except Exception as err:
-    print(f"Startup migration warning: {err}")
+if app.config.get("AUTO_MIGRATE_ON_STARTUP", True):
+    initialize_database(app, strict=app.config.get("FLASK_ENV") == "production")
 
 
 if __name__ == "__main__":
-    # In production use: gunicorn --worker-class eventlet -w 1 wsgi:application
-    # Direct python app.py is for development only.
+    # Development uses Flask-SocketIO's threading mode. Production keeps its
+    # eventlet monkey patch isolated in wsgi.py for the current Gunicorn unit.
     debug_mode = os.environ.get('FLASK_ENV') != 'production'
     socketio.run(app, host="0.0.0.0", port=5000, debug=debug_mode, allow_unsafe_werkzeug=True)
 

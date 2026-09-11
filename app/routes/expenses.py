@@ -7,6 +7,7 @@ from app.repositories.expense_repository import ExpenseRepository
 from app.services.expense_service import ExpenseService
 from app.utils.auth import admin_required
 from app.core.socketio_handlers import emit_expenses_update
+from app.core.idempotency import idempotent_request
 
 expenses_bp = Blueprint("expenses", __name__, url_prefix="/admin/expenses")
 
@@ -32,6 +33,7 @@ def api_list_expenses() -> tuple:
 @expenses_bp.route("/api/expenses", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-expense")
 def api_create_expense() -> tuple:
     data = request.get_json()
     user_id = session.get("user_id")
@@ -39,10 +41,15 @@ def api_create_expense() -> tuple:
     if not user_id:
         return jsonify({"success": False, "error": "User session not found"}), 400
     
+    try:
+        amount = float(data.get("amount"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Invalid amount"}), 400
+
     result = _service.create(
         category=data.get("category"),
         description=data.get("description"),
-        amount=float(data.get("amount")),
+        amount=amount,
         expense_date=data.get("expense_date"),
         logged_by=user_id,
     )

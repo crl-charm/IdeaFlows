@@ -157,7 +157,7 @@
 
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" onclick="checkinCustomer()">Check In</button>
+        <button class="btn btn-primary" id="checkinCustomerBtn" onclick="checkinCustomer()">Check In</button>
       </div>
 
     </div>
@@ -217,7 +217,7 @@ function formatTime(seconds) {
 
 
 // CHECK-IN
-function checkinCustomer() {
+async function checkinCustomer() {
 
     let name = document.getElementById("customerName").value;
     let school = document.getElementById("school").value;
@@ -229,19 +229,26 @@ function checkinCustomer() {
         return;
     }
 
-    csrfFetch("/api/checkin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            customer_name: name,
-            school: school,
-            course: course,
-            number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
-            space_type_id: parseInt(spaceType)
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
+    const button = document.getElementById("checkinCustomerBtn");
+    try {
+        const data = await runButtonAction(button, {
+            label: "Checking in...",
+            slowLabel: "Still checking in..."
+        }, requestKey => fetchJSON("/api/checkin", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": requestKey
+            },
+            body: JSON.stringify({
+                customer_name: name,
+                school: school,
+                course: course,
+                number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
+                space_type_id: parseInt(spaceType)
+            })
+        }));
+        if (!data) return;
         if (data.error) {
             showToast(data.error, "error");
             return;
@@ -258,10 +265,14 @@ function checkinCustomer() {
         showToast("Customer checked in successfully!", "success");
         loadSessions();
         loadSpaceAvailability();
-    })
-    .catch(err => {
-        showToast("Failed to check in customer. Please try again.", "error");
-    });
+    } catch (err) {
+        if (err.data && err.data.duplicate) {
+            showToast("This check-in is already being processed. The list will refresh.", "info");
+            loadSessions();
+        } else {
+            showToast(err.message || "Failed to check in customer. Please try again.", "error");
+        }
+    }
 }
 
 function loadSpaceAvailability() {
@@ -487,15 +498,17 @@ function viewOrder(sessionId) {
                     checkoutUrl += `&amount_tendered=${encodeURIComponent(amountTendered)}`;
                 }
 
-                csrfFetch(
-                    checkoutUrl,
-                    {
+                const checkoutButton = document.getElementById("confirmCheckoutBtn");
+                try {
+                    const data = await runButtonAction(checkoutButton, {
+                        label: "Checking out...",
+                        slowLabel: "Still checking out..."
+                    }, requestKey => fetchJSON(checkoutUrl, {
                         method: "POST",
+                        headers: { "Idempotency-Key": requestKey },
                         body: checkoutData
-                    }
-                )
-                .then(res => res.json())
-                .then(data => {
+                    }));
+                    if (!data) return;
                     if (data.error) {
                         showToast(data.error, "error");
                         return;
@@ -508,10 +521,15 @@ function viewOrder(sessionId) {
                     }
                     showToast(successMsg, "success");
                     loadSessions();
-                })
-                .catch(err => {
-                    showToast("Failed to checkout customer. Please try again.", "error");
-                });
+                } catch (err) {
+                    if (err.data && err.data.duplicate) {
+                        showToast("This checkout is already being processed. The list will refresh.", "info");
+                        bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
+                        loadSessions();
+                    } else {
+                        showToast(err.message || "Failed to checkout customer. Please try again.", "error");
+                    }
+                }
             };
 
         })

@@ -8,11 +8,12 @@ from flask_limiter.util import get_remote_address
 from flask_cors import CORS
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 
 # Create database object
 db = SQLAlchemy()
 _sqlalchemy_db = db
-socketio = SocketIO(cors_allowed_origins="*")  # Will be overridden by CORS
+socketio = SocketIO()
 csrf = CSRFProtect()
 limiter = Limiter(key_func=get_remote_address)
 
@@ -33,11 +34,42 @@ def create_app():
 
     # Initialize extensions
     db.init_app(app)
-    socketio.init_app(app)
+
+    # Verify Redis before assigning it to request-critical extensions. Cache
+    # outages must not turn otherwise healthy pages into HTTP 500 responses.
+    redis_client = None
+    if app.config.get("REDIS_URL"):
+        try:
+            from redis import Redis
+            redis_client = Redis.from_url(
+                app.config["REDIS_URL"],
+                socket_connect_timeout=0.25,
+                socket_timeout=0.25,
+            )
+            redis_client.ping()
+        except Exception as exc:
+            app.extensions["redis_startup_error"] = str(exc)
+            app.config["SOCKETIO_MESSAGE_QUEUE"] = None
+            app.config["RATELIMIT_STORAGE_URI"] = "memory://"
+            app.config["RATELIMIT_STORAGE_URL"] = "memory://"
+            redis_client = None
+            app.logger.warning("Redis unavailable; using safe local fallbacks: %s", exc)
+
+    socketio.init_app(
+        app,
+        cors_allowed_origins=app.config["CORS_ORIGINS"],
+        message_queue=app.config.get("SOCKETIO_MESSAGE_QUEUE"),
+        async_mode=app.config["SOCKETIO_ASYNC_MODE"],
+    )
 
     # Trust single-hop Nginx reverse proxy for accurate client IP & scheme (outermost WSGI wrapper)
     from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=app.config["PROXY_FIX_X_FOR"],
+        x_proto=app.config["PROXY_FIX_X_PROTO"],
+        x_host=app.config["PROXY_FIX_X_HOST"],
+    )
     
     # CSRF exemptions (documented):
     # - POST /api/login (auth_routes @csrf.exempt)
@@ -53,6 +85,9 @@ def create_app():
     csrf.init_app(app)
     limiter.init_app(app)
 
+    if redis_client is not None:
+        app.extensions["redis_health"] = redis_client
+
     # Configure CORS restrictively
     CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
 
@@ -66,12 +101,20 @@ def create_app():
     # Configure logging
     configure_logging(app)
 
+    # Add request IDs/timing before other request middleware runs.
+    from app.core.observability import register_observability
+    register_observability(app)
+
     # Register security middleware
     register_security_middleware(app)
 
     # Register bot defense, honeypot traps, and scraper countermeasures
     from app.core.bot_defense import register_bot_defense
     register_bot_defense(app)
+
+    # Unauthenticated health probes for process managers and load balancers.
+    from app.core.health import health_bp
+    app.register_blueprint(health_bp)
 
     # -------------------------------------------------------------------------
     # ROUTE & CONTROLLER BLUEPRINT REGISTRATIONS (Modularized by Domain)
@@ -162,11 +205,19 @@ def create_app():
 def configure_logging(app):
     """Configure comprehensive logging for security and debugging"""
     handlers = [logging.StreamHandler()]
-    try:
-        log_dir = os.environ.get('UPLOAD_FOLDER', os.path.dirname(__file__))
-        handlers.append(logging.FileHandler(os.path.join(log_dir, 'app.log')))
-    except Exception:
-        pass
+    log_dir = app.config.get("LOG_DIR")
+    if log_dir:
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            handlers.append(
+                RotatingFileHandler(
+                    os.path.join(log_dir, "app.log"),
+                    maxBytes=app.config["LOG_MAX_BYTES"],
+                    backupCount=app.config["LOG_BACKUP_COUNT"],
+                )
+            )
+        except OSError:
+            app.logger.exception("Unable to configure the application log file")
 
     if not app.debug:
         logging.basicConfig(
@@ -177,15 +228,24 @@ def configure_logging(app):
 
         security_logger = logging.getLogger('security')
         security_logger.setLevel(logging.INFO)
-        try:
-            log_dir = os.environ.get('UPLOAD_FOLDER', os.path.dirname(__file__))
-            security_handler = logging.FileHandler(os.path.join(log_dir, 'security.log'))
-            security_handler.setFormatter(logging.Formatter(
-                '%(asctime)s - SECURITY - %(levelname)s - %(message)s'
-            ))
-            security_logger.addHandler(security_handler)
-        except Exception:
-            security_logger.addHandler(logging.StreamHandler())
+        if not any(getattr(handler, "_ideahub_security", False) for handler in security_logger.handlers):
+            try:
+                security_handler = (
+                    RotatingFileHandler(
+                        os.path.join(log_dir, "security.log"),
+                        maxBytes=app.config["LOG_MAX_BYTES"],
+                        backupCount=app.config["LOG_BACKUP_COUNT"],
+                    )
+                    if log_dir
+                    else logging.StreamHandler()
+                )
+                security_handler._ideahub_security = True
+                security_handler.setFormatter(logging.Formatter(
+                    '%(asctime)s - SECURITY - %(levelname)s - %(message)s'
+                ))
+                security_logger.addHandler(security_handler)
+            except OSError:
+                security_logger.addHandler(logging.StreamHandler())
     else:
         logging.basicConfig(
             level=logging.DEBUG,
@@ -224,9 +284,12 @@ def register_security_middleware(app):
         for header, value in security_headers.items():
             response.headers[header] = value
 
-        # Aggressive browser caching for static files and uploaded images
-        if request.path.startswith('/static/'):
+        # Uploaded media uses unique names and is safe to cache immutably. App
+        # CSS/JS keeps a shorter cache so deployments are not stuck for a year.
+        if request.path.startswith('/static/uploads/'):
             response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        elif request.path.startswith('/static/'):
+            response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
 
         return response
 
@@ -251,5 +314,3 @@ def register_security_middleware(app):
         if request.path.startswith('/api/'):
             return {'error': 'Forbidden'}, 403
         return render_template('403.html'), 403
-
-        

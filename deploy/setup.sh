@@ -32,6 +32,7 @@ apt-get update -qq
 apt-get install -y \
     python3 python3-pip python3-venv \
     mysql-server \
+    redis-server \
     nginx \
     certbot python3-certbot-nginx \
     git curl \
@@ -39,6 +40,7 @@ apt-get install -y \
     fonts-liberation \
     ufw
 info "System packages installed."
+systemctl enable --now redis-server
 
 section "Step 2: Create app user"
 if id "${APP_USER}" &>/dev/null; then
@@ -100,25 +102,32 @@ if [ -f "${ENV_FILE}" ]; then
     warn ".env already exists — skipping creation. Edit it manually if needed."
 else
     SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    INITIAL_ADMIN_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
     cat > "${ENV_FILE}" <<ENV
 FLASK_ENV=production
 SECRET_KEY=${SECRET_KEY}
 DATABASE_URL=mysql+pymysql://${DB_USER}:${DB_PASS}@localhost/${DB_NAME}
+INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_REQUIRED=true
 CORS_ORIGINS=https://idea-flows.online,https://www.idea-flows.online
 UPLOAD_FOLDER=${UPLOAD_DIR}
+LOG_DIR=${LOG_DIR}
+AUTO_MIGRATE_ON_STARTUP=false
 PORT=5000
 ENV
     chown "${APP_USER}:${APP_USER}" "${ENV_FILE}"
     chmod 600 "${ENV_FILE}"
     info ".env created at ${ENV_FILE} (SECRET_KEY auto-generated)"
+    warn "Initial admin password: ${INITIAL_ADMIN_PASSWORD}"
+    warn "Change it after first login, then remove INITIAL_ADMIN_PASSWORD from .env."
 fi
 
 section "Step 8: Run first-time DB migration + seed"
-warn "Starting app briefly to run migrations — it will be stopped immediately."
 sudo -u "${APP_USER}" bash -c "
     cd ${APP_DIR}
     set -a; source .env; set +a
-    timeout 30 .venv/bin/python app.py || true
+    .venv/bin/python -m app.db.run_migrations
 "
 info "Migration complete."
 

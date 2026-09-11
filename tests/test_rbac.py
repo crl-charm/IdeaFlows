@@ -104,3 +104,19 @@ class TestAdminRBAC:
         response = client.get("/daily-sales")
         assert response.status_code == 302
         assert "/admin/daily-balance" in response.headers.get("Location", "")
+
+    def test_admin_navigation_does_not_show_staff_operations(self, client):
+        _set_session(client, "admin")
+        response = client.get("/admin")
+
+        assert response.status_code == 200
+        assert b">Operations<" not in response.data
+        assert b">Management<" in response.data
+        assert b">Finance<" in response.data
+
+    def test_staff_navigation_keeps_operations(self, client):
+        _set_session(client, "staff")
+        response = client.get("/dashboard")
+
+        assert response.status_code == 200
+        assert b">Operations<" in response.data

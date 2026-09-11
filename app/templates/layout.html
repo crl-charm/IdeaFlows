@@ -407,29 +407,10 @@
         <i class="bi bi-building me-2"></i>Boardroom
       </button>
 
-      <!-- STAFF OPERATIONS (visible to all staff and admin) -->
-      {% if session.get("role") in ["admin", "staff"] %}
+      <!-- STAFF OPERATIONS -->
+      {% if session.get("role") == "staff" %}
       <div class="sidebar-section-label">Operations</div>
 
-      {% if session.get("role") == "admin" %}
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/inventory'">
-        <i class="bi bi-boxes me-2"></i>Inventory
-      </button>
-
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/menu'">
-        <i class="bi bi-menu-button-wide me-2"></i>Menu
-      </button>
-
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/expenses'">
-        <i class="bi bi-wallet2 me-2"></i>Expenses
-      </button>
-
-      <button class="btn w-100 text-start mb-2 sidebar-btn nav-btn" onclick="window.location.href='/admin/receivables'">
-        <i class="bi bi-people me-2"></i>Receivables
-        <span id="debt-badge" class="badge bg-danger ms-1"
-          style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
-      </button>
-      {% else %}
       <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/inventory'">
         <i class="bi bi-boxes me-2"></i>Inventory
       </button>
@@ -447,7 +428,6 @@
         <span id="debt-badge" class="badge bg-danger ms-1"
           style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
       </button>
-      {% endif %}
       {% endif %}
 
       {% if session.get("role") == "admin" %}
@@ -658,10 +638,11 @@
 
       const headers = new Headers(options.headers || {});
       const method = (options.method || 'GET').toUpperCase();
+      const isWrite = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method);
       const csrfToken = document.querySelector('meta[name="csrf-token"]');
       const token = csrfToken ? csrfToken.getAttribute('content') : '';
 
-      if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && token) {
+      if (isWrite && token) {
         headers.set('X-CSRFToken', token);
       }
 
@@ -675,7 +656,108 @@
         options.credentials = 'include';
       }
 
-      return fetch(url, options);
+      // Give older write buttons immediate feedback too. New critical actions
+      // use runButtonAction below for a specific label and idempotency key.
+      const active = document.activeElement;
+      const feedbackButton = isWrite && active && active.tagName === 'BUTTON' &&
+        !active.disabled && active.dataset.actionPending !== 'true' ? active : null;
+      let originalHTML = '';
+      if (feedbackButton) {
+        originalHTML = feedbackButton.innerHTML;
+        feedbackButton.disabled = true;
+        feedbackButton.setAttribute('aria-busy', 'true');
+        feedbackButton.dataset.fetchPending = 'true';
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        spinner.setAttribute('aria-hidden', 'true');
+        feedbackButton.replaceChildren(spinner, document.createTextNode('Processing...'));
+      }
+
+      return fetch(url, options).finally(function () {
+        if (!feedbackButton || feedbackButton.dataset.fetchPending !== 'true') return;
+        feedbackButton.innerHTML = originalHTML;
+        feedbackButton.disabled = false;
+        feedbackButton.removeAttribute('aria-busy');
+        delete feedbackButton.dataset.fetchPending;
+      });
+    };
+
+    /** Create a unique key so the server can recognize a retried write. */
+    window.createIdempotencyKey = function () {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    };
+
+    /**
+     * Run one button action at a time and always restore its visual state.
+     * The slow-message reassures users without cancelling a request that may
+     * already have committed on the server.
+     */
+    window.runButtonAction = async function (button, options, action) {
+      options = options || {};
+      if (!button || button.dataset.actionPending === 'true') return undefined;
+
+      const originalHTML = button.innerHTML;
+      const originalDisabled = button.disabled;
+      const pendingLabel = options.label || 'Processing...';
+      const slowLabel = options.slowLabel || 'Still working...';
+      button.dataset.actionPending = 'true';
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+
+      function renderPending(label) {
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        spinner.setAttribute('aria-hidden', 'true');
+        button.replaceChildren(spinner, document.createTextNode(label));
+      }
+
+      renderPending(pendingLabel);
+      const slowTimer = window.setTimeout(function () {
+        if (button.dataset.actionPending === 'true') renderPending(slowLabel);
+      }, Number(options.slowAfterMs) || 4000);
+
+      const requestKey = button.dataset.retryRequestKey || window.createIdempotencyKey();
+      try {
+        const result = await action(requestKey);
+        delete button.dataset.retryRequestKey;
+        return result;
+      } catch (error) {
+        // An interrupted connection can hide a successful commit. Reusing the
+        // same key on the next click lets the server reject that uncertain retry.
+        if (!error.status || error.status >= 500) {
+          button.dataset.retryRequestKey = requestKey;
+        } else {
+          delete button.dataset.retryRequestKey;
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(slowTimer);
+        button.innerHTML = originalHTML;
+        button.disabled = originalDisabled;
+        button.removeAttribute('aria-busy');
+        delete button.dataset.actionPending;
+      }
+    };
+
+    /** Parse JSON consistently and surface useful API errors to callers. */
+    window.fetchJSON = async function (url, options) {
+      const response = await window.csrfFetch(url, options || {});
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = {};
+      }
+      if (!response.ok) {
+        const error = new Error(data.error || data.message || 'The request could not be completed.');
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+      return data;
     };
 
   </script>

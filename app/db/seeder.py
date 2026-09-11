@@ -78,8 +78,13 @@ class DatabaseSeeder:
                 db.session.add(admin)
                 db.session.add(existing_user_admin)
             else:
+                initial_password = self._app.config.get("INITIAL_ADMIN_PASSWORD", "")
+                if self._app.config.get("FLASK_ENV") == "production" and not initial_password:
+                    raise RuntimeError(
+                        "INITIAL_ADMIN_PASSWORD is required to create the first production admin"
+                    )
                 admin = Admin(full_name="System Admin", username="admin")
-                admin.set_password("Admin123!@#$")
+                admin.set_password(initial_password or "Admin123!@#$")
                 db.session.add(admin)
             db.session.commit()
         else:

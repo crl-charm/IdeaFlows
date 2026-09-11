@@ -24,6 +24,11 @@ WorkingDirectory=/var/www/ideahub
 
 # Load all environment variables from .env file
 EnvironmentFile=/var/www/ideahub/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AUTO_MIGRATE_ON_STARTUP=false
+
+# Apply idempotent schema changes once, before the serving process starts.
+ExecStartPre=/var/www/ideahub/.venv/bin/python -m app.db.run_migrations
 
 # The gunicorn command:
 #   --worker-class eventlet  = required for Flask-SocketIO
@@ -34,6 +39,11 @@ ExecStart=/var/www/ideahub/.venv/bin/gunicorn \
     --worker-class eventlet \
     -w 1 \
     --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --backlog 2048 \
+    --max-requests 10000 \
+    --max-requests-jitter 1000 \
     --bind 127.0.0.1:5000 \
     --access-logfile /var/log/ideahub/access.log \
     --error-logfile  /var/log/ideahub/error.log \
@@ -42,10 +52,16 @@ ExecStart=/var/www/ideahub/.venv/bin/gunicorn \
 # Restart policy: always restart on crash, wait 5s between attempts
 Restart=always
 RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=45
+KillSignal=SIGQUIT
+LimitNOFILE=65536
 
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/www/ideahub/static/uploads /var/log/ideahub
 
 [Install]
 WantedBy=multi-user.target

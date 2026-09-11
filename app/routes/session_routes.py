@@ -4,6 +4,7 @@ from app.utils.auth import login_required
 
 from app.core import get_notifier
 from app.core.clock import SystemClock
+from app.core.idempotency import idempotent_request
 from app.dto.serializers import serialize_transaction
 from app.repositories.session_repository import SessionRepository
 from app.services.session_service import SessionService
@@ -24,6 +25,7 @@ _service = SessionService(
 # -----------------------------
 @session_bp.route("/api/checkin", methods=["POST"])
 #@login_required
+@idempotent_request("customer-checkin")
 def checkin():
 
     data = request.get_json()
@@ -52,6 +54,7 @@ def get_active_sessions():
 # -----------------------------
 @session_bp.route("/api/checkout/<int:session_id>", methods=["POST"])
 @login_required
+@idempotent_request("customer-checkout")
 def checkout(session_id):
     data = request.get_json(silent=True) or {}
     payment_method = (

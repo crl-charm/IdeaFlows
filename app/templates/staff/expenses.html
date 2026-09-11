@@ -245,13 +245,12 @@ function loadExpenses() {
     });
 }
 
-function createExpense() {
+async function createExpense() {
   const category = document.getElementById('expenseCategory').value.trim();
   const description = document.getElementById('expenseDescription').value.trim();
   const amountVal = document.getElementById('expenseAmount').value;
   const expenseDate = document.getElementById('expenseDate').value;
   const saveBtn = document.getElementById('saveExpenseBtn');
-  const spinner = document.getElementById('saveExpenseSpinner');
 
   if (!category || !description || !amountVal || !expenseDate) {
     if (typeof showToast === 'function') {
@@ -272,28 +271,26 @@ function createExpense() {
     return;
   }
 
-  saveBtn.disabled = true;
-  spinner.classList.remove('d-none');
+  try {
+    const body = await runButtonAction(saveBtn, {
+      label: 'Logging expense...',
+      slowLabel: 'Still logging...'
+    }, requestKey => fetchJSON('/expenses-view/api/expenses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': requestKey
+      },
+      body: JSON.stringify({
+        category: category,
+        description: description,
+        amount: amount,
+        expense_date: expenseDate
+      })
+    }));
+    if (!body) return;
 
-  fetch('/expenses-view/api/expenses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      category: category,
-      description: description,
-      amount: amount,
-      expense_date: expenseDate
-    })
-  })
-  .then(res => res.json().then(data => ({ status: res.status, body: data })))
-  .then(({ status, body }) => {
-    saveBtn.disabled = false;
-    spinner.classList.add('d-none');
-
-    if (status === 201 && (body.success !== false)) {
+    if (body.success !== false) {
       if (typeof showToast === 'function') {
         showToast('✓ Expense logged successfully!', 'success');
       }
@@ -320,17 +317,17 @@ function createExpense() {
         alert(errMsg);
       }
     }
-  })
-  .catch(err => {
-    saveBtn.disabled = false;
-    spinner.classList.add('d-none');
+  } catch (err) {
     console.error('Error logging expense:', err);
-    if (typeof showToast === 'function') {
-      showToast('Network error while logging expense.', 'error');
+    if (err.data && err.data.duplicate) {
+      showToast('This expense is already being processed. The list will refresh.', 'info');
+      loadExpenses();
+    } else if (typeof showToast === 'function') {
+      showToast(err.message || 'Network error while logging expense.', 'error');
     } else {
       alert('Network error while logging expense.');
     }
-  });
+  }
 }
 
 function escapeHTML(str) {

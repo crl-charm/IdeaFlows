@@ -107,3 +107,4 @@ Here is how the main files and folders are organized inside `app/`:
 - **`MD-Folders/SECURITY.md`**: Application security controls.
 - **`MD-Folders/STAFF_QUICK_START.md`**: Staff and owner usage guide.
 - **`MD-Folders/technicalguide.md`**: Technical architecture reference.
+- **`MD-Folders/SCALING.md`**: Production scaling, health checks, and release safety.

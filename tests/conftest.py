@@ -12,6 +12,9 @@ import pytest
 os.environ["FLASK_ENV"] = "testing"
 os.environ["SECRET_KEY"] = "isolated-pytest-secret-key-with-32-characters"
 os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["REDIS_URL"] = ""
+os.environ["CACHE_ENABLED"] = "false"
+os.environ["LOG_DIR"] = ""
 
 from app import db  # noqa: E402
 from app.models import User  # noqa: E402

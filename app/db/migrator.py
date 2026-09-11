@@ -218,6 +218,11 @@ class SchemaMigrator:
                 "CREATE INDEX idx_receivables_paid_due ON receivables (paid, due_date)",
             ),
             (
+                "receivables",
+                "idx_receivables_paid_paid_at",
+                "CREATE INDEX idx_receivables_paid_paid_at ON receivables (paid, paid_at)",
+            ),
+            (
                 "expenses",
                 "idx_expenses_date_cat",
                 "CREATE INDEX idx_expenses_date_cat ON expenses (expense_date, category)",
