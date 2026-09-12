@@ -105,6 +105,12 @@
             </div>
           </div>
 
+          {% if config.TURNSTILE_ENABLED %}
+          <div class="mb-3 d-flex justify-content-center">
+            <div class="cf-turnstile" data-sitekey="{{ config.TURNSTILE_SITE_KEY }}" data-action="login"></div>
+          </div>
+          {% endif %}
+
           <button type="submit" class="btn btn-login w-100 py-2 shadow-sm fw-semibold" id="loginBtn">
             <span class="spinner-border spinner-border-sm me-2 d-none" id="loginSpinner" role="status" aria-hidden="true"></span>
             <span id="loginBtnText">Sign In</span>
@@ -142,6 +148,18 @@
     const passwordInput = document.getElementById("password");
     const togglePassword = document.getElementById("togglePassword");
     const alertBox = document.getElementById("loginAlertBox");
+    const turnstileEnabled = {{ config.TURNSTILE_ENABLED | tojson }};
+
+    function getTurnstileToken() {
+      const input = loginForm && loginForm.querySelector('[name="cf-turnstile-response"]');
+      return input ? input.value : "";
+    }
+
+    function resetTurnstile() {
+      if (turnstileEnabled && window.turnstile) {
+        window.turnstile.reset();
+      }
+    }
 
     function setMode(mode, pushHistory) {
       if (pushHistory === undefined) pushHistory = true;
@@ -206,9 +224,16 @@
 
         const username = document.getElementById("username").value.trim();
         const password = passwordInput.value;
+        const turnstileToken = getTurnstileToken();
 
         if (!username || !password) {
           alertBox.textContent = "Please enter both username and password.";
+          alertBox.classList.remove("d-none");
+          return;
+        }
+
+        if (turnstileEnabled && !turnstileToken) {
+          alertBox.textContent = "Please complete the human verification.";
           alertBox.classList.remove("d-none");
           return;
         }
@@ -224,7 +249,11 @@
               "Content-Type": "application/json"
             },
             credentials: "include",
-            body: JSON.stringify({ username: username, password: password })
+            body: JSON.stringify({
+              username: username,
+              password: password,
+              turnstile_token: turnstileToken
+            })
           });
 
           const data = await response.json();
@@ -242,6 +271,7 @@
             alertBox.textContent = errMsg;
             alertBox.classList.remove("d-none");
             showToast(errMsg, "error");
+            resetTurnstile();
           }
         } catch (err) {
           loginBtn.disabled = false;
@@ -250,6 +280,7 @@
           alertBox.textContent = "Connection error. Please try again.";
           alertBox.classList.remove("d-none");
           showToast("Connection error. Please try again.", "error");
+          resetTurnstile();
         }
       });
     }

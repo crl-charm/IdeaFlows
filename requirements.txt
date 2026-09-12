@@ -17,6 +17,7 @@ gunicorn
 eventlet
 flask-compress
 redis
+boto3
 
 
 

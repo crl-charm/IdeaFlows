@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, jsonify, session, redirec
 from app.models import Admin, User, StaffAttendance
 from app import db, limiter, csrf
 from app.core.bot_defense import get_login_rate_limit_key
+from app.core.turnstile import verify_turnstile
 from datetime import datetime
 import logging
 from app.core.socketio_handlers import emit_staff_status_change
@@ -87,6 +88,23 @@ def login_api():
         if not username or not password:
             security_logger.warning(f"Missing credentials for login attempt: {request.remote_addr}")
             return jsonify({"error": "Username and password are required"}), 400
+
+        turnstile_ok, turnstile_error = verify_turnstile(
+            data.get("turnstile_token"), request.remote_addr
+        )
+        if not turnstile_ok:
+            security_logger.warning(
+                "Turnstile login verification failed from %s: %s",
+                request.remote_addr,
+                turnstile_error,
+            )
+            if turnstile_error == "verification-service-unavailable":
+                return jsonify({
+                    "error": "Human verification is temporarily unavailable. Please try again."
+                }), 503
+            return jsonify({
+                "error": "Please complete the human verification and try again."
+            }), 400
 
         account, account_type = _lookup_account(username)
 

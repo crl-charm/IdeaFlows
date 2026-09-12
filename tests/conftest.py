@@ -15,6 +15,13 @@ os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["REDIS_URL"] = ""
 os.environ["CACHE_ENABLED"] = "false"
 os.environ["LOG_DIR"] = ""
+os.environ["R2_MEDIA_BUCKET"] = ""
+os.environ["R2_MEDIA_ENDPOINT"] = ""
+os.environ["R2_MEDIA_ACCESS_KEY_ID"] = ""
+os.environ["R2_MEDIA_SECRET_ACCESS_KEY"] = ""
+os.environ["R2_MEDIA_PUBLIC_URL"] = ""
+os.environ["TURNSTILE_SITE_KEY"] = ""
+os.environ["TURNSTILE_SECRET_KEY"] = ""
 
 from app import db  # noqa: E402
 from app.models import User  # noqa: E402

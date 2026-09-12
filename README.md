@@ -108,3 +108,5 @@ Here is how the main files and folders are organized inside `app/`:
 - **`MD-Folders/STAFF_QUICK_START.md`**: Staff and owner usage guide.
 - **`MD-Folders/technicalguide.md`**: Technical architecture reference.
 - **`MD-Folders/SCALING.md`**: Production scaling, health checks, and release safety.
+- **`MD-Folders/OWNER_MAINTENANCE_RUNBOOK.md`**: Owner checklists for VPS,
+  Cloudflare Access, R2, backups, Redis, MySQL, security, releases, and incidents.

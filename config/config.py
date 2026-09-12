@@ -96,7 +96,7 @@ class Config:
         'X-Frame-Options': 'DENY',
         'X-XSS-Protection': '1; mode=block',
         'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://code.jquery.com https://cdn.socket.io; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: https:; connect-src 'self' ws: wss:;",
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://code.jquery.com https://cdn.socket.io https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: https:; connect-src 'self' ws: wss:; frame-src https://challenges.cloudflare.com;",
     }
 
     # File Upload Settings (Production-Ready)
@@ -109,6 +109,54 @@ class Config:
         'UPLOAD_FOLDER',
         os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'uploads', 'menu')
     )
+
+    # Cloudflare R2 media storage. When every value is present, new menu images
+    # are written to R2; otherwise development keeps using the local folder.
+    R2_MEDIA_BUCKET = os.environ.get("R2_MEDIA_BUCKET", "").strip()
+    R2_MEDIA_ENDPOINT = os.environ.get("R2_MEDIA_ENDPOINT", "").strip().rstrip("/")
+    R2_MEDIA_ACCESS_KEY_ID = os.environ.get("R2_MEDIA_ACCESS_KEY_ID", "").strip()
+    R2_MEDIA_SECRET_ACCESS_KEY = os.environ.get("R2_MEDIA_SECRET_ACCESS_KEY", "").strip()
+    R2_MEDIA_PUBLIC_URL = os.environ.get("R2_MEDIA_PUBLIC_URL", "").strip().rstrip("/")
+    R2_MEDIA_PREFIX = os.environ.get("R2_MEDIA_PREFIX", "menu").strip().strip("/") or "menu"
+
+    _r2_media_values = {
+        "R2_MEDIA_BUCKET": R2_MEDIA_BUCKET,
+        "R2_MEDIA_ENDPOINT": R2_MEDIA_ENDPOINT,
+        "R2_MEDIA_ACCESS_KEY_ID": R2_MEDIA_ACCESS_KEY_ID,
+        "R2_MEDIA_SECRET_ACCESS_KEY": R2_MEDIA_SECRET_ACCESS_KEY,
+        "R2_MEDIA_PUBLIC_URL": R2_MEDIA_PUBLIC_URL,
+    }
+    if any(_r2_media_values.values()) and not all(_r2_media_values.values()):
+        _missing_r2_media = ", ".join(
+            name for name, value in _r2_media_values.items() if not value
+        )
+        raise RuntimeError(
+            f"Cloudflare R2 media configuration is incomplete; missing: {_missing_r2_media}"
+        )
+    R2_MEDIA_ENABLED = all(_r2_media_values.values())
+
+    # Cloudflare Turnstile login protection. Both keys are required together;
+    # leaving both blank keeps local development and staged deployments working.
+    TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "").strip()
+    TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "").strip()
+    if bool(TURNSTILE_SITE_KEY) != bool(TURNSTILE_SECRET_KEY):
+        raise RuntimeError(
+            "Cloudflare Turnstile configuration is incomplete; both "
+            "TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are required"
+        )
+    TURNSTILE_ENABLED = bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY)
+    TURNSTILE_VERIFY_TIMEOUT = _env_int("TURNSTILE_VERIFY_TIMEOUT", 5, 1)
+    TURNSTILE_EXPECTED_ACTION = "login"
+    _turnstile_default_hostnames = (
+        "idea-flows.online,www.idea-flows.online" if FLASK_ENV == "production" else ""
+    )
+    TURNSTILE_ALLOWED_HOSTNAMES = [
+        hostname.strip().lower()
+        for hostname in os.environ.get(
+            "TURNSTILE_ALLOWED_HOSTNAMES", _turnstile_default_hostnames
+        ).split(",")
+        if hostname.strip()
+    ]
 
     # Session Security
     SESSION_COOKIE_HTTPONLY = True

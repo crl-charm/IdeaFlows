@@ -38,6 +38,21 @@ def get_valid_categories():
         return ["Main Dish", "Snack", "Beverages"]
 
 
+def _delete_image_if_unreferenced(image_url):
+    """Remove storage only when no active menu item still shares this image."""
+    if not image_url:
+        return
+    from app import db
+    from app.models.menu_item import MenuItem
+
+    still_used = MenuItem.query.filter(
+        MenuItem.image_url == image_url,
+        db.or_(MenuItem.status.is_(None), MenuItem.status != "deleted"),
+    ).first()
+    if still_used is None:
+        delete_old_image(image_url)
+
+
 
 @menu_bp.route("", methods=["GET"])
 @admin_required
@@ -147,13 +162,20 @@ def api_create_item() -> tuple:
             return jsonify({"success": False, "error": error}), 400
     
     # Create item
-    result = _service.create(
-        name=name,
-        price=price,
-        category=category,
-        description=description,
-        image_url=image_url,
-    )
+    try:
+        result = _service.create(
+            name=name,
+            price=price,
+            category=category,
+            description=description,
+            image_url=image_url,
+        )
+    except Exception:
+        from app import db
+        db.session.rollback()
+        delete_old_image(image_url)
+        logger.exception("Menu item creation failed")
+        return jsonify({"success": False, "error": "Could not create this item."}), 500
     if result.get("success"):
         emit_menu_update('create', result.get("data", {}))
     return jsonify(result), 201
@@ -222,14 +244,21 @@ def api_create_item_variants() -> tuple:
         if error:
             return jsonify({"success": False, "error": error}), 400
 
-    result = _service.create_variants(
-        base_name=base_name,
-        variant_labels=labels,
-        variant_prices=prices,
-        category=category,
-        description=description,
-        image_url=image_url,
-    )
+    try:
+        result = _service.create_variants(
+            base_name=base_name,
+            variant_labels=labels,
+            variant_prices=prices,
+            category=category,
+            description=description,
+            image_url=image_url,
+        )
+    except Exception:
+        from app import db
+        db.session.rollback()
+        delete_old_image(image_url)
+        logger.exception("Menu variant creation failed")
+        return jsonify({"success": False, "error": "Could not create these items."}), 500
 
     created_ids = result.get("created_ids") or []
     emit_menu_update("create", {"count": len(created_ids)})
@@ -275,22 +304,25 @@ def api_update_item(item_id: int) -> tuple:
         if error:
             return jsonify({"success": False, "error": error}), 400
         
-        # Delete old image after successful save
-        if old_image_url:
-            delete_old_image(old_image_url)
-    
-    # Update item
-    result = _service.update(
-        item_id=item_id,
-        name=request.form.get("name", "").strip() or None,
-        price=price,
-        category=category if category else None,
-        description=request.form.get("description", "").strip() or None,
-        image_url=image_url,
-    )
+    try:
+        result = _service.update(
+            item_id=item_id,
+            name=request.form.get("name", "").strip() or None,
+            price=price,
+            category=category if category else None,
+            description=request.form.get("description", "").strip() or None,
+            image_url=image_url,
+        )
+    except Exception:
+        db.session.rollback()
+        delete_old_image(image_url)
+        logger.exception("Menu item update failed for item %s", item_id)
+        return jsonify({"success": False, "error": "Could not update this item."}), 500
     if isinstance(result, tuple):
+        delete_old_image(image_url)
         return jsonify(result[0]), result[1]
     if result.get("success"):
+        _delete_image_if_unreferenced(old_image_url)
         emit_menu_update('update', {'item_id': item_id, **result.get("data", {})})
     return jsonify(result), 200
 
@@ -334,6 +366,7 @@ def api_delete_item(item_id: int) -> tuple:
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
+        _delete_image_if_unreferenced(image_url)
         emit_menu_update("delete", {"item_id": item_id})
     return jsonify(result), 200
 
