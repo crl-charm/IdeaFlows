@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app import create_app
@@ -43,13 +45,34 @@ def test_readiness_probe_checks_database(client):
 
 
 def test_static_cache_policy_distinguishes_deployable_and_uploaded_assets(client):
-    css_response = client.get("/static/css/style.css")
-    upload_response = client.get("/static/uploads/background.jpg")
+    upload_path = (
+        Path(client.application.static_folder) / "uploads" / "cache-policy-test.txt"
+    )
+    upload_path.parent.mkdir(parents=True, exist_ok=True)
+    upload_path.write_text("test upload", encoding="utf-8")
 
-    assert css_response.status_code == 200
-    assert css_response.headers["Cache-Control"] == "public, max-age=3600, must-revalidate"
-    assert upload_response.status_code == 200
-    assert upload_response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    css_response = None
+    upload_response = None
+    try:
+        css_response = client.get("/static/css/style.css")
+        upload_response = client.get("/static/uploads/cache-policy-test.txt")
+
+        assert css_response.status_code == 200
+        assert (
+            css_response.headers["Cache-Control"]
+            == "public, max-age=3600, must-revalidate"
+        )
+        assert upload_response.status_code == 200
+        assert (
+            upload_response.headers["Cache-Control"]
+            == "public, max-age=31536000, immutable"
+        )
+    finally:
+        if css_response is not None:
+            css_response.close()
+        if upload_response is not None:
+            upload_response.close()
+        upload_path.unlink(missing_ok=True)
 
 
 class FakeRedis:
