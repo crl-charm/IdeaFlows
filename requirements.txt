@@ -14,7 +14,7 @@ Pillow
 python-dotenv
 openpyxl
 gunicorn
-eventlet
+simple-websocket
 flask-compress
 redis
 boto3

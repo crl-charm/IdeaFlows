@@ -6,6 +6,7 @@ from app.repositories.staff_repository import StaffRepository
 from app.services.staff_performance_service import StaffPerformanceService
 from app.utils.auth import admin_required
 from app import csrf
+from app.core.idempotency import idempotent_request
 
 staff_performance_bp = Blueprint(
     "staff_performance", __name__, url_prefix="/admin/staff-performance"
@@ -31,6 +32,7 @@ def api_list_logs() -> tuple:
 @staff_performance_bp.route("/api/logs", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-staff-performance-log")
 def api_create_log() -> tuple:
     data = request.get_json()
     result = _service.create(

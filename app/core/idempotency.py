@@ -106,6 +106,7 @@ def idempotent_request(action: str, ttl_seconds: int = 180):
                 _finish_locally(key, ttl_seconds, keep=keep)
             return response
 
+        wrapped._idempotency_action = action
         return wrapped
 
     return decorator

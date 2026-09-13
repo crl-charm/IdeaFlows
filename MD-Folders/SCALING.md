@@ -1,12 +1,12 @@
 # IdeaHub production scaling
 
 The application is prepared for safe horizontal scaling, but the supplied VPS
-service intentionally starts one Eventlet process. Scale only after the shared
-dependencies below are in place.
+service intentionally starts one threaded Gunicorn process. Scale only after the
+shared dependencies below are in place.
 
 ## Current production topology
 
-`Nginx -> Gunicorn/Eventlet -> Flask -> MySQL`, with Redis shared by Socket.IO
+`Nginx -> Gunicorn/gthread -> Flask -> MySQL`, with Redis shared by Socket.IO
 and Flask-Limiter. Nginx serves static files directly. `/health/live` checks the
 process and `/health/ready` checks the database connection.
 
@@ -21,7 +21,7 @@ records are deliberately never served from cache.
    every application instance.
 2. Run `python -m app.db.run_migrations` exactly once per release. Set
    `AUTO_MIGRATE_ON_STARTUP=false` on serving instances.
-3. Keep one Eventlet worker per Gunicorn process. Add more processes/hosts behind
+3. Keep one threaded worker per Gunicorn process. Add more processes/hosts behind
    an upstream load balancer instead of increasing `-w` in a single Socket.IO
    command.
 4. Enable sticky sessions for Socket.IO clients at the load balancer. Redis

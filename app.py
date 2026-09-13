@@ -11,7 +11,7 @@ if app.config.get("AUTO_MIGRATE_ON_STARTUP", True):
 
 if __name__ == "__main__":
     # Development uses Flask-SocketIO's threading mode. Production keeps its
-    # eventlet monkey patch isolated in wsgi.py for the current Gunicorn unit.
+    # Development uses the same threaded Socket.IO transport as production.
     debug_mode = os.environ.get('FLASK_ENV') != 'production'
     socketio.run(app, host="0.0.0.0", port=5000, debug=debug_mode, allow_unsafe_werkzeug=True)
 

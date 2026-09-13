@@ -12,6 +12,9 @@ class PayableRepository:
     def get(self, payable_id: int) -> Optional[Payable]:
         return Payable.query.filter_by(id=payable_id).first()
 
+    def get_for_update(self, payable_id: int) -> Optional[Payable]:
+        return Payable.query.filter_by(id=payable_id).with_for_update().first()
+
     def list_all(self) -> list[Payable]:
         return Payable.query.order_by(Payable.incurred_date.desc(), Payable.id.desc()).all()
 
@@ -39,7 +42,7 @@ class PayableRepository:
         return payable
 
     def mark_paid(self, payable_id: int, amount: Optional[float] = None) -> bool:
-        payable = self.get(payable_id)
+        payable = self.get_for_update(payable_id)
         if not payable:
             return False
         

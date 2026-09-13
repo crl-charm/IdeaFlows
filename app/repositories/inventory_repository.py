@@ -11,8 +11,18 @@ class InventoryRepository:
     def get_item(self, item_id: int) -> Optional[InventoryItem]:
         return InventoryItem.query.filter_by(id=item_id).first()
 
+    def get_item_for_update(self, item_id: int) -> Optional[InventoryItem]:
+        return InventoryItem.query.filter_by(id=item_id).with_for_update().first()
+
     def get_by_menu_item_id(self, menu_item_id: int) -> Optional[InventoryItem]:
         return InventoryItem.query.filter_by(menu_item_id=menu_item_id).first()
+
+    def get_by_menu_item_id_for_update(self, menu_item_id: int) -> Optional[InventoryItem]:
+        return (
+            InventoryItem.query.filter_by(menu_item_id=menu_item_id)
+            .with_for_update()
+            .first()
+        )
 
     def list_by_menu_item_ids(self, menu_item_ids: list[int]) -> dict[int, InventoryItem]:
         if not menu_item_ids:
@@ -50,7 +60,7 @@ class InventoryRepository:
 
     def deduct(self, item_id: int, qty: float | Decimal, reason: str, user_id: Optional[int]) -> bool:
         from decimal import Decimal
-        item = self.get_item(item_id)
+        item = self.get_item_for_update(item_id)
         if not item:
             return False
         qty_dec = Decimal(str(qty))
@@ -66,7 +76,7 @@ class InventoryRepository:
 
     def add(self, item_id: int, qty: float | Decimal, reason: str, user_id: Optional[int]) -> bool:
         from decimal import Decimal
-        item = self.get_item(item_id)
+        item = self.get_item_for_update(item_id)
         if not item:
             return False
         qty_dec = Decimal(str(qty))

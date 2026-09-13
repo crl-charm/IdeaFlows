@@ -241,7 +241,8 @@
 </style>
 
 <script>
-  const socket = io();
+  const socket = window.getIdeaFlowSocket();
+  const refreshReceivables = window.createDebouncedRefresh(loadReceivables, 150);
   let receivablesCache = [];
   let pendingMarkPaidId = null;
   let markPaidModalInstance = null;
@@ -266,9 +267,8 @@
     }
   }
 
-  socket.on('receivables_update', function (data) {
-    console.log('Receivables update:', data);
-    loadReceivables();
+  if (socket) socket.on('receivables_update', function (data) {
+    refreshReceivables();
     if (data.event === 'create') {
       showToast('✓ New receivable created!', 'success');
     } else if (data.event === 'mark_paid') {
@@ -575,7 +575,7 @@
         const inst = bootstrap.Modal.getInstance(modalEl);
         if (inst) inst.hide();
 
-        loadReceivables();
+        refreshReceivables();
       } else {
         showToast(data.error || 'Error creating receivable', 'error');
       }
@@ -631,7 +631,9 @@
         pendingMarkPaidId = null;
         showToast('Marked as paid', 'success');
 
-        // reload receivables and then reopen the view modal if we came from it
+        // The explicit reload below must finish before reopening the detail modal.
+        // Cancel a socket-triggered refresh queued for the same server mutation.
+        refreshReceivables.cancel();
         fetch('/admin/receivables/api/receivables').then(r => r.json()).then(res => {
           if (res.success) {
             receivablesCache = res.data;
@@ -678,7 +680,7 @@
           if (viewOrderModalInstance) {
             viewOrderModalInstance.hide();
           }
-          loadReceivables();
+          refreshReceivables();
         } else {
           showToast(data.error || 'Error updating debt', 'error');
         }

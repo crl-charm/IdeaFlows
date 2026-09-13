@@ -546,12 +546,10 @@ function escapeJsString(text) {
 }
 
 // Socket.IO for real-time updates
-const socket = io();
+const socket = window.getIdeaFlowSocket();
+const refreshInventory = window.createDebouncedRefresh(loadInventory, 150);
 
-socket.on('inventory_update', function(data) {
-  console.log('Inventory update socket message:', data);
-  loadInventory();
-});
+if (socket) socket.on('inventory_update', refreshInventory);
 
 document.addEventListener('DOMContentLoaded', function() {
   loadInventory();
@@ -894,7 +892,7 @@ function createIngredient() {
       document.getElementById('startQty').value = '0';
       document.getElementById('threshold').value = '10';
       
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ Error: ' + (data.error || 'Failed to create ingredient'), 'error');
     }
@@ -1115,7 +1113,7 @@ function linkRecipeIngredient() {
       resetIngredientSearch();
       document.getElementById('modalQtyRequired').value = '1';
       document.getElementById('modalConversionRatio').value = '1.0000';
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ ' + (data.message || data.error || 'Failed to link ingredient'), 'error');
     }
@@ -1142,7 +1140,7 @@ async function removeRecipeIngredient(recipeId, ingredientName) {
     if (data.success) {
       showToast('✓ Ingredient removed from recipe', 'success');
       loadRecipeIngredients(currentMealId);
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ Error removing ingredient', 'error');
     }
@@ -1228,7 +1226,7 @@ function submitStockAdjustment() {
         currentItemId = data.data.inventory_item_id;
       }
       bootstrap.Modal.getInstance(document.getElementById('editStockModal')).hide();
-      loadInventory();
+      refreshInventory();
       
       // If ingredients modal is open, refresh it as well!
       if (document.getElementById('ingredientsModal').classList.contains('show')) {
@@ -1264,7 +1262,7 @@ async function deleteRawIngredient(menuItemId, ingredientName, recipeCount) {
   }).then(r => r.json()).then(data => {
     if (data.success) {
       showToast('✓ Raw ingredient deleted', 'success');
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ Error: ' + (data.error || 'Failed to delete ingredient'), 'error');
     }
@@ -1294,7 +1292,7 @@ async function deleteRecipe(mealId, mealName) {
         );
         Promise.all(promises).then(() => {
           showToast('✓ Recipe mappings removed successfully', 'success');
-          loadInventory();
+          refreshInventory();
         });
       }
     });

@@ -12,8 +12,8 @@ from app.repositories.receivable_repository import ReceivableRepository
 class ReceivableService:
     repo: ReceivableRepository
 
-    def list_all(self) -> list[dict[str, Any]]:
-        receivables = self.repo.list_all()
+    @staticmethod
+    def _serialize(receivables) -> list[dict[str, Any]]:
         return [
             {
                 "id": r.id,
@@ -30,6 +30,29 @@ class ReceivableService:
             }
             for r in receivables
         ]
+
+    def list_all(self) -> list[dict[str, Any]]:
+        return self._serialize(self.repo.list_all())
+
+    def list_paginated(
+        self,
+        page: int,
+        per_page: int,
+        status: str | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        pagination = self.repo.list_paginated(page, per_page, status, search)
+        return {
+            "data": self._serialize(pagination.items),
+            "pagination": {
+                "page": pagination.page,
+                "per_page": pagination.per_page,
+                "pages": pagination.pages,
+                "total": pagination.total,
+                "has_next": pagination.has_next,
+                "has_prev": pagination.has_prev,
+            },
+        }
 
     def list_unpaid(self) -> list[dict[str, Any]]:
         receivables = self.repo.list_unpaid()

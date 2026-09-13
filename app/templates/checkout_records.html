@@ -346,6 +346,6 @@ function loadCheckoutRecords() {
 }
 
 loadCheckoutRecords();
-window.createSmartPoller(loadCheckoutRecords, 20000);
+window.createSmartPoller(loadCheckoutRecords, 20000, { runImmediately: false });
 </script>
 {% endblock %}

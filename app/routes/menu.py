@@ -12,6 +12,7 @@ from app.services.menu_service import MenuService
 from app.utils.auth import admin_required
 from app.utils.uploads import validate_and_save_image, delete_old_image
 from app.core.socketio_handlers import emit_menu_update
+from app.core.idempotency import idempotent_request
 from app.core.cache import get_or_set_json, invalidate_menu_cache
 from functools import wraps
 
@@ -57,8 +58,7 @@ def _delete_image_if_unreferenced(image_url):
 @menu_bp.route("", methods=["GET"])
 @admin_required
 def menu_page() -> str:
-    items = _service.list_all()
-    return render_template("admin/menu.html", items=items, categories=get_valid_categories())
+    return render_template("admin/menu.html")
 
 
 @menu_bp.route("/api/items", methods=["GET"])
@@ -87,6 +87,7 @@ def api_get_categories() -> tuple:
 @menu_bp.route("/api/categories", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-menu-category")
 def api_create_category() -> tuple:
     if request.is_json:
         data = request.get_json() or {}
@@ -122,6 +123,7 @@ def api_create_category() -> tuple:
 @menu_bp.route("/api/items", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-menu-item")
 def api_create_item() -> tuple:
     if request.is_json:
         data = request.get_json() or {}
@@ -184,6 +186,7 @@ def api_create_item() -> tuple:
 @menu_bp.route("/api/items/variants", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-menu-variants")
 def api_create_item_variants() -> tuple:
     """
     Create multiple Beverage variants (e.g., Coffee Hot/Cold) from one base name.
@@ -268,6 +271,7 @@ def api_create_item_variants() -> tuple:
 @menu_bp.route("/api/items/<int:item_id>", methods=["PATCH"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-update-menu-item")
 def api_update_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
     from app import db
@@ -330,6 +334,7 @@ def api_update_item(item_id: int) -> tuple:
 @menu_bp.route("/api/items/<int:item_id>/availability", methods=["PATCH"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-toggle-menu-availability")
 def api_toggle_availability(item_id: int) -> tuple:
     result = _service.toggle_availability(item_id)
     if isinstance(result, tuple):
@@ -342,6 +347,7 @@ def api_toggle_availability(item_id: int) -> tuple:
 @menu_bp.route("/api/items/<int:item_id>", methods=["DELETE"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-delete-menu-item")
 def api_delete_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
     from app import db

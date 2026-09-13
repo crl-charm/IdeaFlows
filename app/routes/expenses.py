@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import isfinite
+
 from flask import Blueprint, jsonify, request, render_template, session
 
 from app import csrf
@@ -45,6 +47,8 @@ def api_create_expense() -> tuple:
         amount = float(data.get("amount"))
     except (TypeError, ValueError):
         return jsonify({"success": False, "error": "Invalid amount"}), 400
+    if not isfinite(amount) or amount <= 0:
+        return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
 
     result = _service.create(
         category=data.get("category"),
@@ -60,6 +64,7 @@ def api_create_expense() -> tuple:
 
 @expenses_bp.route("/api/expenses/<int:exp_id>", methods=["DELETE"])
 @admin_required
+@idempotent_request("admin-delete-expense")
 def api_delete_expense(exp_id: int) -> tuple:
     result = _service.delete(exp_id)
     if isinstance(result, tuple):

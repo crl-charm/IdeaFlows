@@ -9,6 +9,7 @@ from app.dto.api_response import api_error, api_ok
 
 from app.utils.billing import calculate_time_bill
 from app import db, csrf
+from app.core.idempotency import idempotent_request
 from app.repositories.sales_repository import SalesRepository
 from app.services.daily_balance_export_service import DailyBalanceExportService
 from app.services.sales_service import SalesService
@@ -38,6 +39,7 @@ def api_list_reports() -> tuple:
 @sales_bp.route("/api/reports", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-generate-sales-report")
 def api_generate_report() -> tuple:
     data = request.get_json()
     report_date = date.fromisoformat(data.get("report_date"))
@@ -112,6 +114,7 @@ def api_list_soft_balances() -> tuple:
 @sales_bp.route("/api/soft-balances", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-soft-balance")
 def api_create_soft_balance() -> tuple:
     data = request.get_json()
     balance_date = date.fromisoformat(data.get("balance_date"))

@@ -6,6 +6,7 @@ from app.controllers.base_controller import BaseController
 from app.services.finance_oop_service import FinanceService
 from app.utils.auth import admin_required
 from app import csrf
+from app.core.idempotency import idempotent_request
 
 
 class FinanceController(BaseController):
@@ -51,6 +52,7 @@ class FinanceController(BaseController):
         @self.blueprint.post("/api/finance/transaction")
         @admin_required
         @csrf.exempt
+        @idempotent_request("admin-create-finance-transaction")
         def finance_add_transaction():
             payload = request.get_json(silent=True) or {}
             txn_type = str(payload.get("type", "expense")).strip()

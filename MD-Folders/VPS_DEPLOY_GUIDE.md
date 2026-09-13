@@ -2,7 +2,7 @@
 **Hostinger KVM 1 · Ubuntu 22.04 · idea-flows.online**
 
 > This guide deploys the IdeaHub Flask POS app to a Hostinger KVM 1 VPS using:
-> **gunicorn + eventlet** (Python), **MySQL 8** (database), **Nginx** (reverse proxy), **Certbot** (free SSL)
+> **Gunicorn gthread + simple-websocket** (Python), **MySQL 8** (database), **Nginx** (reverse proxy), **Certbot** (free SSL)
 
 ---
 
@@ -374,7 +374,7 @@ grep -A5 "socket.io" /etc/nginx/sites-available/ideahub
 ```
 - Make sure you're using the full HTTPS Nginx config (`deploy/nginx.conf`), not the HTTP-only one
 - Check browser console for WebSocket errors (F12 → Console)
-- Verify `eventlet` is installed: `sudo -u ideahub .venv/bin/pip show eventlet`
+- Verify `simple-websocket` is installed: `sudo -u ideahub .venv/bin/pip show simple-websocket`
 
 ### File Upload 413 Error (Request Entity Too Large)
 ```bash
@@ -419,7 +419,7 @@ Internet
     │
     │ proxy_pass (HTTP to localhost:5000)
     ▼
- Gunicorn (eventlet, 1 worker)
+ Gunicorn (gthread, 1 worker / 50 threads)
     │
     ▼
  Flask App (IdeaHub)

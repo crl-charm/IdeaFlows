@@ -12,6 +12,7 @@ from app.utils.inventory_helpers import is_ingredient_category
 from app.models.menu_item import MenuItem
 from app import db, csrf
 from app.core.socketio_handlers import emit_inventory_update
+from app.core.idempotency import idempotent_request
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,7 @@ def _inventory_log_user_id(session_user_id: int | None) -> int | None:
 @inventory_bp.route("", methods=["GET"])
 @admin_required
 def list_items() -> str:
-    items = _service.list_all()
-    return render_template("admin/inventory.html", items=items)
+    return render_template("admin/inventory.html")
 
 
 @inventory_bp.route("/api/items", methods=["GET"])
@@ -45,6 +45,7 @@ def api_list_items() -> tuple:
 @inventory_bp.route("/api/items", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-inventory-item")
 def api_create_item() -> tuple:
     data = request.get_json()
     menu_item_id = data.get("menu_item_id")
@@ -81,6 +82,7 @@ def api_create_item() -> tuple:
 @inventory_bp.route("/api/items/<int:item_id>/stock", methods=["PATCH"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-update-inventory-stock")
 def api_update_stock(item_id: int) -> tuple:
     data = request.get_json()
     result = _service.update_stock(
@@ -99,6 +101,7 @@ def api_update_stock(item_id: int) -> tuple:
 @inventory_bp.route("/api/menu-items/<int:menu_item_id>/stock", methods=["PATCH"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-update-menu-item-stock")
 def api_update_stock_by_menu_item(menu_item_id: int) -> tuple:
     data = request.get_json()
     result = _service.update_stock(
@@ -133,6 +136,7 @@ def api_low_stock() -> tuple:
 @inventory_bp.route("/api/items/<int:item_id>", methods=["DELETE"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-delete-inventory-item")
 def api_delete_item(item_id: int) -> tuple:
     result = _service.delete(item_id)
     if isinstance(result, tuple):
@@ -157,15 +161,7 @@ def api_recipe_inventory() -> tuple:
 @inventory_bp.route("/api/dashboard-items", methods=["GET"])
 @admin_required
 def api_dashboard_items() -> tuple:
-    summary = _service.get_inventory_summary()
-    return jsonify(
-        {
-            "success": True,
-            "data": _service.build_recipe_inventory_items(),
-            "direct_stock": _service.build_direct_stock_items(),
-            "summary": summary,
-        }
-    ), 200
+    return jsonify({"success": True, **_service.build_dashboard_snapshot()}), 200
 
 
 @inventory_bp.route("/api/recipes/<int:menu_item_id>", methods=["GET"])
@@ -177,6 +173,7 @@ def get_recipe(menu_item_id: int) -> tuple:
 @inventory_bp.route("/api/recipes", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-add-recipe-ingredient")
 def add_recipe_ingredient() -> tuple:
     from app.models.menu_item import MenuItemIngredient
 
@@ -363,6 +360,7 @@ def add_recipe_ingredient() -> tuple:
 @inventory_bp.route("/api/recipes/<int:recipe_id>", methods=["DELETE"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-delete-recipe-ingredient")
 def delete_recipe_ingredient(recipe_id: int) -> tuple:
     from app.models.menu_item import MenuItemIngredient
 
@@ -381,6 +379,7 @@ def delete_recipe_ingredient(recipe_id: int) -> tuple:
 @inventory_bp.route("/api/ingredients/<int:menu_item_id>", methods=["DELETE"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-delete-raw-ingredient")
 def api_delete_ingredient(menu_item_id: int) -> tuple:
     result = _service.delete_raw_ingredient(menu_item_id)
     if isinstance(result, tuple):

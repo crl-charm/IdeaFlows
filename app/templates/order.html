@@ -719,7 +719,7 @@
 {% block scripts %}
 <script>
 const sessionId = parseInt("{{ session_id }}");
-const socket = io();
+const socket = window.getIdeaFlowSocket();
 let cart = [];
 let currentOrders = [];
 let menuById = {};
@@ -727,9 +727,8 @@ let allMenuData = [];
 let activeCategory = "All";
 let searchTerm = "";
 
-socket.on('menu_update', function() {
-  loadMenu();
-});
+const refreshOrderMenu = window.createDebouncedRefresh(loadMenu, 150);
+if (socket) socket.on('menu_update', refreshOrderMenu);
 
 function parseCategory(category) {
   if (!category) return { major: "Other", sub: "Other" };

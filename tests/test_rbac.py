@@ -88,6 +88,25 @@ class TestAdminRBAC:
         response = client.get("/inventory")
         assert response.status_code == 200
 
+    def test_staff_receivables_badge_uses_staff_authorized_endpoint(self, client):
+        _set_session(client, "staff")
+        response = client.get(
+            "/receivables-view/api/receivables/unpaid",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data is not None
+        assert data.get("success") is True
+
+    def test_staff_remains_denied_from_admin_receivables_badge_endpoint(self, client):
+        _set_session(client, "staff")
+        response = client.get(
+            "/admin/receivables/api/receivables/unpaid",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 403
+
     def test_unauthenticated_redirects_from_admin(self, client):
         response = client.get("/admin/inventory")
         assert response.status_code == 302

@@ -690,8 +690,8 @@ function loadSessions() {
 // INIT
 loadSessions();
 loadSpaceAvailability();
-window.createSmartPoller(loadSessions, 10000);
-window.createSmartPoller(loadSpaceAvailability, 15000);
+window.createSmartPoller(loadSessions, 10000, { runImmediately: false });
+window.createSmartPoller(loadSpaceAvailability, 15000, { runImmediately: false });
 
 </script>
 

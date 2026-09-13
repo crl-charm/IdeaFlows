@@ -96,14 +96,31 @@ class Config:
         'X-Frame-Options': 'DENY',
         'X-XSS-Protection': '1; mode=block',
         'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://code.jquery.com https://cdn.socket.io https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: https:; connect-src 'self' ws: wss:; frame-src https://challenges.cloudflare.com;",
+        'Content-Security-Policy': (
+            "default-src 'self'; "
+            "base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
+            "form-action 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://cdn.socket.io https://challenges.cloudflare.com "
+            "https://static.cloudflareinsights.com; "
+            "script-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://cdn.socket.io https://challenges.cloudflare.com "
+            "https://static.cloudflareinsights.com; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+            "img-src 'self' data: https://media.idea-flows.online; "
+            "connect-src 'self' ws: wss: https://cdn.jsdelivr.net "
+            "https://cdn.socket.io https://cloudflareinsights.com; "
+            "frame-src https://challenges.cloudflare.com;"
+        ),
     }
 
     # File Upload Settings (Production-Ready)
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB max total request size
     UPLOAD_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB max per file
     ALLOWED_UPLOAD_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
-    # On VPS, set UPLOAD_FOLDER=/var/www/ideahub/static/uploads/menu in .env
+    # On VPS, set UPLOAD_FOLDER=/var/www/pos/static/uploads/menu in .env
     # Falls back to local static dir for development
     UPLOAD_FOLDER = os.environ.get(
         'UPLOAD_FOLDER',
@@ -177,10 +194,10 @@ class Config:
 
     # Redis lets Socket.IO broadcasts and rate limits work across processes/hosts.
     SOCKETIO_MESSAGE_QUEUE = REDIS_URL
-    SOCKETIO_ASYNC_MODE = os.environ.get(
-        "SOCKETIO_ASYNC_MODE",
-        "eventlet" if FLASK_ENV == "production" else "threading",
-    )
+    # Phase 7 standardizes every environment on Flask-SocketIO's threaded
+    # transport. Keeping this explicit prevents a stale production .env value
+    # from silently re-enabling the removed Eventlet runtime.
+    SOCKETIO_ASYNC_MODE = "threading"
 
     # Short-lived read-through caching. Operational/live transaction data is
     # deliberately excluded; menu mutations explicitly invalidate these keys.

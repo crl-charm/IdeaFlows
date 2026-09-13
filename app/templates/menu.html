@@ -423,13 +423,12 @@ let detailItemId = null;
 let detailItemQuantity = 1;
 let detailItemAvailable = true;
 
-const socket = io();
+const socket = window.getIdeaFlowSocket();
+const refreshMenu = window.createDebouncedRefresh(function () {
+  loadCategories(loadMenuItems);
+}, 150);
 
-socket.on('menu_update', function() {
-  loadCategories(function() {
-    loadMenuItems();
-  });
-});
+if (socket) socket.on('menu_update', refreshMenu);
 
 document.addEventListener('DOMContentLoaded', function() {
   loadCategories(function() {

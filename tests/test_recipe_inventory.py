@@ -3,7 +3,7 @@ from decimal import Decimal
 from datetime import datetime, UTC
 
 from app import create_app, db
-from app.models import Admin, CustomerSession, MenuItem, MenuItemIngredient, SpaceType
+from app.models import Admin, CustomerSession, MenuItem, MenuItemIngredient, Order, SpaceType
 from app.models.inventory import InventoryItem
 from app.db.migrator import SchemaMigrator
 from app.repositories.inventory_repository import InventoryRepository
@@ -424,6 +424,39 @@ class TestOrdering:
             assert not isinstance(result, tuple)
             db.session.refresh(inv)
             assert float(inv.stock_qty) == 4.0
+
+    def test_order_and_stock_roll_back_together_if_deduction_loses_a_race(
+        self, app, monkeypatch
+    ):
+        with app.app_context():
+            meal = MenuItem(
+                name="Race Meal",
+                price=Decimal("80"),
+                category="Main",
+                is_available=True,
+            )
+            db.session.add(meal)
+            session = self._active_session()
+            db.session.commit()
+
+            monkeypatch.setattr(
+                InventoryService, "validate_order_stock", lambda *_args, **_kwargs: None
+            )
+            monkeypatch.setattr(
+                InventoryService, "deduct_on_order", lambda *_args, **_kwargs: False
+            )
+
+            before = Order.query.count()
+            service = OrderService(repo=OrderRepository(), notifier=get_notifier())
+            result = service.add_order(
+                session_id=session.id,
+                items=[{"menu_item_id": meal.id, "quantity": 1}],
+                handled_by=None,
+            )
+
+            assert isinstance(result, tuple)
+            assert result[1] == 409
+            assert Order.query.count() == before
 
     def test_insufficient_stock_returns_message(self, app):
         with app.app_context():

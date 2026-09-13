@@ -118,7 +118,10 @@ class SessionService:
     def checkout(
         self, session_id: int, payment_method: str = "cash", amount_tendered: Any = None
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
-        sess = self.repo.get_session(session_id)
+        # Serialize checkout attempts for this session on databases that support
+        # row locks (MySQL in production). This prevents two different browser
+        # keys from creating two transactions at the same time.
+        sess = self.repo.get_session_for_update(session_id)
         if not sess:
             return {"error": "Session not found"}, 404
         if sess.status == "completed":

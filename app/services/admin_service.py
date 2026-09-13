@@ -108,6 +108,25 @@ class AdminService:
             )
         return records
 
+    def customer_count(self) -> int:
+        return self.repo.count_customer_sessions()
+
+    def space_prices(self) -> list[dict[str, Any]]:
+        data = []
+        for space, last_changed in self.repo.list_spaces_with_latest_price_change():
+            rate_per_minute = float(space.rate_per_minute or 0)
+            data.append(
+                {
+                    "id": space.id,
+                    "name": space.name,
+                    "rate_per_minute": rate_per_minute,
+                    "hourly_rate": rate_per_minute * 60,
+                    "last_changed": last_changed.isoformat() if last_changed else "Never",
+                    "description": space.description or "",
+                }
+            )
+        return data
+
     def staff_attendance(self):
         logs = self.repo.list_staff_attendance()
         return [

@@ -119,6 +119,8 @@
 </style>
 
 <script>
+const refreshExpenses = window.createDebouncedRefresh(loadExpenses, 150);
+
 document.addEventListener('DOMContentLoaded', function() {
   loadExpenses();
 
@@ -134,11 +136,12 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Socket.IO for real-time live synchronization
-  if (typeof io !== 'undefined') {
+  if (typeof window.getIdeaFlowSocket === 'function') {
     try {
-      const socket = io();
+      const socket = window.getIdeaFlowSocket();
+      if (!socket) return;
       socket.on('expenses_update', function(data) {
-        loadExpenses();
+        refreshExpenses();
       });
     } catch (e) {
       console.warn('Socket connection note:', e);
@@ -308,7 +311,7 @@ async function createExpense() {
       document.getElementById('expenseDate').value = today;
 
       // Reload expenses list
-      loadExpenses();
+      refreshExpenses();
     } else {
       const errMsg = body.error || 'Failed to log expense.';
       if (typeof showToast === 'function') {
@@ -321,7 +324,7 @@ async function createExpense() {
     console.error('Error logging expense:', err);
     if (err.data && err.data.duplicate) {
       showToast('This expense is already being processed. The list will refresh.', 'info');
-      loadExpenses();
+      refreshExpenses();
     } else if (typeof showToast === 'function') {
       showToast(err.message || 'Network error while logging expense.', 'error');
     } else {

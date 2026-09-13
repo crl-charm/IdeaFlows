@@ -126,18 +126,16 @@
 {% block scripts %}
 <script>
 // Socket.IO for real-time updates
-const socket = io();
+const socket = window.getIdeaFlowSocket();
+const refreshExpenses = window.createDebouncedRefresh(loadExpenses, 150);
 
-socket.on('expenses_update', function(data) {
-  console.log('Expenses update:', data);
-  loadExpenses();
-});
+if (socket) socket.on('expenses_update', refreshExpenses);
 
-socket.on('connect', function() {
+if (socket) socket.on('connect', function() {
   console.log('Connected to server for real-time updates');
 });
 
-socket.on('disconnect', function() {
+if (socket) socket.on('disconnect', function() {
   console.log('Disconnected from server');
 });
 
@@ -273,14 +271,14 @@ async function createExpense() {
       document.getElementById('description').value = '';
       document.getElementById('amount').value = '';
       document.getElementById('expenseDate').value = '';
-      loadExpenses();
+      refreshExpenses();
     } else {
       showToast(data.error || 'Error logging expense', 'error');
     }
   } catch (err) {
     if (err.data && err.data.duplicate) {
       showToast('This expense is already being processed. The list will refresh.', 'info');
-      loadExpenses();
+      refreshExpenses();
     } else {
       showToast(err.message || 'Error logging expense', 'error');
     }
@@ -305,7 +303,7 @@ async function deleteExpense(expId, button) {
     if (!data) return;
       if (data.success) {
         showToast('Expense deleted', 'success');
-        loadExpenses();
+        refreshExpenses();
       } else {
         showToast(data.error || 'Error deleting expense', 'error');
       }

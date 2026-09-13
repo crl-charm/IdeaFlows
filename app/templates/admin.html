@@ -858,11 +858,11 @@
   }
 
   function loadCustomerStats() {
-    fetch("/api/admin/customer-records", { credentials: "include" })
+    fetch("/api/admin/customer-count", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data)) {
-          document.getElementById("total-customers").textContent = data.length;
+        if (Number.isInteger(data.count)) {
+          document.getElementById("total-customers").textContent = data.count;
         }
       })
       .catch(() => {
@@ -1287,15 +1287,14 @@
   loadStaffAnalytics();
   loadCapacity();
   loadSpacePrices();
-  window.createSmartPoller(loadUsers, 30000);
-  window.createSmartPoller(loadStaffAnalytics, 60000);
-  window.createSmartPoller(loadCapacity, 60000);
-  window.createSmartPoller(loadSpacePrices, 120000);
+  window.createSmartPoller(loadUsers, 30000, { runImmediately: false });
+  window.createSmartPoller(loadStaffAnalytics, 60000, { runImmediately: false });
+  window.createSmartPoller(loadCapacity, 60000, { runImmediately: false });
+  window.createSmartPoller(loadSpacePrices, 120000, { runImmediately: false });
 
   // CONNECT SOCKET.IO FOR REAL-TIME STAFF UPDATES
-  const socket = io();
-  socket.on('staff_status_change', function (data) {
-    console.log("Staff status change received:", data);
+  const socket = window.getIdeaFlowSocket();
+  const refreshStaffStatus = window.createDebouncedRefresh(function () {
     loadUsers();
     loadStaffAnalytics();
 
@@ -1304,7 +1303,10 @@
     if (modalEl && modalEl.classList.contains("show")) {
       loadStaffAttendanceData();
     }
-  });
+  }, 150);
+  if (socket) {
+    socket.on('staff_status_change', refreshStaffStatus);
+  }
 
 </script>
 {% endblock %}

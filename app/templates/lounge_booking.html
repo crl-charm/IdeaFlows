@@ -781,6 +781,6 @@ function goToCheckout(sessionId) {
 }
 
 loadSchedule();
-window.createSmartPoller(loadSchedule, 30000);
+window.createSmartPoller(loadSchedule, 30000, { runImmediately: false });
 </script>
 {% endblock %}

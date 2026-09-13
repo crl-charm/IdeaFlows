@@ -631,7 +631,7 @@
 
     /**
      * CSRF-aware fetch wrapper
-     * Automatically includes CSRF token from meta tag for state-changing requests
+     * Automatically includes CSRF and retry-safe request keys for writes.
      */
     window.csrfFetch = function (url, options) {
       options = options || {};
@@ -648,6 +648,43 @@
 
       if (['POST', 'PUT', 'PATCH'].includes(method) && options.body instanceof FormData) {
         headers.delete('Content-Type');
+      }
+
+      // Keep the same key only while an identical write has an uncertain result.
+      // A normal HTTP response clears it; a lost connection keeps it for retry.
+      let automaticRequestKey = null;
+      let automaticStorageKey = null;
+      if (isWrite && !headers.has('Idempotency-Key')) {
+        let bodyIdentity = '';
+        if (typeof options.body === 'string') {
+          bodyIdentity = options.body;
+        } else if (options.body instanceof FormData) {
+          const parts = [];
+          options.body.forEach(function (value, name) {
+            const identity = value instanceof File
+              ? `${value.name}:${value.size}:${value.lastModified}`
+              : String(value);
+            parts.push(`${name}=${identity}`);
+          });
+          bodyIdentity = parts.sort().join('&');
+        }
+        const source = `${method}:${url}:${bodyIdentity}`;
+        let hash = 2166136261;
+        for (let index = 0; index < source.length; index += 1) {
+          hash ^= source.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+        automaticStorageKey = `ideaflow:pending-write:${hash >>> 0}`;
+        try {
+          automaticRequestKey = sessionStorage.getItem(automaticStorageKey);
+          if (!automaticRequestKey) {
+            automaticRequestKey = window.createIdempotencyKey();
+            sessionStorage.setItem(automaticStorageKey, automaticRequestKey);
+          }
+        } catch (_storageError) {
+          automaticRequestKey = window.createIdempotencyKey();
+        }
+        headers.set('Idempotency-Key', automaticRequestKey);
       }
 
       options.headers = headers;
@@ -673,7 +710,18 @@
         feedbackButton.replaceChildren(spinner, document.createTextNode('Processing...'));
       }
 
-      return fetch(url, options).finally(function () {
+      return fetch(url, options).then(function (response) {
+        if (automaticStorageKey && response.status < 500 && response.status !== 409) {
+          try {
+            if (sessionStorage.getItem(automaticStorageKey) === automaticRequestKey) {
+              sessionStorage.removeItem(automaticStorageKey);
+            }
+          } catch (_storageError) {
+            // Storage is optional; the server still received a request key.
+          }
+        }
+        return response;
+      }).finally(function () {
         if (!feedbackButton || feedbackButton.dataset.fetchPending !== 'true') return;
         feedbackButton.innerHTML = originalHTML;
         feedbackButton.disabled = false;
@@ -800,6 +848,42 @@
 
       if (runImmediately) { window.setTimeout(tick, 0); } else { schedule(); }
       return { stop };
+    };
+
+    /** Return the single Socket.IO client owned by this browser page. */
+    window.getIdeaFlowSocket = function getIdeaFlowSocket() {
+      if (window.__ideaFlowSocket) return window.__ideaFlowSocket;
+      if (typeof window.io !== "function") {
+        console.warn("Real-time updates are unavailable; page refreshes will still work.");
+        return null;
+      }
+      window.__ideaFlowSocket = window.io({
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 10000,
+        randomizationFactor: 0.5
+      });
+      return window.__ideaFlowSocket;
+    };
+
+    /** Coalesce a burst of local and Socket.IO refresh requests into one call. */
+    window.createDebouncedRefresh = function createDebouncedRefresh(fn, delayMs) {
+      let timer = null;
+      let latestArgs = [];
+      const delay = Math.max(0, Number(delayMs) || 150);
+      function schedule() {
+        latestArgs = Array.from(arguments);
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(function () {
+          timer = null;
+          fn.apply(null, latestArgs);
+        }, delay);
+      }
+      schedule.cancel = function () {
+        if (timer) window.clearTimeout(timer);
+        timer = null;
+      };
+      return schedule;
     };
   </script>
 
@@ -1018,9 +1102,15 @@
     (function debtDueNotifier() {
       const alerted = new Set();
       const badges = document.querySelectorAll("#debt-badge, .debt-badge-drawer");
+      const endpoint = {% if session.get("role") == "admin" %}
+        "/admin/receivables/api/receivables/unpaid";
+      {% else %}
+        "/receivables-view/api/receivables/unpaid";
+      {% endif %}
       async function poll() {
+        if (!badges.length) return;
         try {
-          const res = await fetch("/admin/receivables/api/receivables/unpaid", { credentials: "include" });
+          const res = await fetch(endpoint, { credentials: "include" });
           if (!res.ok) return;
           const data = await res.json();
           if (!data.success) return;
@@ -1046,6 +1136,7 @@
     (function payablesDueNotifier() {
       const badges = document.querySelectorAll(".payables-badge");
       async function poll() {
+        if (!badges.length) return;
         try {
           const res = await fetch("/admin/payables/api/due-count", { credentials: "include" });
           if (!res.ok) return;

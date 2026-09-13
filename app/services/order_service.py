@@ -143,11 +143,27 @@ class OrderService:
         inv_repo = InventoryRepository()
         inv_service = InventoryService(repo=inv_repo)
         
+        deduction_succeeded = True
         for item in items:
             menu_item_id = item.get("menu_item_id")
             qty = item.get("quantity", 1)
             if menu_item_id:
-                inv_service.deduct_on_order(menu_item_id, qty)
+                deduction_succeeded = inv_service.deduct_on_order(
+                    menu_item_id, qty, commit=False
+                ) and deduction_succeeded
+
+        if not deduction_succeeded:
+            from app import db
+
+            db.session.rollback()
+            return {
+                "error": "INSUFFICIENT_STOCK",
+                "message": "Stock changed while the order was being saved. Please refresh and try again.",
+            }, 409
+
+        # The order, its items, inventory deductions, and inventory logs commit
+        # together. A failure rolls back the entire business action.
+        self.repo.commit()
         
         self.notifier.order_status_changed({"order_id": order_id, "status": "preparing", "session_id": session_id})
         return {"message": "Order added successfully", "order_id": order_id}

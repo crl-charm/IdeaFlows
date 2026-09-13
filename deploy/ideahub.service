@@ -31,12 +31,14 @@ Environment=AUTO_MIGRATE_ON_STARTUP=false
 ExecStartPre=/var/www/ideahub/.venv/bin/python -m app.db.run_migrations
 
 # The gunicorn command:
-#   --worker-class eventlet  = required for Flask-SocketIO
-#   -w 1                     = eventlet requires exactly 1 worker
+#   --worker-class gthread   = threaded worker supported by simple-websocket
+#   --threads 50             = HTTP/WebSocket concurrency within the process
+#   -w 1                     = avoids sticky-session requirements on one host
 #   --timeout 120            = kills hung workers after 2 minutes
 #   wsgi:application         = uses the socketio-wrapped WSGI callable
 ExecStart=/var/www/ideahub/.venv/bin/gunicorn \
-    --worker-class eventlet \
+    --worker-class gthread \
+    --threads 50 \
     -w 1 \
     --timeout 120 \
     --graceful-timeout 30 \

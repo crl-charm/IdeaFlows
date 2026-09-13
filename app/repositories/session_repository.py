@@ -20,6 +20,14 @@ class SessionRepository:
             .first()
         )
 
+    def get_session_for_update(self, session_id: int) -> Optional[CustomerSession]:
+        return (
+            CustomerSession.query.options(selectinload(CustomerSession.space_type))
+            .filter_by(id=session_id)
+            .with_for_update()
+            .first()
+        )
+
     def get_active_sessions(self) -> list[CustomerSession]:
         return (
             CustomerSession.query.options(selectinload(CustomerSession.space_type))

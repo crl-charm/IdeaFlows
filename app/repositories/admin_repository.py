@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app import db
 from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, User, StaffPerformanceLog
+from app.models.space_price_history import SpacePriceHistory
 
 
 class AdminRepository:
@@ -49,6 +50,28 @@ class AdminRepository:
                 selectinload(CustomerSession.space_type),
             )
             .order_by(CustomerSession.time_in.desc())
+            .all()
+        )
+
+    def count_customer_sessions(self) -> int:
+        return CustomerSession.query.count()
+
+    def list_spaces_with_latest_price_change(self):
+        latest_history = (
+            db.session.query(
+                SpacePriceHistory.space_type_id.label("space_type_id"),
+                func.max(SpacePriceHistory.changed_at).label("last_changed"),
+            )
+            .group_by(SpacePriceHistory.space_type_id)
+            .subquery()
+        )
+        return (
+            db.session.query(SpaceType, latest_history.c.last_changed)
+            .outerjoin(
+                latest_history,
+                latest_history.c.space_type_id == SpaceType.id,
+            )
+            .order_by(SpaceType.name.asc())
             .all()
         )
 
