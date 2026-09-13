@@ -59,6 +59,63 @@ def _check_session_auth() -> Optional[Tuple]:
         flash("Please log in first!", "danger")
         return redirect("/login")
 
+    # Ensure the stored user_id actually refers to a valid users.User row.
+    # If it doesn't, try to remap admin sessions (admins.username -> users.username).
+    try:
+        from app.models import User
+
+        stored_user_id = session.get("user_id")
+        if stored_user_id is not None:
+            found = User.query.get(stored_user_id)
+            if not found:
+                # If session user_id doesn't map to a User, try remapping via known
+                # admin identity (either account_type/username or Admin.id).
+                account_type = session.get("account_type")
+                username = session.get("username")
+
+                # First try: if session already has account_type/admin username, map to User
+                if account_type == "admin" and username:
+                    admin_user = User.query.filter_by(username=username).first()
+                    if admin_user:
+                        session["user_id"] = admin_user.id
+                        # ensure account_type is consistent
+                        session["account_type"] = "admin"
+                    else:
+                        session.clear()
+                        if _expects_json_response():
+                            return jsonify({"success": False, "error": "Unauthorized"}), 401
+                        flash("Please log in first!", "danger")
+                        return redirect("/login")
+                else:
+                    # Second try: maybe stored_user_id is actually an Admin.id (legacy).
+                    from app.models import Admin
+
+                    maybe_admin = Admin.query.get(stored_user_id)
+                    if maybe_admin:
+                        admin_user = User.query.filter_by(username=maybe_admin.username).first()
+                        if admin_user:
+                            session["user_id"] = admin_user.id
+                            session["username"] = maybe_admin.username
+                            session["account_type"] = "admin"
+                        else:
+                            session.clear()
+                            if _expects_json_response():
+                                return jsonify({"success": False, "error": "Unauthorized"}), 401
+                            flash("Please log in first!", "danger")
+                            return redirect("/login")
+                    else:
+                        session.clear()
+                        if _expects_json_response():
+                            return jsonify({"success": False, "error": "Unauthorized"}), 401
+                        flash("Please log in first!", "danger")
+                        return redirect("/login")
+    except Exception:
+        session.clear()
+        if _expects_json_response():
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        flash("Please log in first!", "danger")
+        return redirect("/login")
+
     last_activity = session.get("last_activity")
     if last_activity:
         session_timeout = current_app.config.get("PERMANENT_SESSION_LIFETIME", 3600 * 24)

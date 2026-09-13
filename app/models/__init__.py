@@ -1,4 +1,5 @@
 from .user import User
+from .admin import Admin
 from .space_type import SpaceType
 from .space_price_history import SpacePriceHistory
 from .customer_session import CustomerSession
@@ -24,6 +25,7 @@ from .finance import FinanceBudget, FinanceTransaction
 # This prevents importing incorrect model names
 __all__ = [
     'User',
+    'Admin',
     'SpaceType',
     'SpacePriceHistory',
     'CustomerSession',

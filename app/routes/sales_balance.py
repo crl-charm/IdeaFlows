@@ -7,7 +7,9 @@ from flask import Blueprint, request, render_template, session
 
 from app.dto.api_response import api_error, api_ok
 
+from app.utils.billing import calculate_time_bill
 from app import db, csrf
+from app.core.idempotency import idempotent_request
 from app.repositories.sales_repository import SalesRepository
 from app.services.daily_balance_export_service import DailyBalanceExportService
 from app.services.sales_service import SalesService
@@ -37,12 +39,18 @@ def api_list_reports() -> tuple:
 @sales_bp.route("/api/reports", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-generate-sales-report")
 def api_generate_report() -> tuple:
     data = request.get_json()
     report_date = date.fromisoformat(data.get("report_date"))
+    user_id = session.get("user_id")
+    
+    if not user_id:
+        return api_error("User session not found", status=400)
+    
     result = _service.generate_report(
         report_date=report_date,
-        generated_by=session.get("user_id"),
+        generated_by=user_id,
         notes=data.get("notes"),
     )
     return api_ok(result.get("data"), status=201)
@@ -106,14 +114,20 @@ def api_list_soft_balances() -> tuple:
 @sales_bp.route("/api/soft-balances", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-soft-balance")
 def api_create_soft_balance() -> tuple:
     data = request.get_json()
     balance_date = date.fromisoformat(data.get("balance_date"))
     period = (data.get("period") or "AM").upper()
+    user_id = session.get("user_id")
+    
+    if not user_id:
+        return api_error("User session not found", status=400)
+    
     result = _service.create_soft_balance(
         balance_date=balance_date,
         period=period,
-        generated_by=session.get("user_id"),
+        generated_by=user_id,
         notes=data.get("notes"),
     )
     return api_ok(result.get("data"), status=201)
@@ -125,30 +139,47 @@ def api_today_stats() -> tuple:
     from app.models import Transaction, CustomerSession, Receivable, Order, OrderItem
     from datetime import datetime, date
     from sqlalchemy import func
+    from sqlalchemy.orm import selectinload
     from decimal import Decimal
+    from app.utils.dates import day_bounds
 
     today = date.today()
+    start_at, end_at = day_bounds(today)
 
     # 1. Cash on Hand
-    transactions_today = Transaction.query.filter(func.date(Transaction.created_at) == today).all()
-    cash_on_hand = sum(tx.total_bill for tx in transactions_today)
+    cash_on_hand = (
+        db.session.query(func.coalesce(func.sum(Transaction.total_bill), 0))
+        .filter(Transaction.created_at >= start_at, Transaction.created_at < end_at)
+        .scalar()
+    ) or Decimal("0.00")
 
     # 2. Expected Cash on Hand (Cash on Hand + Sum of pending balances of active sessions)
     pending_balance_sum = Decimal("0.00")
-    active_sessions = CustomerSession.query.filter_by(status="active").all()
+    active_sessions = (
+        CustomerSession.query.options(selectinload(CustomerSession.space_type))
+        .filter_by(status="active")
+        .all()
+    )
+    session_ids = [active_session.id for active_session in active_sessions]
+    food_totals = {}
+    if session_ids:
+        food_totals = dict(
+            db.session.query(
+                Order.customer_session_id,
+                func.coalesce(func.sum(OrderItem.quantity * OrderItem.price), 0),
+            )
+            .join(Order, OrderItem.order_id == Order.id)
+            .filter(Order.customer_session_id.in_(session_ids))
+            .group_by(Order.customer_session_id)
+            .all()
+        )
     now = datetime.utcnow()
     for sess in active_sessions:
         minutes_used = (now - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute if sess.space_type else Decimal("0.00")
-        time_bill = Decimal(str(max(minutes_used, 0.0))) * rate
+        time_bill = calculate_time_bill(sess.space_type, minutes_used)
         
-        food_total = (
-            db.session.query(func.coalesce(func.sum(OrderItem.quantity * OrderItem.price), 0))
-            .select_from(OrderItem)
-            .join(Order, OrderItem.order_id == Order.id)
-            .filter(Order.customer_session_id == sess.id)
-            .scalar()
-        ) or Decimal("0.00")
+        food_total = food_totals.get(sess.id, Decimal("0.00"))
         
         pending_balance_sum += time_bill + Decimal(str(food_total))
 
@@ -157,7 +188,8 @@ def api_today_stats() -> tuple:
     # 3. Today's Paid Receivables
     receivables_paid_today = Receivable.query.filter(
         Receivable.paid == True,
-        func.date(Receivable.paid_at) == today
+        Receivable.paid_at >= start_at,
+        Receivable.paid_at < end_at,
     ).all()
     
     debtors_count = len(receivables_paid_today)

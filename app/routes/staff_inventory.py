@@ -27,10 +27,4 @@ def api_list_items() -> tuple:
 @staff_inventory_bp.route("/api/dashboard-items", methods=["GET"])
 @login_required
 def api_dashboard_items() -> tuple:
-    return jsonify(
-        {
-            "success": True,
-            "data": _service.build_recipe_inventory_items(),
-            "direct_stock": _service.build_direct_stock_items(),
-        }
-    ), 200
+    return jsonify({"success": True, **_service.build_dashboard_snapshot()}), 200

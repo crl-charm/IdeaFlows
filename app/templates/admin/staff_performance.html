@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Staff Performance - IdeaHub{% endblock %}
+{% block title %}Staff Performance - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -175,7 +175,7 @@ function createLog() {
     admin_note: document.getElementById('adminNote').value,
   };
 
-  fetch('/admin/staff-performance/api/logs', {
+  csrfFetch('/admin/staff-performance/api/logs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

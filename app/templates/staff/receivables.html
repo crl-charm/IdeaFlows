@@ -1,0 +1,193 @@
+{% extends "layout.html" %}
+
+{% block title %}Staff Receivables - IdeaFlow{% endblock %}
+
+{% block content %}
+
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h1>Staff Receivables</h1>
+      <small class="text-muted">View and log customer receivables when the owner is unavailable.</small>
+    </div>
+    <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#addReceivableModal">
+      + Add Receivable
+    </button>
+  </div>
+
+  <div class="row mb-4 g-2">
+    <div class="col-md-4">
+      <div class="card bg-secondary text-white">
+        <div class="card-body">
+          <small>Total Receivables</small>
+          <div class="h5 mb-0">₱<span id="total-receivables">0.00</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card bg-info text-white">
+        <div class="card-body">
+          <small>Unpaid Count</small>
+          <div class="h5 mb-0" id="unpaid-count">0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h5>Receivable Records</h5>
+    </div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Contact</th>
+              <th>Amount Owed</th>
+              <th>Due Date</th>
+              <th>Approved By</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="receivables-table-body">
+            <tr><td colspan="6" class="text-center text-muted py-3">Loading receivables…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Receivable Modal -->
+<div class="modal fade" id="addReceivableModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Log Receivable</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Customer Name *</label>
+          <input type="text" id="customerName" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Contact</label>
+          <input type="text" id="customerContact" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Items Description *</label>
+          <textarea id="itemsDesc" class="form-control" rows="3" required></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount Owed (₱) *</label>
+          <input type="number" id="amountOwed" class="form-control" step="0.01" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Approved By Staff</label>
+          <input type="text" id="approvedByStaff" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date Taken *</label>
+          <input type="date" id="incurredDate" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Due Date *</label>
+          <input type="date" id="dueDate" class="form-control" required>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-warning" onclick="createReceivable()">Add</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let receivablesCache = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+  loadReceivables();
+  document.getElementById('incurredDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('dueDate').value = new Date().toISOString().split('T')[0];
+});
+
+function loadReceivables() {
+  fetch('/receivables-view/api/receivables', { credentials: 'include' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        receivablesCache = data.data;
+        renderReceivables();
+      }
+    });
+}
+
+function renderReceivables() {
+  const tbody = document.getElementById('receivables-table-body');
+  tbody.innerHTML = '';
+
+  let total = 0;
+  let unpaidCount = 0;
+
+  receivablesCache.forEach(r => {
+    const status = r.paid ? 'Paid' : 'Unpaid';
+    if (!r.paid) {
+      total += r.amount_owed;
+      unpaidCount += 1;
+    }
+    tbody.innerHTML += `
+      <tr>
+        <td>${r.customer_name}</td>
+        <td>${r.customer_contact || '-'}</td>
+        <td>₱${r.amount_owed.toFixed(2)}</td>
+        <td>${r.due_date}</td>
+        <td>${r.approved_by_staff || '-'}</td>
+        <td>${status}</td>
+      </tr>
+    `;
+  });
+
+  if (receivablesCache.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No receivables found.</td></tr>';
+  }
+
+  document.getElementById('total-receivables').textContent = total.toFixed(2);
+  document.getElementById('unpaid-count').textContent = unpaidCount;
+}
+
+function createReceivable() {
+  const payload = {
+    customer_name: document.getElementById('customerName').value,
+    customer_contact: document.getElementById('customerContact').value,
+    items_description: document.getElementById('itemsDesc').value,
+    amount_owed: parseFloat(document.getElementById('amountOwed').value),
+    due_date: document.getElementById('dueDate').value,
+    approved_by_staff: document.getElementById('approvedByStaff').value,
+    incurred_date: document.getElementById('incurredDate').value,
+  };
+
+  csrfFetch('/receivables-view/api/receivables', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast('Receivable logged', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('addReceivableModal')).hide();
+        loadReceivables();
+      } else {
+        showToast(data.error || 'Failed to save receivable', 'error');
+      }
+    });
+}
+</script>
+{% endblock %}

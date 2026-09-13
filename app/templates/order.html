@@ -719,7 +719,7 @@
 {% block scripts %}
 <script>
 const sessionId = parseInt("{{ session_id }}");
-const socket = io();
+const socket = window.getIdeaFlowSocket();
 let cart = [];
 let currentOrders = [];
 let menuById = {};
@@ -727,9 +727,8 @@ let allMenuData = [];
 let activeCategory = "All";
 let searchTerm = "";
 
-socket.on('menu_update', function() {
-  loadMenu();
-});
+const refreshOrderMenu = window.createDebouncedRefresh(loadMenu, 150);
+if (socket) socket.on('menu_update', refreshOrderMenu);
 
 function parseCategory(category) {
   if (!category) return { major: "Other", sub: "Other" };
@@ -822,10 +821,18 @@ function renderMenuItems() {
   filtered.forEach(item => {
     const card = document.createElement("div");
     card.className = item.is_available === false ? "menu-item-card unavailable" : "menu-item-card";
+
+    let nameHtml = `<h6 class="menu-item-name">${item.name}</h6>`;
+    if (item.is_out_of_stock) {
+      nameHtml = `<h6 class="menu-item-name" style="color: #ff9800 !important;">${item.name} <span class="badge bg-danger ms-1" style="font-size: 0.65rem; font-weight: normal; vertical-align: middle;">Out of Stock</span></h6>`;
+    } else if (item.is_low_stock) {
+      nameHtml = `<h6 class="menu-item-name" style="color: #ff9800 !important;">${item.name} <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem; font-weight: normal; vertical-align: middle;">Low Stock</span></h6>`;
+    }
+
     card.innerHTML = `
-      <div class="menu-item-image">${item.image_url ? `<img src="${item.image_url}" alt="${item.name}">` : '🍽️'}</div>
+      <div class="menu-item-image">${item.image_url ? `<img loading="lazy" decoding="async" src="${item.image_url}" alt="${item.name}">` : '🍽️'}</div>
       <div class="menu-item-content">
-        <h6 class="menu-item-name">${item.name}</h6>
+        ${nameHtml}
         <div class="menu-item-price">₱${Number(item.price).toFixed(2)}</div>
         ${item.is_available === false
           ? `<button type="button" class="add-to-cart-btn unavailable-btn" onclick="showUnavailable('${item.name.replace(/'/g, "\\'")}')">Not Available</button>`
@@ -891,8 +898,19 @@ function loadCurrentOrders() {
     .catch(err => showToast("Failed to load current orders.", "error"));
 }
 
-function voidExistingItem(itemId) {
-  if (!confirm("Remove this order item?")) return;
+async function voidExistingItem(itemId) {
+  const item = currentOrders.find(i => i.id === itemId);
+  const itemName = item ? item.item_name : "this order item";
+  const confirmed = await showConfirmDialog({
+    title: "Remove Order Item",
+    message: `Are you sure you want to remove "${itemName}" from this order?`,
+    confirmText: "Remove Item",
+    confirmClass: "btn-danger",
+    iconType: "delete",
+    icon: '<i class="bi bi-trash3 fs-1 text-danger"></i>'
+  });
+  if (!confirmed) return;
+
   csrfFetch(`/api/void-item/${itemId}`, { method: "DELETE" })
     .then(res => res.json())
     .then(data => {
@@ -997,43 +1015,41 @@ function removeFromCart(id) {
   renderCart();
 }
 
-function submitOrder() {
+async function submitOrder() {
   if (cart.length === 0) {
     showToast("Cart is empty!", "error");
     return;
   }
   const submitBtn = document.getElementById("submit-btn");
-  submitBtn.disabled = true;
-  submitBtn.innerText = "Placing Order...";
   const items = cart.map(item => ({
     menu_item_id: item.id,
     quantity: item.quantity
   }));
-  csrfFetch("/api/add-order", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, items: items })
-  })
-    .then(res => res.json())
-    .then(data => {
-      if (data.error) {
-        showToast(data.error, "error");
-        submitBtn.disabled = false;
-        submitBtn.innerText = "Place Order";
-        return;
-      }
-      showToast("Order placed successfully! 🎉", "success");
-      cart = [];
-      renderCart();
+  try {
+    const data = await runButtonAction(submitBtn, {
+      label: "Placing order...",
+      slowLabel: "Still placing order..."
+    }, requestKey => fetchJSON("/api/add-order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": requestKey
+      },
+      body: JSON.stringify({ session_id: sessionId, items: items })
+    }));
+    if (!data) return;
+    showToast("Order placed successfully! 🎉", "success");
+    cart = [];
+    renderCart();
+    loadCurrentOrders();
+  } catch (err) {
+    if (err.data && err.data.duplicate) {
+      showToast("This order is already being processed. Current orders will refresh.", "info");
       loadCurrentOrders();
-      submitBtn.disabled = false;
-      submitBtn.innerText = "Place Order";
-    })
-    .catch(err => {
-      showToast("Failed to place order. Please try again.", "error");
-      submitBtn.disabled = false;
-      submitBtn.innerText = "Place Order";
-    });
+    } else {
+      showToast(err.message || "Failed to place order. Please try again.", "error");
+    }
+  }
 }
 
 function goBack() {

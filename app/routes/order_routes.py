@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, session as flask
 from app.utils.auth import login_required
 
 from app.core import get_notifier
+from app.core.idempotency import idempotent_request
 from app.repositories.order_repository import OrderRepository
 from app.services.order_service import OrderService
 
@@ -32,6 +33,7 @@ def get_menu():
 # ----------------------------------
 @order_bp.route("/api/add-order", methods=["POST"])
 @login_required
+@idempotent_request("add-order")
 def add_order():
 
     data = request.get_json()
@@ -54,6 +56,7 @@ def add_order():
 # ----------------------------------
 @order_bp.route("/api/order-status/<int:order_id>", methods=["PUT"])
 @login_required
+@idempotent_request("update-order-status")
 def update_order_status(order_id):
     data = request.get_json(silent=True) or {}
     new_status = data.get("status")
@@ -111,6 +114,7 @@ def orders_view_page(session_id):
 
 @order_bp.route("/api/void-item/<int:item_id>", methods=["DELETE"])
 @login_required
+@idempotent_request("void-order-item")
 def void_item(item_id):
     resp = _service.void_item(item_id)
     if isinstance(resp, tuple):
@@ -124,6 +128,7 @@ def void_item(item_id):
 # ----------------------------------
 @order_bp.route("/api/order-item-status/<int:item_id>", methods=["PUT"])
 @login_required
+@idempotent_request("toggle-order-item-status")
 def toggle_order_item_status(item_id):
     resp = _service.toggle_order_item_status(item_id)
     if isinstance(resp, tuple):
@@ -137,6 +142,7 @@ def toggle_order_item_status(item_id):
 # ----------------------------------
 @order_bp.route("/api/session-served/<int:session_id>", methods=["POST"])
 @login_required
+@idempotent_request("mark-session-served")
 def session_served(session_id):
     resp = _service.mark_session_served(session_id)
     if isinstance(resp, tuple):

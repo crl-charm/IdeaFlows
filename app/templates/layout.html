@@ -7,12 +7,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="csrf-token" content="{{ csrf_token() }}">
 
-  <title>{% block title %}IdeaHub{% endblock %}</title>
+  <title>{% block title %}IdeaFlow{% endblock %}</title>
 
-  <!-- Google Fonts -->
+  <!-- Favicon -->
+  <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='images/Faviconlogo.jpg') }}?v=2">
+  <link rel="shortcut icon" type="image/jpeg" href="{{ url_for('static', filename='images/Faviconlogo.jpg') }}?v=2">
+
+  <!-- Google Fonts & CDN Preconnect -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+    rel="stylesheet">
 
   <!-- Bootstrap -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -288,9 +295,10 @@
   <!-- TOP NAVBAR -->
   <nav class="navbar navbar-expand-md mobile-top-bar navbar-light bg-white shadow-sm px-3 px-md-4">
 
-    <a class="navbar-brand mb-0" href="/dashboard">
-      <img src="{{ url_for('static', filename='css/images/logo.png') }}" alt="IdeaHub" class="site-logo"
+    <a class="navbar-brand mb-0 d-flex align-items-center gap-2" href="/dashboard">
+      <img src="{{ url_for('static', filename='css/images/logo.png') }}" alt="IdeaFlow" class="site-logo"
         style="height: 40px;" />
+      <span class="fw-bold text-dark d-none d-sm-inline" style="font-size: 1.1rem;">IdeaFlow</span>
     </a>
 
     <div class="d-flex align-items-center gap-2 ms-auto d-md-none">
@@ -399,23 +407,10 @@
         <i class="bi bi-building me-2"></i>Boardroom
       </button>
 
-      <!-- STAFF OPERATIONS (visible to all staff and admin) -->
-      {% if session.get("role") in ["admin", "staff"] %}
+      <!-- STAFF OPERATIONS -->
+      {% if session.get("role") == "staff" %}
       <div class="sidebar-section-label">Operations</div>
 
-      {% if session.get("role") == "admin" %}
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/inventory'">
-        <i class="bi bi-boxes me-2"></i>Inventory
-      </button>
-
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/menu'">
-        <i class="bi bi-menu-button-wide me-2"></i>Menu
-      </button>
-
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/expenses'">
-        <i class="bi bi-wallet2 me-2"></i>Expenses
-      </button>
-      {% else %}
       <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/inventory'">
         <i class="bi bi-boxes me-2"></i>Inventory
       </button>
@@ -427,9 +422,8 @@
       <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/expenses-view'">
         <i class="bi bi-wallet2 me-2"></i>Expenses
       </button>
-      {% endif %}
 
-      <button class="btn w-100 text-start mb-2 sidebar-btn nav-btn" onclick="window.location.href='/admin/receivables'">
+      <button class="btn w-100 text-start mb-2 sidebar-btn nav-btn" onclick="window.location.href='/receivables-view'">
         <i class="bi bi-people me-2"></i>Receivables
         <span id="debt-badge" class="badge bg-danger ms-1"
           style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
@@ -637,22 +631,60 @@
 
     /**
      * CSRF-aware fetch wrapper
-     * Automatically includes CSRF token from meta tag for state-changing requests
+     * Automatically includes CSRF and retry-safe request keys for writes.
      */
     window.csrfFetch = function (url, options) {
       options = options || {};
 
       const headers = new Headers(options.headers || {});
       const method = (options.method || 'GET').toUpperCase();
+      const isWrite = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method);
       const csrfToken = document.querySelector('meta[name="csrf-token"]');
       const token = csrfToken ? csrfToken.getAttribute('content') : '';
 
-      if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && token) {
+      if (isWrite && token) {
         headers.set('X-CSRFToken', token);
       }
 
       if (['POST', 'PUT', 'PATCH'].includes(method) && options.body instanceof FormData) {
         headers.delete('Content-Type');
+      }
+
+      // Keep the same key only while an identical write has an uncertain result.
+      // A normal HTTP response clears it; a lost connection keeps it for retry.
+      let automaticRequestKey = null;
+      let automaticStorageKey = null;
+      if (isWrite && !headers.has('Idempotency-Key')) {
+        let bodyIdentity = '';
+        if (typeof options.body === 'string') {
+          bodyIdentity = options.body;
+        } else if (options.body instanceof FormData) {
+          const parts = [];
+          options.body.forEach(function (value, name) {
+            const identity = value instanceof File
+              ? `${value.name}:${value.size}:${value.lastModified}`
+              : String(value);
+            parts.push(`${name}=${identity}`);
+          });
+          bodyIdentity = parts.sort().join('&');
+        }
+        const source = `${method}:${url}:${bodyIdentity}`;
+        let hash = 2166136261;
+        for (let index = 0; index < source.length; index += 1) {
+          hash ^= source.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+        automaticStorageKey = `ideaflow:pending-write:${hash >>> 0}`;
+        try {
+          automaticRequestKey = sessionStorage.getItem(automaticStorageKey);
+          if (!automaticRequestKey) {
+            automaticRequestKey = window.createIdempotencyKey();
+            sessionStorage.setItem(automaticStorageKey, automaticRequestKey);
+          }
+        } catch (_storageError) {
+          automaticRequestKey = window.createIdempotencyKey();
+        }
+        headers.set('Idempotency-Key', automaticRequestKey);
       }
 
       options.headers = headers;
@@ -661,7 +693,119 @@
         options.credentials = 'include';
       }
 
-      return fetch(url, options);
+      // Give older write buttons immediate feedback too. New critical actions
+      // use runButtonAction below for a specific label and idempotency key.
+      const active = document.activeElement;
+      const feedbackButton = isWrite && active && active.tagName === 'BUTTON' &&
+        !active.disabled && active.dataset.actionPending !== 'true' ? active : null;
+      let originalHTML = '';
+      if (feedbackButton) {
+        originalHTML = feedbackButton.innerHTML;
+        feedbackButton.disabled = true;
+        feedbackButton.setAttribute('aria-busy', 'true');
+        feedbackButton.dataset.fetchPending = 'true';
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        spinner.setAttribute('aria-hidden', 'true');
+        feedbackButton.replaceChildren(spinner, document.createTextNode('Processing...'));
+      }
+
+      return fetch(url, options).then(function (response) {
+        if (automaticStorageKey && response.status < 500 && response.status !== 409) {
+          try {
+            if (sessionStorage.getItem(automaticStorageKey) === automaticRequestKey) {
+              sessionStorage.removeItem(automaticStorageKey);
+            }
+          } catch (_storageError) {
+            // Storage is optional; the server still received a request key.
+          }
+        }
+        return response;
+      }).finally(function () {
+        if (!feedbackButton || feedbackButton.dataset.fetchPending !== 'true') return;
+        feedbackButton.innerHTML = originalHTML;
+        feedbackButton.disabled = false;
+        feedbackButton.removeAttribute('aria-busy');
+        delete feedbackButton.dataset.fetchPending;
+      });
+    };
+
+    /** Create a unique key so the server can recognize a retried write. */
+    window.createIdempotencyKey = function () {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    };
+
+    /**
+     * Run one button action at a time and always restore its visual state.
+     * The slow-message reassures users without cancelling a request that may
+     * already have committed on the server.
+     */
+    window.runButtonAction = async function (button, options, action) {
+      options = options || {};
+      if (!button || button.dataset.actionPending === 'true') return undefined;
+
+      const originalHTML = button.innerHTML;
+      const originalDisabled = button.disabled;
+      const pendingLabel = options.label || 'Processing...';
+      const slowLabel = options.slowLabel || 'Still working...';
+      button.dataset.actionPending = 'true';
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+
+      function renderPending(label) {
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner-border spinner-border-sm me-2';
+        spinner.setAttribute('aria-hidden', 'true');
+        button.replaceChildren(spinner, document.createTextNode(label));
+      }
+
+      renderPending(pendingLabel);
+      const slowTimer = window.setTimeout(function () {
+        if (button.dataset.actionPending === 'true') renderPending(slowLabel);
+      }, Number(options.slowAfterMs) || 4000);
+
+      const requestKey = button.dataset.retryRequestKey || window.createIdempotencyKey();
+      try {
+        const result = await action(requestKey);
+        delete button.dataset.retryRequestKey;
+        return result;
+      } catch (error) {
+        // An interrupted connection can hide a successful commit. Reusing the
+        // same key on the next click lets the server reject that uncertain retry.
+        if (!error.status || error.status >= 500) {
+          button.dataset.retryRequestKey = requestKey;
+        } else {
+          delete button.dataset.retryRequestKey;
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(slowTimer);
+        button.innerHTML = originalHTML;
+        button.disabled = originalDisabled;
+        button.removeAttribute('aria-busy');
+        delete button.dataset.actionPending;
+      }
+    };
+
+    /** Parse JSON consistently and surface useful API errors to callers. */
+    window.fetchJSON = async function (url, options) {
+      const response = await window.csrfFetch(url, options || {});
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = {};
+      }
+      if (!response.ok) {
+        const error = new Error(data.error || data.message || 'The request could not be completed.');
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+      return data;
     };
 
   </script>
@@ -705,6 +849,42 @@
       if (runImmediately) { window.setTimeout(tick, 0); } else { schedule(); }
       return { stop };
     };
+
+    /** Return the single Socket.IO client owned by this browser page. */
+    window.getIdeaFlowSocket = function getIdeaFlowSocket() {
+      if (window.__ideaFlowSocket) return window.__ideaFlowSocket;
+      if (typeof window.io !== "function") {
+        console.warn("Real-time updates are unavailable; page refreshes will still work.");
+        return null;
+      }
+      window.__ideaFlowSocket = window.io({
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 10000,
+        randomizationFactor: 0.5
+      });
+      return window.__ideaFlowSocket;
+    };
+
+    /** Coalesce a burst of local and Socket.IO refresh requests into one call. */
+    window.createDebouncedRefresh = function createDebouncedRefresh(fn, delayMs) {
+      let timer = null;
+      let latestArgs = [];
+      const delay = Math.max(0, Number(delayMs) || 150);
+      function schedule() {
+        latestArgs = Array.from(arguments);
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(function () {
+          timer = null;
+          fn.apply(null, latestArgs);
+        }, delay);
+      }
+      schedule.cancel = function () {
+        if (timer) window.clearTimeout(timer);
+        timer = null;
+      };
+      return schedule;
+    };
   </script>
 
   {% block scripts %}
@@ -722,6 +902,11 @@
 
       async function navigate(url, clickedEl) {
         if (!url || url.startsWith("#") || url.startsWith("javascript:")) return;
+        if (url === "/logout") {
+          window.location.href = url;
+          return;
+        }
+
         window.history.pushState({}, "", url);
         document.querySelectorAll(".top-nav-link, .nav-btn").forEach((node) => node.classList.remove("active"));
         if (clickedEl) clickedEl.classList.add("active");
@@ -917,9 +1102,15 @@
     (function debtDueNotifier() {
       const alerted = new Set();
       const badges = document.querySelectorAll("#debt-badge, .debt-badge-drawer");
+      const endpoint = {% if session.get("role") == "admin" %}
+        "/admin/receivables/api/receivables/unpaid";
+      {% else %}
+        "/receivables-view/api/receivables/unpaid";
+      {% endif %}
       async function poll() {
+        if (!badges.length) return;
         try {
-          const res = await fetch("/admin/receivables/api/receivables/unpaid", { credentials: "include" });
+          const res = await fetch(endpoint, { credentials: "include" });
           if (!res.ok) return;
           const data = await res.json();
           if (!data.success) return;
@@ -945,6 +1136,7 @@
     (function payablesDueNotifier() {
       const badges = document.querySelectorAll(".payables-badge");
       async function poll() {
+        if (!badges.length) return;
         try {
           const res = await fetch("/admin/payables/api/due-count", { credentials: "include" });
           if (!res.ok) return;

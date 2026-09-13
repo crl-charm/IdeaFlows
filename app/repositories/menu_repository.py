@@ -15,7 +15,8 @@ class MenuRepository:
     def list_all(self) -> list[MenuItem]:
         return (
             MenuItem.query.filter(
-                or_(MenuItem.status.is_(None), MenuItem.status != "deleted")
+                or_(MenuItem.status.is_(None), MenuItem.status != "deleted"),
+                or_(MenuItem.category.is_(None), db.func.trim(db.func.lower(MenuItem.category)) != "ingredient")
             )
             .order_by(MenuItem.name)
             .all()
@@ -24,7 +25,10 @@ class MenuRepository:
     def list_available(self) -> list[MenuItem]:
         return (
             MenuItem.query.filter_by(is_available=True)
-            .filter(or_(MenuItem.status.is_(None), MenuItem.status != "deleted"))
+            .filter(
+                or_(MenuItem.status.is_(None), MenuItem.status != "deleted"),
+                or_(MenuItem.category.is_(None), db.func.trim(db.func.lower(MenuItem.category)) != "ingredient")
+            )
             .order_by(MenuItem.name)
             .all()
         )
@@ -33,7 +37,8 @@ class MenuRepository:
         """Non-deleted items for staff/admin ordering (includes disabled items)."""
         return (
             MenuItem.query.filter(
-                or_(MenuItem.status.is_(None), MenuItem.status != "deleted")
+                or_(MenuItem.status.is_(None), MenuItem.status != "deleted"),
+                or_(MenuItem.category.is_(None), db.func.trim(db.func.lower(MenuItem.category)) != "ingredient")
             )
             .order_by(MenuItem.category.asc(), MenuItem.name.asc())
             .all()

@@ -683,6 +683,8 @@ function confirmSaveAndStart() {
   );
 }
 
+let confirmModalInstance = null;
+
 function openConfirmModal(title, message, onConfirm, options) {
   options = options || {};
   document.getElementById("confirm-title").textContent = title;
@@ -691,15 +693,21 @@ function openConfirmModal(title, message, onConfirm, options) {
   okBtn.textContent = options.confirmText || "Yes";
   okBtn.className = "btn px-4 " + (options.confirmClass || "btn-danger");
   pendingConfirmAction = onConfirm;
-  const modal = new bootstrap.Modal(document.getElementById("actionConfirmModal"));
-  modal.show();
+  if (!confirmModalInstance) {
+    const modalEl = document.getElementById("actionConfirmModal");
+    confirmModalInstance = new bootstrap.Modal(modalEl);
+    modalEl.addEventListener("hidden.bs.modal", () => {
+      pendingConfirmAction = null;
+    });
+  }
+  confirmModalInstance.show();
 }
 
 document.getElementById("confirm-ok-btn").addEventListener("click", () => {
-  const modalEl = document.getElementById("actionConfirmModal");
-  const modal = bootstrap.Modal.getInstance(modalEl);
-  if (modal) modal.hide();
-  if (typeof pendingConfirmAction === "function") pendingConfirmAction();
+  if (confirmModalInstance) confirmModalInstance.hide();
+  if (typeof pendingConfirmAction === "function") {
+    pendingConfirmAction();
+  }
   pendingConfirmAction = null;
 });
 
@@ -773,6 +781,6 @@ function goToCheckout(sessionId) {
 }
 
 loadSchedule();
-window.createSmartPoller(loadSchedule, 30000);
+window.createSmartPoller(loadSchedule, 30000, { runImmediately: false });
 </script>
 {% endblock %}

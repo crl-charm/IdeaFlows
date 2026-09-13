@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import text, inspect
+from app.models import Admin
 from app.models.finance import FinanceBudget, FinanceTransaction
 from app.models.soft_balance import SoftBalanceEntry
 from app.models.space_price_history import SpacePriceHistory
@@ -23,14 +24,24 @@ class SchemaMigrator:
             # Phase 3: Drop the obsolete reservations table if it exists
             db.session.execute(text("DROP TABLE IF EXISTS reservations"))
             db.session.commit()
+            
+            # Safe MySQL column modifications to support decimal stock
+            if db.engine.dialect.name == "mysql":
+                try:
+                    db.session.execute(text("ALTER TABLE inventory_items MODIFY COLUMN stock_qty DECIMAL(10,2) NOT NULL DEFAULT 0.00"))
+                    db.session.execute(text("ALTER TABLE inventory_logs MODIFY COLUMN change_qty DECIMAL(10,2) NOT NULL"))
+                    db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"[WARNING] Database column modification failed/skipped: {e}")
         except Exception as e:
-            print(f"⚠ Database migration skipped (database unavailable): {e}")
+            print(f"[WARNING] Database migration skipped (database unavailable): {e}")
             return
 
         try:
             inspector = inspect(db.engine)
         except Exception as e:
-            print(f"⚠ Database migration inspector failed: {e}")
+            print(f"[WARNING] Database migration inspector failed: {e}")
             return
 
         checks = [
@@ -49,6 +60,11 @@ class SchemaMigrator:
                 "users",
                 "job_role",
                 "ALTER TABLE users ADD COLUMN job_role VARCHAR(50) NOT NULL DEFAULT 'general'",
+            ),
+            (
+                "users",
+                "is_active",
+                "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
             ),
             ("orders", "handled_by", "ALTER TABLE orders ADD COLUMN handled_by INT NULL"),
             (
@@ -84,6 +100,11 @@ class SchemaMigrator:
                 "customer_sessions",
                 "amount_tendered",
                 "ALTER TABLE customer_sessions ADD COLUMN amount_tendered DECIMAL(10,2) NULL",
+            ),
+            (
+                "transactions",
+                "amount_tendered",
+                "ALTER TABLE transactions ADD COLUMN amount_tendered DECIMAL(10,2) NULL",
             ),
             (
                 "menu_items",
@@ -122,6 +143,16 @@ class SchemaMigrator:
                 "incurred_date",
                 "ALTER TABLE receivables ADD COLUMN incurred_date DATE NULL",
             ),
+            (
+                "menu_item_ingredients",
+                "unit",
+                "ALTER TABLE menu_item_ingredients ADD COLUMN unit VARCHAR(50) NULL",
+            ),
+            (
+                "menu_item_ingredients",
+                "conversion_ratio",
+                "ALTER TABLE menu_item_ingredients ADD COLUMN conversion_ratio DECIMAL(10,4) NOT NULL DEFAULT 1.0000",
+            ),
         ]
 
         # Cache existing columns to minimize database queries
@@ -144,7 +175,7 @@ class SchemaMigrator:
                 table_columns[table_name].add(column_name)
             except Exception as e:
                 db.session.rollback()
-                print(f"⚠ Column {column_name} on {table_name} skipped/failed: {e}")
+                print(f"[WARNING] Column {column_name} on {table_name} skipped/failed: {e}")
 
         self._ensure_indexes(db, inspector)
 
@@ -181,6 +212,36 @@ class SchemaMigrator:
                 "idx_bookings_status_end",
                 "CREATE INDEX idx_bookings_status_end ON boardroom_bookings (status, expected_end_at)",
             ),
+            (
+                "receivables",
+                "idx_receivables_paid_due",
+                "CREATE INDEX idx_receivables_paid_due ON receivables (paid, due_date)",
+            ),
+            (
+                "receivables",
+                "idx_receivables_paid_paid_at",
+                "CREATE INDEX idx_receivables_paid_paid_at ON receivables (paid, paid_at)",
+            ),
+            (
+                "expenses",
+                "idx_expenses_date_cat",
+                "CREATE INDEX idx_expenses_date_cat ON expenses (expense_date, category)",
+            ),
+            (
+                "orders",
+                "idx_orders_status_created",
+                "CREATE INDEX idx_orders_status_created ON orders (status, created_at)",
+            ),
+            (
+                "customer_sessions",
+                "idx_sessions_status_timein",
+                "CREATE INDEX idx_sessions_status_timein ON customer_sessions (status, time_in)",
+            ),
+            (
+                "inventory_logs",
+                "idx_inventory_logs_item_created",
+                "CREATE INDEX idx_inventory_logs_item_created ON inventory_logs (inventory_item_id, created_at)",
+            ),
         ]
 
         table_indexes = {}
@@ -203,4 +264,4 @@ class SchemaMigrator:
                 print(f"[OK] Created index {index_name} on {table_name}")
             except Exception as exc:
                 db.session.rollback()
-                print(f"⚠ Index {index_name} skipped: {exc}")
+                print(f"[WARNING] Index {index_name} skipped: {exc}")

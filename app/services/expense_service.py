@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Any, Optional
 
 from app.repositories.expense_repository import ExpenseRepository
@@ -48,7 +49,8 @@ class ExpenseService:
         logged_by: int,
     ) -> dict[str, Any]:
         date_obj = date.fromisoformat(expense_date)
-        expense = self.repo.create(category, description, amount, date_obj, logged_by)
+        amount_decimal = Decimal(str(amount))
+        expense = self.repo.create(category, description, amount_decimal, date_obj, logged_by)
         self.repo.save()
         return {"success": True, "data": {"id": expense.id}}
 

@@ -71,6 +71,14 @@ def serialize_transaction(transaction):
         getattr(transaction, "payment_method", None)
         or (getattr(session, "payment_method", None) if session else None)
     )
+    
+    amount_tendered_db = getattr(transaction, "amount_tendered", None)
+    if amount_tendered_db is None and session:
+        amount_tendered_db = getattr(session, "amount_tendered", None)
+    
+    amount_tendered = float(amount_tendered_db) if amount_tendered_db is not None else None
+    change_given = round(amount_tendered - float(transaction.total_bill), 2) if amount_tendered is not None else None
+
     return {
         "transaction_id": transaction.id,
         "customer_name": session.customer_name if session else "N/A",
@@ -89,6 +97,8 @@ def serialize_transaction(transaction):
         "seconds_spent": seconds_spent,
         "minutes_spent": round(seconds_spent / 60, 2) if seconds_spent is not None else None,
         "created_date": (transaction.created_at + timedelta(hours=8)).strftime("%Y-%m-%d") if transaction.created_at else None,
+        "amount_tendered": amount_tendered,
+        "change_given": change_given,
     }
 
 def serialize_user(user):

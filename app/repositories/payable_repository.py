@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from app import db
@@ -11,14 +12,17 @@ class PayableRepository:
     def get(self, payable_id: int) -> Optional[Payable]:
         return Payable.query.filter_by(id=payable_id).first()
 
+    def get_for_update(self, payable_id: int) -> Optional[Payable]:
+        return Payable.query.filter_by(id=payable_id).with_for_update().first()
+
     def list_all(self) -> list[Payable]:
-        return Payable.query.order_by(Payable.due_date.asc()).all()
+        return Payable.query.order_by(Payable.incurred_date.desc(), Payable.id.desc()).all()
 
     def create(
         self,
         creditor_name: str,
         items_description: str,
-        amount_owed: float,
+        amount_owed: Decimal,
         due_date: date,
         incurred_date: date,
         created_by: int,
@@ -38,7 +42,7 @@ class PayableRepository:
         return payable
 
     def mark_paid(self, payable_id: int, amount: Optional[float] = None) -> bool:
-        payable = self.get(payable_id)
+        payable = self.get_for_update(payable_id)
         if not payable:
             return False
         

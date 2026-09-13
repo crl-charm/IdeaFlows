@@ -7,17 +7,19 @@ from sqlalchemy import func
 
 from app import db
 from app.models import Transaction, Order, CustomerSession, MenuItem
+from app.utils.dates import day_bounds
 
 
 class AnalyticsRepository:
     def daily_revenue(self, days: int = 30) -> list[dict[str, Any]]:
         start_date = date.today() - timedelta(days=days)
+        start_at, _ = day_bounds(start_date)
         result = (
             db.session.query(
                 func.date(Transaction.created_at).label("date"),
                 func.sum(Transaction.total_bill).label("revenue"),
             )
-            .filter(func.date(Transaction.created_at) >= start_date)
+            .filter(Transaction.created_at >= start_at)
             .group_by(func.date(Transaction.created_at))
             .order_by(func.date(Transaction.created_at))
             .all()

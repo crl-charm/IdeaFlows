@@ -19,7 +19,7 @@ Make sure you have installed:
 ### Step 1: Open the Project Folder
 Open your terminal (or PowerShell on Windows) and go to the project directory:
 ```bash
-cd vercelIdeahub
+cd ideahub
 ```
 
 ### Step 2: Set Up a Python Virtual Environment
@@ -48,15 +48,16 @@ pip install -r requirements.txt
    ```sql
    CREATE DATABASE ideahub_pos;
    ```
-3. *Note:* By default, the app connects to MySQL on `localhost` with user `root` and no password. If your MySQL setup uses a password, set `DATABASE_URL` in your terminal:
+3. Development defaults to a local SQLite database. To use MySQL locally, set `DATABASE_URL` in your terminal:
    ```powershell
    $env:DATABASE_URL="mysql+pymysql://root:your_password@localhost/ideahub_pos"
    ```
 
 ### Step 5: Test the Setup (Optional)
-Check if all files and modules load properly without errors:
+Check imports and run the isolated automated test suite:
 ```bash
 python scripts/validate_imports.py
+python -m pytest -q tests
 ```
 
 ### Step 6: Start the App
@@ -64,7 +65,7 @@ Run the main app file:
 ```bash
 python app.py
 ```
-The app will automatically set up database tables and start running at **`http://localhost:5001`**. Open that link in your web browser!
+The app will automatically set up database tables and start running at **`http://localhost:5000`**. Open that link in your web browser!
 
 ---
 
@@ -97,3 +98,15 @@ Here is how the main files and folders are organized inside `app/`:
 ## 📝 Log Files
 - **`app.log`**: General system activity and application logs.
 - **`security.log`**: Audit log for logins, lockouts, and administrative actions.
+
+---
+
+## 📚 Documentation
+
+- **`MD-Folders/VPS_DEPLOY_GUIDE.md`**: Hostinger VPS deployment and operations.
+- **`MD-Folders/SECURITY.md`**: Application security controls.
+- **`MD-Folders/STAFF_QUICK_START.md`**: Staff and owner usage guide.
+- **`MD-Folders/technicalguide.md`**: Technical architecture reference.
+- **`MD-Folders/SCALING.md`**: Production scaling, health checks, and release safety.
+- **`MD-Folders/OWNER_MAINTENANCE_RUNBOOK.md`**: Owner checklists for VPS,
+  Cloudflare Access, R2, backups, Redis, MySQL, security, releases, and incidents.

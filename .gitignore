@@ -1,0 +1,33 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.venv/
+.venv-*/
+venv/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime output
+*.log
+.flask_secret
+
+# Runtime data (never deploy from or commit to Git)
+instance/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+static/uploads/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

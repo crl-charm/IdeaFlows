@@ -12,6 +12,8 @@ from app.services.menu_service import MenuService
 from app.utils.auth import admin_required
 from app.utils.uploads import validate_and_save_image, delete_old_image
 from app.core.socketio_handlers import emit_menu_update
+from app.core.idempotency import idempotent_request
+from app.core.cache import get_or_set_json, invalidate_menu_cache
 from functools import wraps
 
 # Import CSRF protection from app module
@@ -28,18 +30,35 @@ logger = logging.getLogger(__name__)
 def get_valid_categories():
     try:
         from app.models.menu_category import MenuCategory
-        return [c.name for c in MenuCategory.query.order_by(MenuCategory.id).all()]
+        return get_or_set_json(
+            "menu:categories",
+            lambda: [c.name for c in MenuCategory.query.order_by(MenuCategory.id).all()],
+        )
     except Exception as e:
         logger.warning(f"Error fetching categories from DB: {e}")
         return ["Main Dish", "Snack", "Beverages"]
+
+
+def _delete_image_if_unreferenced(image_url):
+    """Remove storage only when no active menu item still shares this image."""
+    if not image_url:
+        return
+    from app import db
+    from app.models.menu_item import MenuItem
+
+    still_used = MenuItem.query.filter(
+        MenuItem.image_url == image_url,
+        db.or_(MenuItem.status.is_(None), MenuItem.status != "deleted"),
+    ).first()
+    if still_used is None:
+        delete_old_image(image_url)
 
 
 
 @menu_bp.route("", methods=["GET"])
 @admin_required
 def menu_page() -> str:
-    items = _service.list_all()
-    return render_template("admin/menu.html", items=items, categories=get_valid_categories())
+    return render_template("admin/menu.html")
 
 
 @menu_bp.route("/api/items", methods=["GET"])
@@ -68,6 +87,7 @@ def api_get_categories() -> tuple:
 @menu_bp.route("/api/categories", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-menu-category")
 def api_create_category() -> tuple:
     if request.is_json:
         data = request.get_json() or {}
@@ -89,6 +109,7 @@ def api_create_category() -> tuple:
         new_cat = MenuCategory(name=name)
         db.session.add(new_cat)
         db.session.commit()
+        invalidate_menu_cache()
         
         emit_menu_update('create_category', {'name': name})
         
@@ -102,6 +123,7 @@ def api_create_category() -> tuple:
 @menu_bp.route("/api/items", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-menu-item")
 def api_create_item() -> tuple:
     if request.is_json:
         data = request.get_json() or {}
@@ -142,13 +164,20 @@ def api_create_item() -> tuple:
             return jsonify({"success": False, "error": error}), 400
     
     # Create item
-    result = _service.create(
-        name=name,
-        price=price,
-        category=category,
-        description=description,
-        image_url=image_url,
-    )
+    try:
+        result = _service.create(
+            name=name,
+            price=price,
+            category=category,
+            description=description,
+            image_url=image_url,
+        )
+    except Exception:
+        from app import db
+        db.session.rollback()
+        delete_old_image(image_url)
+        logger.exception("Menu item creation failed")
+        return jsonify({"success": False, "error": "Could not create this item."}), 500
     if result.get("success"):
         emit_menu_update('create', result.get("data", {}))
     return jsonify(result), 201
@@ -157,6 +186,7 @@ def api_create_item() -> tuple:
 @menu_bp.route("/api/items/variants", methods=["POST"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-create-menu-variants")
 def api_create_item_variants() -> tuple:
     """
     Create multiple Beverage variants (e.g., Coffee Hot/Cold) from one base name.
@@ -217,14 +247,21 @@ def api_create_item_variants() -> tuple:
         if error:
             return jsonify({"success": False, "error": error}), 400
 
-    result = _service.create_variants(
-        base_name=base_name,
-        variant_labels=labels,
-        variant_prices=prices,
-        category=category,
-        description=description,
-        image_url=image_url,
-    )
+    try:
+        result = _service.create_variants(
+            base_name=base_name,
+            variant_labels=labels,
+            variant_prices=prices,
+            category=category,
+            description=description,
+            image_url=image_url,
+        )
+    except Exception:
+        from app import db
+        db.session.rollback()
+        delete_old_image(image_url)
+        logger.exception("Menu variant creation failed")
+        return jsonify({"success": False, "error": "Could not create these items."}), 500
 
     created_ids = result.get("created_ids") or []
     emit_menu_update("create", {"count": len(created_ids)})
@@ -234,6 +271,7 @@ def api_create_item_variants() -> tuple:
 @menu_bp.route("/api/items/<int:item_id>", methods=["PATCH"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-update-menu-item")
 def api_update_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
     from app import db
@@ -270,22 +308,25 @@ def api_update_item(item_id: int) -> tuple:
         if error:
             return jsonify({"success": False, "error": error}), 400
         
-        # Delete old image after successful save
-        if old_image_url:
-            delete_old_image(old_image_url)
-    
-    # Update item
-    result = _service.update(
-        item_id=item_id,
-        name=request.form.get("name", "").strip() or None,
-        price=price,
-        category=category if category else None,
-        description=request.form.get("description", "").strip() or None,
-        image_url=image_url,
-    )
+    try:
+        result = _service.update(
+            item_id=item_id,
+            name=request.form.get("name", "").strip() or None,
+            price=price,
+            category=category if category else None,
+            description=request.form.get("description", "").strip() or None,
+            image_url=image_url,
+        )
+    except Exception:
+        db.session.rollback()
+        delete_old_image(image_url)
+        logger.exception("Menu item update failed for item %s", item_id)
+        return jsonify({"success": False, "error": "Could not update this item."}), 500
     if isinstance(result, tuple):
+        delete_old_image(image_url)
         return jsonify(result[0]), result[1]
     if result.get("success"):
+        _delete_image_if_unreferenced(old_image_url)
         emit_menu_update('update', {'item_id': item_id, **result.get("data", {})})
     return jsonify(result), 200
 
@@ -293,6 +334,7 @@ def api_update_item(item_id: int) -> tuple:
 @menu_bp.route("/api/items/<int:item_id>/availability", methods=["PATCH"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-toggle-menu-availability")
 def api_toggle_availability(item_id: int) -> tuple:
     result = _service.toggle_availability(item_id)
     if isinstance(result, tuple):
@@ -305,6 +347,7 @@ def api_toggle_availability(item_id: int) -> tuple:
 @menu_bp.route("/api/items/<int:item_id>", methods=["DELETE"])
 @admin_required
 @csrf.exempt
+@idempotent_request("admin-delete-menu-item")
 def api_delete_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
     from app import db
@@ -329,6 +372,7 @@ def api_delete_item(item_id: int) -> tuple:
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
+        _delete_image_if_unreferenced(image_url)
         emit_menu_update("delete", {"item_id": item_id})
     return jsonify(result), 200
 

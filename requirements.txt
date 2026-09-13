@@ -13,5 +13,12 @@ qrcode
 Pillow
 python-dotenv
 openpyxl
+gunicorn
+simple-websocket
+flask-compress
+redis
+boto3
+
+
 
 

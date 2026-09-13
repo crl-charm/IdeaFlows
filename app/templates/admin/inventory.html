@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Inventory Management - Admin - IdeaHub{% endblock %}
+{% block title %}Inventory Management - Admin - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -282,19 +282,14 @@
     <div class="vertical-divider"></div>
     <div class="d-flex align-items-center gap-2">
       <span class="status-dot dot-warning"></span>
-      <span class="text-secondary fw-semibold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Warning:</span>
-      <span class="fw-bold text-dark" id="warningStockCount">0</span>
+      <span class="text-secondary fw-semibold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">No Stock:</span>
+      <span class="fw-bold text-dark" id="noStockCount">0</span>
     </div>
     <div class="vertical-divider"></div>
     <div class="d-flex align-items-center gap-2">
       <span class="status-dot dot-success"></span>
-      <span class="text-secondary fw-semibold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Ingredients:</span>
-      <span class="fw-bold text-dark" id="totalItemsCount">0</span>
-    </div>
-    <div class="vertical-divider"></div>
-    <div class="d-flex align-items-center gap-2">
-      <span class="text-secondary fw-semibold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Recipe meals:</span>
-      <span class="fw-bold text-dark" id="recipeMealsCount">0</span>
+      <span class="text-secondary fw-semibold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Total Menu Items:</span>
+      <span class="fw-bold text-dark" id="totalMenuItemsCount">0</span>
     </div>
   </div>
 
@@ -417,12 +412,31 @@
               <input type="text" id="ingredientSearchInput" class="form-control" placeholder="Search ingredients..." autocomplete="off">
               <div id="ingredientSearchResults" class="dropdown-results"></div>
               <input type="hidden" id="modalIngredientSelect" value="">
+              <input type="hidden" id="modalIngredientUnit" value="">
               <div class="form-text" id="ingredientSearchHint">Type to search; click a result to select.</div>
             </div>
             <div class="mb-3">
               <label class="form-label">Quantity Required per Serving</label>
               <input type="number" id="modalQtyRequired" class="form-control" value="1" step="0.01" min="0.01">
-              <div class="form-text">e.g. 2 (pcs for Cheese), 1 (pc for Wrapper).</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Recipe Unit</label>
+              <select id="modalRecipeUnit" class="form-select" onchange="updateConversionHelperText()">
+                <option value="pieces">pieces (pcs)</option>
+                <option value="klg">kilograms (klg)</option>
+                <option value="grams">grams (g)</option>
+                <option value="trays">trays</option>
+                <option value="packs">packs</option>
+                <option value="liters">liters (L)</option>
+                <option value="ml">milliliters (mL)</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Conversion Ratio</label>
+              <input type="number" id="modalConversionRatio" class="form-control" value="1.0000" step="0.0001" min="0.0001" oninput="updateConversionHelperText()">
+              <div class="form-text text-muted" id="conversionRatioHelper" style="font-size: 0.8rem; font-weight: 500;">
+                1 piece = 1.0000 pieces
+              </div>
             </div>
             <button class="btn btn-dark w-100" onclick="linkRecipeIngredient()">
               Link to Recipe
@@ -532,12 +546,10 @@ function escapeJsString(text) {
 }
 
 // Socket.IO for real-time updates
-const socket = io();
+const socket = window.getIdeaFlowSocket();
+const refreshInventory = window.createDebouncedRefresh(loadInventory, 150);
 
-socket.on('inventory_update', function(data) {
-  console.log('Inventory update socket message:', data);
-  loadInventory();
-});
+if (socket) socket.on('inventory_update', refreshInventory);
 
 document.addEventListener('DOMContentLoaded', function() {
   loadInventory();
@@ -566,6 +578,29 @@ function matchesInventorySearch(name) {
   return String(name || '').toLowerCase().includes(q);
 }
 
+function updateInventorySummary() {
+  const summary = inventorySummary || {};
+  let lowStockCount = summary.low_stock;
+  let noStockCount = summary.no_stock;
+  let totalMenuItems = summary.total_menu_items;
+
+  if (lowStockCount == null) {
+    lowStockCount = directStockItems.filter(item => item.is_low).length;
+  }
+  if (noStockCount == null) {
+    noStockCount = directStockItems.filter(item => item.is_out_of_stock).length;
+  }
+  if (totalMenuItems == null) {
+    totalMenuItems = recipeItems.length;
+  }
+
+  document.getElementById('lowStockCount').textContent = lowStockCount;
+  document.getElementById('noStockCount').textContent = noStockCount;
+  document.getElementById('totalMenuItemsCount').textContent = totalMenuItems;
+}
+
+let inventorySummary = null;
+
 function loadInventory() {
   fetch('/admin/inventory/api/dashboard-items')
     .then(r => r.json())
@@ -573,9 +608,10 @@ function loadInventory() {
       if (data.success) {
         directStockItems = data.direct_stock || [];
         recipeItems = data.data || [];
+        inventorySummary = data.summary || null;
+        updateInventorySummary();
         renderDirectStock();
         renderRecipeInventory();
-        document.getElementById('recipeMealsCount').textContent = recipeItems.length;
       }
     })
     .catch(() => showToast('Failed to load inventory', 'error'));
@@ -643,7 +679,7 @@ function renderDirectStockCard(item) {
             <p class="text-secondary mb-0 mt-2" style="font-size: 0.75rem;" title="${linkedTitle}">${linkedLabel}</p>
             <div class="mt-2">
               <div class="d-flex justify-content-between mb-1" style="font-size: 0.8rem;">
-                <span class="text-secondary">Stock: <strong class="text-dark">${item.stock_qty} ${escapeHtml(item.unit)}</strong></span>
+                <span class="text-secondary">Stock: <strong class="text-dark">${parseFloat(item.stock_qty).toFixed(2)} ${escapeHtml(formatUnitSingular(item.stock_qty, item.unit))}</strong></span>
                 <span class="text-secondary">Min: ${item.low_stock_threshold}</span>
               </div>
               <div class="progress-bar-custom">
@@ -673,16 +709,7 @@ function renderDirectStock() {
   const empty = document.getElementById('directStockEmpty');
   const filtered = filterDirectStockItems(directStockItems);
 
-  let lowStockCount = 0;
-  let warningStockCount = 0;
-  directStockItems.forEach(item => {
-    if (item.is_low) lowStockCount++;
-    else if (item.is_warning) warningStockCount++;
-  });
-
-  document.getElementById('lowStockCount').textContent = lowStockCount;
-  document.getElementById('warningStockCount').textContent = warningStockCount;
-  document.getElementById('totalItemsCount').textContent = directStockItems.length;
+  updateInventorySummary();
 
   if (directStockItems.length === 0) {
     grid.innerHTML = '';
@@ -776,7 +803,7 @@ function renderRecipeInventory() {
       stockBarHtml = `
         <div class="mt-2">
           <div class="d-flex justify-content-between mb-1" style="font-size: 0.8rem;">
-            <span class="text-secondary">Stock: <strong class="text-dark">${item.stock_qty} ${escapeHtml(item.unit || '')}</strong></span>
+            <span class="text-secondary">Stock: <strong class="text-dark">${parseFloat(item.stock_qty).toFixed(2)} ${escapeHtml(formatUnitSingular(item.stock_qty, item.unit || ''))}</strong></span>
             <span class="text-secondary">Min: ${item.low_stock_threshold}</span>
           </div>
           <div class="progress-bar-custom">
@@ -865,7 +892,7 @@ function createIngredient() {
       document.getElementById('startQty').value = '0';
       document.getElementById('threshold').value = '10';
       
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ Error: ' + (data.error || 'Failed to create ingredient'), 'error');
     }
@@ -934,6 +961,29 @@ function fetchIngredientSearch(term) {
     });
 }
 
+function formatUnitSingular(qty, unit) {
+  const val = Math.abs(parseFloat(qty));
+  if (val === 1.0) {
+    if (unit === "pieces") return "piece";
+    if (unit === "packs") return "pack";
+    if (unit === "trays") return "tray";
+    if (unit === "liters") return "liter";
+  }
+  return unit;
+}
+
+function updateConversionHelperText() {
+  const recipeUnit = document.getElementById('modalRecipeUnit').value;
+  const ratioVal = parseFloat(document.getElementById('modalConversionRatio').value) || 1.0;
+  const ingredientUnit = document.getElementById('modalIngredientUnit').value || 'pieces';
+  
+  const recipeUnitStr = formatUnitSingular(1.0, recipeUnit);
+  const ingredientUnitStr = formatUnitSingular(ratioVal, ingredientUnit);
+  
+  document.getElementById('conversionRatioHelper').innerHTML = 
+    `1 ${recipeUnitStr} = <strong class="text-success">${ratioVal.toFixed(4)}</strong> ${ingredientUnitStr}`;
+}
+
 function renderIngredientSearchResults(items) {
   const results = document.getElementById('ingredientSearchResults');
   if (!items.length) {
@@ -943,15 +993,23 @@ function renderIngredientSearchResults(items) {
   }
   results.innerHTML = items.map(i => {
     const sub = i.recipe_count > 0 ? ` · used in ${i.recipe_count} recipe(s)` : '';
-    const label = `${i.name}${sub} · ${i.stock_qty} ${i.unit}`;
-    return `<div class="result-item" data-id="${i.id}" data-label="${escapeHtml(label)}"><strong>${escapeHtml(i.name)}</strong><span class="text-muted">${sub} · ${i.stock_qty} ${escapeHtml(i.unit)}</span></div>`;
+    const stockVal = parseFloat(i.stock_qty);
+    const stockUnitStr = formatUnitSingular(stockVal, i.unit);
+    const label = `${i.name}${sub} · ${stockVal.toFixed(2)} ${stockUnitStr}`;
+    return `<div class="result-item" data-id="${i.id}" data-unit="${escapeHtml(i.unit)}" data-label="${escapeHtml(label)}"><strong>${escapeHtml(i.name)}</strong><span class="text-muted">${sub} · ${stockVal.toFixed(2)} ${escapeHtml(stockUnitStr)}</span></div>`;
   }).join('');
   results.classList.add('show');
   results.querySelectorAll('.result-item[data-id]').forEach(el => {
     el.addEventListener('click', function() {
       document.getElementById('modalIngredientSelect').value = this.dataset.id;
+      document.getElementById('modalIngredientUnit').value = this.dataset.unit;
       document.getElementById('ingredientSearchInput').value = this.querySelector('strong').textContent;
       results.classList.remove('show');
+      
+      // Auto-select the inventory unit for the recipe by default
+      document.getElementById('modalRecipeUnit').value = this.dataset.unit;
+      document.getElementById('modalConversionRatio').value = '1.0000';
+      updateConversionHelperText();
     });
   });
 }
@@ -976,13 +1034,33 @@ function loadRecipeIngredients(mealId) {
           const invId = m.inventory_item_id || 'null';
           const ingName = escapeJsString(m.ingredient_name);
 
+          const reqQty = parseFloat(m.quantity_required);
+          const ratio = parseFloat(m.conversion_ratio || 1.0);
+          const recipeUnit = m.unit || m.ingredient_unit || 'pieces';
+          const ingredientUnit = m.ingredient_unit || 'pieces';
+
+          let reqDisplay = "";
+          if (m.unit && m.unit !== ingredientUnit) {
+            const equiv = reqQty * ratio;
+            const recUnitStr = formatUnitSingular(reqQty, recipeUnit);
+            const ingUnitStr = formatUnitSingular(equiv, ingredientUnit);
+            reqDisplay = `${reqQty} ${recUnitStr} (equiv. ${equiv.toFixed(2)} ${ingUnitStr})`;
+          } else {
+            const recUnitStr = formatUnitSingular(reqQty, recipeUnit);
+            reqDisplay = `${reqQty} ${recUnitStr}`;
+          }
+
+          const stockQty = parseFloat(m.stock_qty);
+          const stockUnitStr = formatUnitSingular(stockQty, ingredientUnit);
+          const stockDisplay = `${stockQty.toFixed(2)} ${stockUnitStr}`;
+
           return `
             <tr>
               <td class="fw-semibold text-secondary">${escapeHtml(m.ingredient_name)}</td>
-              <td>${m.quantity_required} ${escapeHtml(m.unit)}</td>
-              <td class="${stockClass}">${m.stock_qty} ${escapeHtml(m.unit)}</td>
+              <td>${reqDisplay}</td>
+              <td class="${stockClass}">${stockDisplay}</td>
               <td class="text-end">
-                <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Adjust Stock" onclick="openAdjustModal(${invId}, ${m.stock_qty}, '${ingName}', ${m.ingredient_item_id})">
+                <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Adjust Stock" onclick="openAdjustModal(${invId}, ${stockQty}, '${ingName}', ${m.ingredient_item_id})">
                   <i class="bi bi-plus-slash-minus"></i>
                 </button>
                 <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Logs" onclick="viewLogsOrInit(${invId}, '${ingName}', ${m.ingredient_item_id})">
@@ -1002,13 +1080,19 @@ function loadRecipeIngredients(mealId) {
 function linkRecipeIngredient() {
   const ingredientId = document.getElementById('modalIngredientSelect').value;
   const qty = parseFloat(document.getElementById('modalQtyRequired').value);
+  const unit = document.getElementById('modalRecipeUnit').value;
+  const ratio = parseFloat(document.getElementById('modalConversionRatio').value);
   
   if (!ingredientId) {
     showToast('Please select an ingredient', 'error');
     return;
   }
-  if (!qty || qty <= 0) {
+  if (isNaN(qty) || qty <= 0) {
     showToast('Quantity must be greater than zero', 'error');
+    return;
+  }
+  if (isNaN(ratio) || ratio <= 0) {
+    showToast('Conversion ratio must be greater than zero', 'error');
     return;
   }
 
@@ -1018,17 +1102,20 @@ function linkRecipeIngredient() {
     body: JSON.stringify({
       menu_item_id: currentMealId,
       ingredient_item_id: ingredientId,
-      quantity_required: qty
+      quantity_required: qty,
+      unit: unit,
+      conversion_ratio: ratio
     })
   }).then(r => r.json()).then(data => {
     if (data.success) {
-      showToast('✓ Ingredient linked successfully!', 'success');
+      showToast(data.message || '✓ Ingredient linked successfully!', 'success');
       loadRecipeIngredients(currentMealId);
       resetIngredientSearch();
       document.getElementById('modalQtyRequired').value = '1';
-      loadInventory();
+      document.getElementById('modalConversionRatio').value = '1.0000';
+      refreshInventory();
     } else {
-      showToast('✗ Error: ' + (data.error || 'Failed to link ingredient'), 'error');
+      showToast('✗ ' + (data.message || data.error || 'Failed to link ingredient'), 'error');
     }
   });
 }
@@ -1053,7 +1140,7 @@ async function removeRecipeIngredient(recipeId, ingredientName) {
     if (data.success) {
       showToast('✓ Ingredient removed from recipe', 'success');
       loadRecipeIngredients(currentMealId);
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ Error removing ingredient', 'error');
     }
@@ -1139,7 +1226,7 @@ function submitStockAdjustment() {
         currentItemId = data.data.inventory_item_id;
       }
       bootstrap.Modal.getInstance(document.getElementById('editStockModal')).hide();
-      loadInventory();
+      refreshInventory();
       
       // If ingredients modal is open, refresh it as well!
       if (document.getElementById('ingredientsModal').classList.contains('show')) {
@@ -1175,7 +1262,7 @@ async function deleteRawIngredient(menuItemId, ingredientName, recipeCount) {
   }).then(r => r.json()).then(data => {
     if (data.success) {
       showToast('✓ Raw ingredient deleted', 'success');
-      loadInventory();
+      refreshInventory();
     } else {
       showToast('✗ Error: ' + (data.error || 'Failed to delete ingredient'), 'error');
     }
@@ -1205,7 +1292,7 @@ async function deleteRecipe(mealId, mealName) {
         );
         Promise.all(promises).then(() => {
           showToast('✓ Recipe mappings removed successfully', 'success');
-          loadInventory();
+          refreshInventory();
         });
       }
     });

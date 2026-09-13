@@ -5,10 +5,11 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
+from app.utils.billing import calculate_time_bill
 from app.core.interfaces import Clock, Notifier
 from app.models import CustomerSession, Transaction
 from app.repositories.session_repository import SessionRepository
-from app.utils.payment import normalize_payment_method, payment_method_label
+from app.utils.payment import normalize_payment_method, payment_method_label, parse_money_amount
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,7 @@ class SessionService:
             time_difference = now - sess.time_in
             minutes_used = time_difference.total_seconds() / 60
             rate = sess.space_type.rate_per_minute
-            current_bill = (Decimal(str(minutes_used)) * rate).quantize(Decimal("0.01"))
+            current_bill = calculate_time_bill(sess.space_type, minutes_used)
 
             linked = boardroom_by_session.get(sess.id)
             purpose = linked.purpose if linked and sess.space_type.name == "Boardroom" else None
@@ -102,7 +103,7 @@ class SessionService:
         now = self.clock.now()
         minutes_used = (now - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute
-        time_bill = (Decimal(str(minutes_used)) * rate).quantize(Decimal("0.01"))
+        time_bill = calculate_time_bill(sess.space_type, minutes_used)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
         total_bill = (time_bill + food_total).quantize(Decimal("0.01"))
 
@@ -115,9 +116,12 @@ class SessionService:
         }
 
     def checkout(
-        self, session_id: int, payment_method: str = "cash"
+        self, session_id: int, payment_method: str = "cash", amount_tendered: Any = None
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
-        sess = self.repo.get_session(session_id)
+        # Serialize checkout attempts for this session on databases that support
+        # row locks (MySQL in production). This prevents two different browser
+        # keys from creating two transactions at the same time.
+        sess = self.repo.get_session_for_update(session_id)
         if not sess:
             return {"error": "Session not found"}, 404
         if sess.status == "completed":
@@ -128,7 +132,7 @@ class SessionService:
         time_out = self.clock.now()
         minutes_used = (time_out - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute
-        time_bill = (Decimal(str(minutes_used)) * rate).quantize(Decimal("0.01"))
+        time_bill = calculate_time_bill(sess.space_type, minutes_used)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
         total_bill = (time_bill + food_total).quantize(Decimal("0.01"))
 
@@ -140,6 +144,22 @@ class SessionService:
             total_bill=total_bill,
             payment_method=payment_method,
         )
+
+        if payment_method == "cash":
+            if amount_tendered is None:
+                return {"error": "Amount tendered is required for cash payments."}, 400
+            try:
+                tendered = parse_money_amount(amount_tendered)
+            except ValueError as e:
+                return {"error": str(e)}, 400
+            if tendered < total_bill:
+                return {"error": "Amount tendered must be at least the total bill."}, 400
+            tx.amount_tendered = tendered
+            sess.amount_tendered = tendered
+        else:
+            tx.amount_tendered = None
+            sess.amount_tendered = None
+
         self.repo.create_transaction(tx)
         self.repo.complete_session(sess, time_out)
         self.repo.link_booking_completion_if_any(sess.id, time_out)
@@ -154,6 +174,9 @@ class SessionService:
             }
         )
 
+        amount_tendered_val = float(tx.amount_tendered) if tx.amount_tendered is not None else None
+        change_given = round(amount_tendered_val - float(total_bill), 2) if amount_tendered_val is not None else None
+
         return {
             "customer_name": sess.customer_name,
             "minutes_used": round(minutes_used, 2),
@@ -164,6 +187,8 @@ class SessionService:
             "payment_method": payment_method,
             "payment_label": payment_method_label(payment_method),
             "status": sess.status,
+            "amount_tendered": amount_tendered_val,
+            "change_given": change_given,
         }
 
     def checkout_records(self, page: int | None = None, per_page: int | None = None):

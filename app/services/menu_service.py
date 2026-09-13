@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.repositories.menu_repository import MenuRepository
+from app.core.cache import get_or_set_json, invalidate_menu_cache
 
 
 @dataclass(frozen=True)
@@ -11,48 +12,54 @@ class MenuService:
     repo: MenuRepository
 
     def list_all(self) -> list[dict[str, Any]]:
-        items = self.repo.list_all()
-        return [
-            {
-                "id": item.id,
-                "name": item.name,
-                "description": item.description,
-                "price": float(item.price),
-                "category": item.category,
-                "is_available": item.is_available,
-                "image_url": item.image_url,
-            }
-            for item in items
-        ]
+        def load():
+            return [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "description": item.description,
+                    "price": float(item.price),
+                    "category": item.category,
+                    "is_available": item.is_available,
+                    "image_url": item.image_url,
+                }
+                for item in self.repo.list_all()
+            ]
+
+        return get_or_set_json("menu:all", load)
 
     def list_available(self) -> list[dict[str, Any]]:
-        items = self.repo.list_available()
-        return [
-            {
-                "id": item.id,
-                "name": item.name,
-                "description": item.description,
-                "price": float(item.price),
-                "category": item.category,
-                "image_url": item.image_url,
-            }
-            for item in items
-        ]
+        def load():
+            return [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "description": item.description,
+                    "price": float(item.price),
+                    "category": item.category,
+                    "image_url": item.image_url,
+                }
+                for item in self.repo.list_available()
+            ]
+
+        return get_or_set_json("menu:available", load)
 
     def list_for_ordering(self) -> list[dict[str, Any]]:
-        items = self.repo.list_for_ordering()
-        return [
-            {
-                "id": item.id,
-                "name": item.name,
-                "description": item.description,
-                "price": float(item.price),
-                "category": item.category,
-                "image_url": item.image_url,
-                "is_available": bool(item.is_available),
-            }
-            for item in items
-        ]
+        def load():
+            return [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "description": item.description,
+                    "price": float(item.price),
+                    "category": item.category,
+                    "image_url": item.image_url,
+                    "is_available": bool(item.is_available),
+                }
+                for item in self.repo.list_for_ordering()
+            ]
+
+        return get_or_set_json("menu:ordering", load)
 
     def create(self, name: str, price: float, category: str, description: Optional[str] = None, image_url: Optional[str] = None) -> dict[str, Any]:
         item = self.repo.create(name, price, category)
@@ -61,6 +68,7 @@ class MenuService:
         if image_url:
             item.image_url = image_url
         self.repo.save()
+        invalidate_menu_cache()
         return {"success": True, "data": {"id": item.id}}
 
     def create_variants(
@@ -89,6 +97,7 @@ class MenuService:
 
         # Commit once for the whole variant batch.
         self.repo.save()
+        invalidate_menu_cache()
         return {"created_ids": created_ids}
 
     def update(
@@ -106,6 +115,7 @@ class MenuService:
             item.image_url = image_url
         
         self.repo.save()
+        invalidate_menu_cache()
         return {"success": True}
 
     def toggle_availability(
@@ -115,6 +125,7 @@ class MenuService:
         if not success:
             return {"error": "Menu item not found"}, 404
         self.repo.save()
+        invalidate_menu_cache()
         item = self.repo.get(item_id)
         return {"success": True, "is_available": item.is_available}
 
@@ -123,6 +134,7 @@ class MenuService:
         if not success:
             return {"error": "Menu item not found"}, 404
         self.repo.save()
+        invalidate_menu_cache()
         return {
             "success": True,
             "message": "Menu item removed from the menu.",

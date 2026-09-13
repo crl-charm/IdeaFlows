@@ -13,7 +13,7 @@ class ExpenseRepository:
         return Expense.query.filter_by(id=expense_id).first()
 
     def list_all(self) -> list[Expense]:
-        return Expense.query.order_by(Expense.expense_date.desc()).all()
+        return Expense.query.order_by(Expense.expense_date.desc(), Expense.id.desc()).all()
 
     def list_by_date(self, expense_date: date) -> list[Expense]:
         return Expense.query.filter_by(expense_date=expense_date).order_by(

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Receivables - IdeaHub{% endblock %}
+{% block title %}Receivables - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -53,7 +53,9 @@
             </tr>
           </thead>
           <tbody id="receivables-table-body">
-            <tr><td colspan="6" class="text-center text-muted py-3">Loading receivables...</td></tr>
+            <tr>
+              <td colspan="6" class="text-center text-muted py-3">Loading receivables...</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -151,7 +153,8 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-success" id="btn-fully-paid-customer" onclick="markCustomerAsFullyPaid()">Fully Paid</button>
+        <button type="button" class="btn btn-success" id="btn-fully-paid-customer"
+          onclick="markCustomerAsFullyPaid()">Fully Paid</button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
@@ -238,162 +241,162 @@
 </style>
 
 <script>
-const socket = io();
-let receivablesCache = [];
-let pendingMarkPaidId = null;
-let markPaidModalInstance = null;
-let viewOrderModalInstance = null;
+  const socket = window.getIdeaFlowSocket();
+  const refreshReceivables = window.createDebouncedRefresh(loadReceivables, 150);
+  let receivablesCache = [];
+  let pendingMarkPaidId = null;
+  let markPaidModalInstance = null;
+  let viewOrderModalInstance = null;
 
-function getDueStatusText(dueDateStr, paid) {
-  if (paid) return "";
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  const due = new Date(dueDateStr);
-  due.setHours(0,0,0,0);
-  
-  const diffTime = due - today;
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  
-  if (diffDays > 0) {
-    return ` <span class="text-muted small">(${diffDays} days left)</span>`;
-  } else if (diffDays === 0) {
-    return ` <span class="text-warning fw-semibold small">(due today)</span>`;
-  } else {
-    return ` <span class="text-danger fw-semibold small">(${Math.abs(diffDays)} days overdue)</span>`;
+  function getDueStatusText(dueDateStr, paid) {
+    if (paid) return "";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDateStr);
+    due.setHours(0, 0, 0, 0);
+
+    const diffTime = due - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      return ` <span class="text-muted small">(${diffDays} days left)</span>`;
+    } else if (diffDays === 0) {
+      return ` <span class="text-warning fw-semibold small">(due today)</span>`;
+    } else {
+      return ` <span class="text-danger fw-semibold small">(${Math.abs(diffDays)} days overdue)</span>`;
+    }
   }
-}
 
-socket.on('receivables_update', function(data) {
-  console.log('Receivables update:', data);
-  loadReceivables();
-  if (data.event === 'create') {
-    showToast('✓ New receivable created!', 'success');
-  } else if (data.event === 'mark_paid') {
-    showToast('✓ Receivable marked as paid!', 'success');
-  } else if (data.event === 'update') {
-    showToast('✓ Receivable updated!', 'success');
-  }
-});
+  if (socket) socket.on('receivables_update', function (data) {
+    refreshReceivables();
+    if (data.event === 'create') {
+      showToast('✓ New receivable created!', 'success');
+    } else if (data.event === 'mark_paid') {
+      showToast('✓ Receivable marked as paid!', 'success');
+    } else if (data.event === 'update') {
+      showToast('✓ Receivable updated!', 'success');
+    }
+  });
 
-document.addEventListener('DOMContentLoaded', function() {
-  loadReceivables();
-  const markPaidEl = document.getElementById('markPaidModal');
-  if (markPaidEl) {
-    markPaidModalInstance = new bootstrap.Modal(markPaidEl);
-    document.getElementById('confirmMarkPaidBtn').addEventListener('click', confirmMarkPaid);
-    
-    // Add event listener to reopen View Order Modal if cancelled
-    markPaidEl.addEventListener('hidden.bs.modal', function () {
-      const reopenCustomer = this.getAttribute('data-reopen-customer');
-      this.removeAttribute('data-reopen-customer');
-      if (reopenCustomer && pendingMarkPaidId) {
-        pendingMarkPaidId = null;
-        openViewOrderModal(reopenCustomer);
+  document.addEventListener('DOMContentLoaded', function () {
+    loadReceivables();
+    const markPaidEl = document.getElementById('markPaidModal');
+    if (markPaidEl) {
+      markPaidModalInstance = new bootstrap.Modal(markPaidEl);
+      document.getElementById('confirmMarkPaidBtn').addEventListener('click', confirmMarkPaid);
+
+      // Add event listener to reopen View Order Modal if cancelled
+      markPaidEl.addEventListener('hidden.bs.modal', function () {
+        const reopenCustomer = this.getAttribute('data-reopen-customer');
+        this.removeAttribute('data-reopen-customer');
+        if (reopenCustomer && pendingMarkPaidId) {
+          pendingMarkPaidId = null;
+          openViewOrderModal(reopenCustomer);
+        }
+      });
+    }
+  });
+
+  function loadReceivables() {
+    fetch('/admin/receivables/api/receivables').then(r => r.json()).then(data => {
+      if (data.success) {
+        receivablesCache = data.data;
+        renderReceivablesList();
       }
     });
   }
-});
 
-function loadReceivables() {
-  fetch('/admin/receivables/api/receivables').then(r => r.json()).then(data => {
-    if (data.success) {
-      receivablesCache = data.data;
-      renderReceivablesList();
-    }
-  });
-}
+  function renderReceivablesList() {
+    const today = new Date().toISOString().split('T')[0];
+    let totalUnpaid = 0;
+    let unpaidCount = 0;
 
-function renderReceivablesList() {
-  const today = new Date().toISOString().split('T')[0];
-  let totalUnpaid = 0;
-  let unpaidCount = 0;
-
-  // Group by customer_name
-  const groups = {};
-  receivablesCache.forEach(rec => {
-    // Total calculation: sum of all unpaid receivables
-    if (!rec.paid) {
-      totalUnpaid += (rec.amount_owed - rec.partial_paid);
-    }
-
-    const name = rec.customer_name.trim();
-    if (!groups[name]) {
-      groups[name] = {
-        customer_name: name,
-        customer_contact: rec.customer_contact || '',
-        total_owed: 0,
-        total_partial_paid: 0,
-        outstanding_balance: 0,
-        soonest_due_date: null,
-        has_unpaid: false,
-        records: []
-      };
-    }
-    
-    groups[name].records.push(rec);
-    if (!rec.paid) {
-      groups[name].has_unpaid = true;
-      groups[name].outstanding_balance += (rec.amount_owed - rec.partial_paid);
-      if (!groups[name].soonest_due_date || rec.due_date < groups[name].soonest_due_date) {
-        groups[name].soonest_due_date = rec.due_date;
+    // Group by customer_name
+    const groups = {};
+    receivablesCache.forEach(rec => {
+      // Total calculation: sum of all unpaid receivables
+      if (!rec.paid) {
+        totalUnpaid += (rec.amount_owed - rec.partial_paid);
       }
+
+      const name = rec.customer_name.trim();
+      if (!groups[name]) {
+        groups[name] = {
+          customer_name: name,
+          customer_contact: rec.customer_contact || '',
+          total_owed: 0,
+          total_partial_paid: 0,
+          outstanding_balance: 0,
+          soonest_due_date: null,
+          has_unpaid: false,
+          records: []
+        };
+      }
+
+      groups[name].records.push(rec);
+      if (!rec.paid) {
+        groups[name].has_unpaid = true;
+        groups[name].outstanding_balance += (rec.amount_owed - rec.partial_paid);
+        if (!groups[name].soonest_due_date || rec.due_date < groups[name].soonest_due_date) {
+          groups[name].soonest_due_date = rec.due_date;
+        }
+      }
+      groups[name].total_owed += rec.amount_owed;
+      groups[name].total_partial_paid += rec.partial_paid;
+
+      if (!groups[name].customer_contact && rec.customer_contact) {
+        groups[name].customer_contact = rec.customer_contact;
+      }
+    });
+
+    // Calculate unique debtors with unpaid balance
+    Object.values(groups).forEach(g => {
+      if (g.has_unpaid && g.outstanding_balance > 0) {
+        unpaidCount++;
+      }
+    });
+
+    const sortedGroups = Object.values(groups).sort((a, b) => {
+      if (a.has_unpaid && !b.has_unpaid) return -1;
+      if (!a.has_unpaid && b.has_unpaid) return 1;
+      if (a.soonest_due_date && b.soonest_due_date) {
+        return a.soonest_due_date.localeCompare(b.soonest_due_date);
+      }
+      return a.customer_name.localeCompare(b.customer_name);
+    });
+
+    document.getElementById('total-unpaid').textContent = totalUnpaid.toFixed(2);
+    document.getElementById('unpaid-count').textContent = unpaidCount;
+    document.getElementById('receivables-count').textContent = `${sortedGroups.length} debtor(s) found`;
+
+    // Desktop table
+    const tbody = document.getElementById('receivables-table-body');
+    tbody.innerHTML = '';
+
+    // Mobile container
+    const cardContainer = document.getElementById('receivables-card-container');
+    cardContainer.innerHTML = '';
+
+    if (!sortedGroups.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No receivables found.</td></tr>';
+      cardContainer.innerHTML = '<p class="text-center text-muted py-4">No receivables found.</p>';
+      return;
     }
-    groups[name].total_owed += rec.amount_owed;
-    groups[name].total_partial_paid += rec.partial_paid;
 
-    if (!groups[name].customer_contact && rec.customer_contact) {
-      groups[name].customer_contact = rec.customer_contact;
-    }
-  });
+    let cardHtml = '<div class="d-flex flex-column gap-2">';
 
-  // Calculate unique debtors with unpaid balance
-  Object.values(groups).forEach(g => {
-    if (g.has_unpaid && g.outstanding_balance > 0) {
-      unpaidCount++;
-    }
-  });
+    sortedGroups.forEach(g => {
+      const isOverdue = g.has_unpaid && g.soonest_due_date && g.soonest_due_date < today;
+      const statusBadge = g.outstanding_balance > 0
+        ? (isOverdue ? '<span class="badge bg-danger">Overdue</span>' : '<span class="badge bg-warning text-dark">Unpaid</span>')
+        : '<span class="badge bg-success">Paid</span>';
 
-  const sortedGroups = Object.values(groups).sort((a, b) => {
-    if (a.has_unpaid && !b.has_unpaid) return -1;
-    if (!a.has_unpaid && b.has_unpaid) return 1;
-    if (a.soonest_due_date && b.soonest_due_date) {
-      return a.soonest_due_date.localeCompare(b.soonest_due_date);
-    }
-    return a.customer_name.localeCompare(b.customer_name);
-  });
+      const rowClass = isOverdue ? 'due-today' : '';
+      const safeName = g.customer_name.replace(/'/g, "\\'");
+      const dueStatus = g.soonest_due_date ? getDueStatusText(g.soonest_due_date, !g.has_unpaid) : '';
 
-  document.getElementById('total-unpaid').textContent = totalUnpaid.toFixed(2);
-  document.getElementById('unpaid-count').textContent = unpaidCount;
-  document.getElementById('receivables-count').textContent = `${sortedGroups.length} debtor(s) found`;
-
-  // Desktop table
-  const tbody = document.getElementById('receivables-table-body');
-  tbody.innerHTML = '';
-
-  // Mobile container
-  const cardContainer = document.getElementById('receivables-card-container');
-  cardContainer.innerHTML = '';
-
-  if (!sortedGroups.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No receivables found.</td></tr>';
-    cardContainer.innerHTML = '<p class="text-center text-muted py-4">No receivables found.</p>';
-    return;
-  }
-
-  let cardHtml = '<div class="d-flex flex-column gap-2">';
-
-  sortedGroups.forEach(g => {
-    const isOverdue = g.has_unpaid && g.soonest_due_date && g.soonest_due_date < today;
-    const statusBadge = g.outstanding_balance > 0
-      ? (isOverdue ? '<span class="badge bg-danger">Overdue</span>' : '<span class="badge bg-warning text-dark">Unpaid</span>')
-      : '<span class="badge bg-success">Paid</span>';
-    
-    const rowClass = isOverdue ? 'due-today' : '';
-    const safeName = g.customer_name.replace(/'/g, "\\'");
-    const dueStatus = g.soonest_due_date ? getDueStatusText(g.soonest_due_date, !g.has_unpaid) : '';
-
-    // Desktop Row
-    tbody.innerHTML += `
+      // Desktop Row
+      tbody.innerHTML += `
       <tr class="${rowClass}">
         <td class="fw-semibold">${g.customer_name}</td>
         <td>${g.customer_contact || '-'}</td>
@@ -407,8 +410,8 @@ function renderReceivablesList() {
       </tr>
     `;
 
-    // Mobile Card
-    cardHtml += `
+      // Mobile Card
+      cardHtml += `
       <div class="record-card ${isOverdue ? 'border-danger shadow-sm' : ''}" style="${isOverdue ? 'border-left: 4px solid #dc3545 !important;' : ''}">
         <div class="record-card-header">
           <div>
@@ -433,92 +436,92 @@ function renderReceivablesList() {
         </div>
       </div>
     `;
-  });
+    });
 
-  cardHtml += '</div>';
-  cardContainer.innerHTML = cardHtml;
-}
-
-function openNewReceivableModal() {
-  document.getElementById('addReceivableModalLabel').textContent = 'Add Receivable';
-  document.getElementById('customerName').value = '';
-  document.getElementById('customerName').readOnly = false;
-  document.getElementById('customerContact').value = '';
-  document.getElementById('customerContact').readOnly = false;
-  document.getElementById('itemsDesc').value = '';
-  document.getElementById('amountOwed').value = '';
-  document.getElementById('approvedByStaff').value = '';
-  document.getElementById('incurredDate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('dueDate').value = '';
-
-  const addModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('addReceivableModal'));
-  addModal.show();
-}
-
-function openAddOrderModal(customerName) {
-  const records = receivablesCache.filter(r => r.customer_name.trim() === customerName.trim());
-  const contact = records.length ? (records[0].customer_contact || '') : '';
-  
-  document.getElementById('addReceivableModalLabel').textContent = `Add Order for ${customerName}`;
-  document.getElementById('customerName').value = customerName;
-  document.getElementById('customerName').readOnly = true;
-  document.getElementById('customerContact').value = contact;
-  document.getElementById('customerContact').readOnly = contact !== '';
-  
-  document.getElementById('itemsDesc').value = '';
-  document.getElementById('amountOwed').value = '';
-  document.getElementById('approvedByStaff').value = '';
-  document.getElementById('incurredDate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('dueDate').value = '';
-
-  const addModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('addReceivableModal'));
-  addModal.show();
-}
-
-function openViewOrderModal(customerName) {
-  const records = receivablesCache.filter(r => r.customer_name.trim() === customerName.trim());
-  if (!records.length) return;
-
-  // If there's an open view order modal already, let's close it
-  const viewEl = document.getElementById('viewOrderModal');
-  const existingInst = bootstrap.Modal.getInstance(viewEl);
-  if (existingInst) {
-    existingInst.hide();
+    cardHtml += '</div>';
+    cardContainer.innerHTML = cardHtml;
   }
 
-  document.getElementById('viewCustomerName').textContent = customerName;
-  document.getElementById('viewCustomerContact').textContent = records[0].customer_contact || 'None';
-  
-  let unpaidTotal = 0;
-  records.forEach(r => {
-    if (!r.paid) {
-      unpaidTotal += (r.amount_owed - r.partial_paid);
-    }
-  });
-  document.getElementById('viewOutstandingBalance').textContent = '₱' + unpaidTotal.toFixed(2);
+  function openNewReceivableModal() {
+    document.getElementById('addReceivableModalLabel').textContent = 'Add Receivable';
+    document.getElementById('customerName').value = '';
+    document.getElementById('customerName').readOnly = false;
+    document.getElementById('customerContact').value = '';
+    document.getElementById('customerContact').readOnly = false;
+    document.getElementById('itemsDesc').value = '';
+    document.getElementById('amountOwed').value = '';
+    document.getElementById('approvedByStaff').value = '';
+    document.getElementById('incurredDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('dueDate').value = '';
 
-  const fullyPaidBtn = document.getElementById('btn-fully-paid-customer');
-  if (fullyPaidBtn) {
-    if (unpaidTotal > 0) {
-      fullyPaidBtn.style.display = 'inline-block';
-    } else {
-      fullyPaidBtn.style.display = 'none';
-    }
+    const addModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('addReceivableModal'));
+    addModal.show();
   }
 
-  const tbody = document.getElementById('view-order-table-body');
-  tbody.innerHTML = '';
+  function openAddOrderModal(customerName) {
+    const records = receivablesCache.filter(r => r.customer_name.trim() === customerName.trim());
+    const contact = records.length ? (records[0].customer_contact || '') : '';
 
-  records.forEach(r => {
-    const statusBadge = r.paid 
-      ? '<span class="badge bg-success">Paid</span>' 
-      : '<span class="badge bg-danger">Unpaid</span>';
-    
-    const actionBtn = !r.paid 
-      ? `<button class="btn btn-sm btn-success py-1" onclick="openMarkPaidModal(${r.id})">Mark Paid</button>`
-      : '-';
+    document.getElementById('addReceivableModalLabel').textContent = `Add Order for ${customerName}`;
+    document.getElementById('customerName').value = customerName;
+    document.getElementById('customerName').readOnly = true;
+    document.getElementById('customerContact').value = contact;
+    document.getElementById('customerContact').readOnly = contact !== '';
 
-    tbody.innerHTML += `
+    document.getElementById('itemsDesc').value = '';
+    document.getElementById('amountOwed').value = '';
+    document.getElementById('approvedByStaff').value = '';
+    document.getElementById('incurredDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('dueDate').value = '';
+
+    const addModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('addReceivableModal'));
+    addModal.show();
+  }
+
+  function openViewOrderModal(customerName) {
+    const records = receivablesCache.filter(r => r.customer_name.trim() === customerName.trim());
+    if (!records.length) return;
+
+    // If there's an open view order modal already, let's close it
+    const viewEl = document.getElementById('viewOrderModal');
+    const existingInst = bootstrap.Modal.getInstance(viewEl);
+    if (existingInst) {
+      existingInst.hide();
+    }
+
+    document.getElementById('viewCustomerName').textContent = customerName;
+    document.getElementById('viewCustomerContact').textContent = records[0].customer_contact || 'None';
+
+    let unpaidTotal = 0;
+    records.forEach(r => {
+      if (!r.paid) {
+        unpaidTotal += (r.amount_owed - r.partial_paid);
+      }
+    });
+    document.getElementById('viewOutstandingBalance').textContent = '₱' + unpaidTotal.toFixed(2);
+
+    const fullyPaidBtn = document.getElementById('btn-fully-paid-customer');
+    if (fullyPaidBtn) {
+      if (unpaidTotal > 0) {
+        fullyPaidBtn.style.display = 'inline-block';
+      } else {
+        fullyPaidBtn.style.display = 'none';
+      }
+    }
+
+    const tbody = document.getElementById('view-order-table-body');
+    tbody.innerHTML = '';
+
+    records.forEach(r => {
+      const statusBadge = r.paid
+        ? '<span class="badge bg-success">Paid</span>'
+        : '<span class="badge bg-danger">Unpaid</span>';
+
+      const actionBtn = !r.paid
+        ? `<button class="btn btn-sm btn-success py-1" onclick="openMarkPaidModal(${r.id})">Mark Paid</button>`
+        : '-';
+
+      tbody.innerHTML += `
       <tr>
         <td>${r.items}</td>
         <td>${r.incurred_date || '-'}</td>
@@ -530,159 +533,161 @@ function openViewOrderModal(customerName) {
         <td>${actionBtn}</td>
       </tr>
     `;
-  });
+    });
 
-  viewOrderModalInstance = new bootstrap.Modal(viewEl);
-  viewOrderModalInstance.show();
-}
-
-function createReceivable() {
-  const customerName = document.getElementById('customerName').value.trim();
-  const customerContact = document.getElementById('customerContact').value.trim();
-  const itemsDesc = document.getElementById('itemsDesc').value.trim();
-  const amountOwed = document.getElementById('amountOwed').value.trim();
-  const approvedByStaff = document.getElementById('approvedByStaff').value.trim();
-  const incurredDate = document.getElementById('incurredDate').value.trim();
-  const dueDate = document.getElementById('dueDate').value.trim();
-
-  if (!customerName || !itemsDesc || !amountOwed || !approvedByStaff || !incurredDate || !dueDate) {
-    showToast('Please fill in all required fields.', 'error');
-    return;
+    viewOrderModalInstance = new bootstrap.Modal(viewEl);
+    viewOrderModalInstance.show();
   }
 
-  const payload = {
-    customer_name: customerName,
-    customer_contact: customerContact,
-    items_description: itemsDesc,
-    amount_owed: parseFloat(amountOwed),
-    approved_by_staff: approvedByStaff,
-    incurred_date: incurredDate,
-    due_date: dueDate,
-  };
+  function createReceivable() {
+    const customerName = document.getElementById('customerName').value.trim();
+    const customerContact = document.getElementById('customerContact').value.trim();
+    const itemsDesc = document.getElementById('itemsDesc').value.trim();
+    const amountOwed = document.getElementById('amountOwed').value.trim();
+    const approvedByStaff = document.getElementById('approvedByStaff').value.trim();
+    const incurredDate = document.getElementById('incurredDate').value.trim();
+    const dueDate = document.getElementById('dueDate').value.trim();
 
-  csrfFetch('/admin/receivables/api/receivables', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).then(r => r.json()).then(data => {
-    if (data.success) {
-      showToast('Receivable logged successfully', 'success');
-      
-      const modalEl = document.getElementById('addReceivableModal');
-      const inst = bootstrap.Modal.getInstance(modalEl);
-      if (inst) inst.hide();
-      
-      loadReceivables();
-    } else {
-      showToast(data.error || 'Error creating receivable', 'error');
+    if (!customerName || !itemsDesc || !amountOwed || !approvedByStaff || !incurredDate || !dueDate) {
+      showToast('Please fill in all required fields.', 'error');
+      return;
     }
-  }).catch(() => {
-    showToast('Error creating receivable', 'error');
-  });
-}
 
-function openMarkPaidModal(recId) {
-  const rec = receivablesCache.find(r => r.id === recId);
-  if (!rec) return;
+    const payload = {
+      customer_name: customerName,
+      customer_contact: customerContact,
+      items_description: itemsDesc,
+      amount_owed: parseFloat(amountOwed),
+      approved_by_staff: approvedByStaff,
+      incurred_date: incurredDate,
+      due_date: dueDate,
+    };
 
-  pendingMarkPaidId = recId;
-  document.getElementById('markPaidCustomer').textContent = rec.customer_name || '—';
-  document.getElementById('markPaidAmount').textContent = '₱' + (rec.amount_owed - rec.partial_paid).toFixed(2);
-  document.getElementById('markPaidDueDate').textContent = rec.due_date || '—';
+    csrfFetch('/admin/receivables/api/receivables', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(r => r.json()).then(data => {
+      if (data.success) {
+        showToast('Receivable logged successfully', 'success');
 
-  // If viewOrderModal is open, let's hide it first
-  const viewEl = document.getElementById('viewOrderModal');
-  const viewModal = bootstrap.Modal.getInstance(viewEl);
-  if (viewModal) {
-    viewModal.hide();
-    // store that we came from viewOrderModal so we can reopen it if cancelled
-    document.getElementById('markPaidModal').setAttribute('data-reopen-customer', rec.customer_name);
-  } else {
-    document.getElementById('markPaidModal').removeAttribute('data-reopen-customer');
-  }
+        const modalEl = document.getElementById('addReceivableModal');
+        const inst = bootstrap.Modal.getInstance(modalEl);
+        if (inst) inst.hide();
 
-  if (markPaidModalInstance) {
-    markPaidModalInstance.show();
-  }
-}
-
-function confirmMarkPaid() {
-  if (!pendingMarkPaidId) return;
-
-  const btn = document.getElementById('confirmMarkPaidBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving…';
-
-  csrfFetch(`/admin/receivables/api/receivables/${pendingMarkPaidId}/mark-paid`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' }
-  }).then(r => r.json()).then(data => {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Confirm Paid';
-
-    if (data.success) {
-      const reopenCustomer = document.getElementById('markPaidModal').getAttribute('data-reopen-customer');
-      document.getElementById('markPaidModal').removeAttribute('data-reopen-customer');
-      
-      if (markPaidModalInstance) markPaidModalInstance.hide();
-      pendingMarkPaidId = null;
-      showToast('Marked as paid', 'success');
-      
-      // reload receivables and then reopen the view modal if we came from it
-      fetch('/admin/receivables/api/receivables').then(r => r.json()).then(res => {
-        if (res.success) {
-          receivablesCache = res.data;
-          renderReceivablesList(); // update main table
-          if (reopenCustomer) {
-            openViewOrderModal(reopenCustomer);
-          }
-        }
-      });
-    } else {
-      showToast(data.error || 'Error marking as paid', 'error');
-    }
-  }).catch(function() {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Confirm Paid';
-    showToast('Error marking as paid', 'error');
-  });
-}
-
-async function markCustomerAsFullyPaid() {
-  const customerName = document.getElementById('viewCustomerName').textContent;
-  if (!customerName || customerName === '—') return;
-
-  const confirmed = await window.showConfirmDialog({
-    title: 'Mark All as Fully Paid?',
-    message: `Are you sure you want to mark all outstanding balances for ${customerName} as fully paid?`,
-    confirmText: 'Yes, Mark Paid',
-    confirmClass: 'btn-success',
-    iconType: 'cash',
-    icon: '💵'
-  });
-
-  if (!confirmed) return;
-
-  csrfFetch('/admin/receivables/api/receivables/mark-customer-paid', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customer_name: customerName })
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.success) {
-      showToast(`All debts for ${customerName} have been marked as paid.`, 'success');
-      if (viewOrderModalInstance) {
-        viewOrderModalInstance.hide();
+        refreshReceivables();
+      } else {
+        showToast(data.error || 'Error creating receivable', 'error');
       }
-      loadReceivables();
+    }).catch(() => {
+      showToast('Error creating receivable', 'error');
+    });
+  }
+
+  function openMarkPaidModal(recId) {
+    const rec = receivablesCache.find(r => r.id === recId);
+    if (!rec) return;
+
+    pendingMarkPaidId = recId;
+    document.getElementById('markPaidCustomer').textContent = rec.customer_name || '—';
+    document.getElementById('markPaidAmount').textContent = '₱' + (rec.amount_owed - rec.partial_paid).toFixed(2);
+    document.getElementById('markPaidDueDate').textContent = rec.due_date || '—';
+
+    // If viewOrderModal is open, let's hide it first
+    const viewEl = document.getElementById('viewOrderModal');
+    const viewModal = bootstrap.Modal.getInstance(viewEl);
+    if (viewModal) {
+      viewModal.hide();
+      // store that we came from viewOrderModal so we can reopen it if cancelled
+      document.getElementById('markPaidModal').setAttribute('data-reopen-customer', rec.customer_name);
     } else {
-      showToast(data.error || 'Error updating debt', 'error');
+      document.getElementById('markPaidModal').removeAttribute('data-reopen-customer');
     }
-  })
-  .catch(() => {
-    showToast('Error updating debt', 'error');
-  });
-}
+
+    if (markPaidModalInstance) {
+      markPaidModalInstance.show();
+    }
+  }
+
+  function confirmMarkPaid() {
+    if (!pendingMarkPaidId) return;
+
+    const btn = document.getElementById('confirmMarkPaidBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving…';
+
+    csrfFetch(`/admin/receivables/api/receivables/${pendingMarkPaidId}/mark-paid`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' }
+    }).then(r => r.json()).then(data => {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Confirm Paid';
+
+      if (data.success) {
+        const reopenCustomer = document.getElementById('markPaidModal').getAttribute('data-reopen-customer');
+        document.getElementById('markPaidModal').removeAttribute('data-reopen-customer');
+
+        if (markPaidModalInstance) markPaidModalInstance.hide();
+        pendingMarkPaidId = null;
+        showToast('Marked as paid', 'success');
+
+        // The explicit reload below must finish before reopening the detail modal.
+        // Cancel a socket-triggered refresh queued for the same server mutation.
+        refreshReceivables.cancel();
+        fetch('/admin/receivables/api/receivables').then(r => r.json()).then(res => {
+          if (res.success) {
+            receivablesCache = res.data;
+            renderReceivablesList(); // update main table
+            if (reopenCustomer) {
+              openViewOrderModal(reopenCustomer);
+            }
+          }
+        });
+      } else {
+        showToast(data.error || 'Error marking as paid', 'error');
+      }
+    }).catch(function () {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Confirm Paid';
+      showToast('Error marking as paid', 'error');
+    });
+  }
+
+  async function markCustomerAsFullyPaid() {
+    const customerName = document.getElementById('viewCustomerName').textContent;
+    if (!customerName || customerName === '—') return;
+
+    const confirmed = await window.showConfirmDialog({
+      title: 'Mark All as Fully Paid?',
+      message: `Are you sure you want to mark all outstanding balances for ${customerName} as fully paid?`,
+      confirmText: 'Yes, Mark Paid',
+      confirmClass: 'btn-success',
+      iconType: 'cash',
+      icon: '💵'
+    });
+
+    if (!confirmed) return;
+
+    csrfFetch('/admin/receivables/api/receivables/mark-customer-paid', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_name: customerName })
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          showToast(`All debts for ${customerName} have been marked as paid.`, 'success');
+          if (viewOrderModalInstance) {
+            viewOrderModalInstance.hide();
+          }
+          refreshReceivables();
+        } else {
+          showToast(data.error || 'Error updating debt', 'error');
+        }
+      })
+      .catch(() => {
+        showToast('Error updating debt', 'error');
+      });
+  }
 </script>
 {% endblock %}

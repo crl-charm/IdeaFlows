@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.models import MenuItem, SpaceType
 from app.models.user import User
+from app.models.admin import Admin
 from app.models.finance import FinanceBudget
 
 
@@ -59,11 +60,38 @@ class DatabaseSeeder:
         # Menu items are now managed through admin interface
         # No hardcoded items seeded on startup
 
-        if not User.query.filter_by(username="admin").first():
-            admin = User(full_name="System Admin", username="admin", role="admin", job_role="admin")
-            admin.set_password("Admin123!@#$")
-            db.session.add(admin)
+        admin = Admin.query.filter_by(username="admin").first()
+        if not admin:
+            existing_user_admin = User.query.filter_by(username="admin", is_active=True).first()
+            if existing_user_admin:
+                admin = Admin(
+                    full_name=existing_user_admin.full_name,
+                    username=existing_user_admin.username,
+                    created_at=existing_user_admin.created_at,
+                )
+                admin.password = existing_user_admin.password
+                admin.failed_login_attempts = existing_user_admin.failed_login_attempts
+                admin.locked_until = existing_user_admin.locked_until
+                admin.last_login = existing_user_admin.last_login
+                admin.password_changed_at = existing_user_admin.password_changed_at
+                existing_user_admin.is_active = False
+                db.session.add(admin)
+                db.session.add(existing_user_admin)
+            else:
+                initial_password = self._app.config.get("INITIAL_ADMIN_PASSWORD", "")
+                if self._app.config.get("FLASK_ENV") == "production" and not initial_password:
+                    raise RuntimeError(
+                        "INITIAL_ADMIN_PASSWORD is required to create the first production admin"
+                    )
+                admin = Admin(full_name="System Admin", username="admin")
+                admin.set_password(initial_password or "Admin123!@#$")
+                db.session.add(admin)
             db.session.commit()
+        else:
+            existing_user_admin = User.query.filter_by(username="admin", is_active=True).first()
+            if existing_user_admin:
+                existing_user_admin.is_active = False
+                db.session.commit()
 
         if FinanceBudget.query.count() == 0:
             db.session.add(FinanceBudget(_name="Main Budget", _total_budget=Decimal("0.00"), _allocated=Decimal("0.00")))
@@ -79,5 +107,3 @@ class DatabaseSeeder:
                 ]
             )
             db.session.commit()
-
-

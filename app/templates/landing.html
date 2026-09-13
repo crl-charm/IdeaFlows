@@ -1,21 +1,278 @@
 {% extends "auth_layout.html" %}
 
-{% block title %}IdeaHub{% endblock %}
+{% block title %}IdeaFlow — Coworking Space & Cafe{% endblock %}
 
 {% block content %}
-<div class="login-wrapper">
-  <div class="login-card landing-card">
-    <div class="text-center mb-4">
-      <img src="{{ url_for('static', filename='css/images/logo.png') }}" alt="IdeaHub" class="login-logo mb-2" />
-      <h1 class="brand-title mt-2 mb-2 visually-hidden">IdeaHub</h1>
-      <p class="brand-subtitle mb-0">
-        Idea Hub Coworking Space + Cafe
-      </p>
+<div class="auth-split-wrapper">
+  {{ honeypot_tag()|safe }}
+  <div class="auth-split-container" id="authSplitContainer">
+    
+    <!-- Left Column: Landing Presentation -->
+    <div class="auth-slot auth-slot-left" id="landingSlot">
+      <div class="auth-card-inner">
+        <div class="mb-4">
+          <div class="d-flex align-items-center gap-3 mb-2">
+            <img src="{{ url_for('static', filename='css/images/logo.png') }}" alt="IdeaFlow" class="login-logo" />
+            <div>
+              <h1 class="auth-hero-title mb-0">IdeaFlow</h1>
+              <small class="text-muted fw-semibold">Workspace POS &amp; Management</small>
+            </div>
+          </div>
+          <p class="auth-hero-subtitle mt-3">
+            Your sanctuary for high-impact focus, collaborative meetings, and handcrafted cafe brews.
+          </p>
+        </div>
+
+        <div class="mb-4">
+          <div class="auth-feature-row">
+            <div class="auth-feature-icon">
+              <i class="bi bi-laptop"></i>
+            </div>
+            <div>
+              <div class="fw-semibold text-dark">Flexible Coworking &amp; Boardrooms</div>
+              <small class="text-muted">High-speed connectivity, private rooms, and lounge desks.</small>
+            </div>
+          </div>
+          <div class="auth-feature-row">
+            <div class="auth-feature-icon">
+              <i class="bi bi-cup-hot"></i>
+            </div>
+            <div>
+              <div class="fw-semibold text-dark">Artisanal Cafe &amp; POS</div>
+              <small class="text-muted">Seamless ordering, inventory management, and fast receipts.</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-grid gap-2">
+          <button type="button" class="btn btn-login btn-lg shadow-sm d-flex align-items-center justify-content-center gap-2" id="goToLoginBtn">
+            <span>Log in</span>
+            <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
     </div>
 
-    <div class="d-grid gap-2 mt-4">
-      <a href="/login" class="btn btn-login w-100">Login</a>
+    <!-- Right Column: Login Details Form -->
+    <div class="auth-slot auth-slot-right" id="loginSlot">
+      <div class="auth-card-inner">
+        <div class="d-flex align-items-center justify-content-start mb-3">
+          <button type="button" class="btn btn-sm btn-link text-muted p-0 text-decoration-none d-flex align-items-center gap-1" id="backToLandingBtn">
+            <i class="bi bi-arrow-left"></i>
+            <span>Back to Landing</span>
+          </button>
+        </div>
+
+        <div class="text-center mb-4">
+          <img src="{{ url_for('static', filename='css/images/logo.png') }}" alt="IdeaFlow" class="login-logo mb-2" />
+          <h2 class="brand-title mt-1 mb-1">Welcome Back</h2>
+          <p class="brand-subtitle mb-0">Sign in to manage spaces, orders, and sales</p>
+        </div>
+
+        <!-- Flash Message Container -->
+        <div id="loginAlertBox" class="alert alert-danger text-center py-2 mb-3 d-none"></div>
+
+        <form id="loginForm" autocomplete="on">
+          <div class="mb-3">
+            <label class="form-label fw-semibold text-secondary small" for="username">Username</label>
+            <div class="input-group">
+              <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-person"></i></span>
+              <input type="text" class="form-control border-start-0 ps-1" id="username" name="username" placeholder="Enter the username" required autocomplete="username">
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <div class="d-flex justify-content-between align-items-center">
+              <label class="form-label fw-semibold text-secondary small mb-1" for="password">Password</label>
+            </div>
+            <div class="input-group">
+              <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-lock"></i></span>
+              <input type="password" class="form-control border-start-0 border-end-0 ps-1" id="password" name="password" placeholder="Enter your password" required autocomplete="current-password">
+              <button type="button" class="btn btn-outline-secondary border-start-0 password-toggle bg-white" id="togglePassword" aria-label="Show password">
+                <i class="bi bi-eye"></i>
+              </button>
+            </div>
+          </div>
+
+          {% if config.TURNSTILE_ENABLED %}
+          <div class="mb-3 d-flex justify-content-center">
+            <div class="cf-turnstile" data-sitekey="{{ config.TURNSTILE_SITE_KEY }}" data-action="login"></div>
+          </div>
+          {% endif %}
+
+          <button type="submit" class="btn btn-login w-100 py-2 shadow-sm fw-semibold" id="loginBtn">
+            <span class="spinner-border spinner-border-sm me-2 d-none" id="loginSpinner" role="status" aria-hidden="true"></span>
+            <span id="loginBtnText">Sign In</span>
+          </button>
+        </form>
+      </div>
     </div>
+
+    <!-- Sliding Hero Image Panel -->
+    <div class="auth-sliding-panel" id="authSlidingPanel">
+      <div class="auth-sliding-image">
+        <img src="{{ url_for('static', filename='images/background.jpg') }}" alt="IdeaHub Space" class="auth-hero-img" />
+        <div class="sliding-overlay">
+          <div class="overlay-quote">
+            <span class="quote-pill">IdeaHub Space</span>
+            <h3 class="quote-text">"Everything begins with an idea"</h3>
+            <p class="quote-sub">Inspiring creativity, comfort, and community.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
+
+<script>
+  (function () {
+    const container = document.getElementById("authSplitContainer");
+    const goToLoginBtn = document.getElementById("goToLoginBtn");
+    const backToLandingBtn = document.getElementById("backToLandingBtn");
+    const loginForm = document.getElementById("loginForm");
+    const loginBtn = document.getElementById("loginBtn");
+    const loginBtnText = document.getElementById("loginBtnText");
+    const loginSpinner = document.getElementById("loginSpinner");
+    const passwordInput = document.getElementById("password");
+    const togglePassword = document.getElementById("togglePassword");
+    const alertBox = document.getElementById("loginAlertBox");
+    const turnstileEnabled = {{ config.TURNSTILE_ENABLED | tojson }};
+
+    function getTurnstileToken() {
+      const input = loginForm && loginForm.querySelector('[name="cf-turnstile-response"]');
+      return input ? input.value : "";
+    }
+
+    function resetTurnstile() {
+      if (turnstileEnabled && window.turnstile) {
+        window.turnstile.reset();
+      }
+    }
+
+    function setMode(mode, pushHistory) {
+      if (pushHistory === undefined) pushHistory = true;
+      if (mode === "login") {
+        container.classList.add("is-login-mode");
+        if (pushHistory && window.location.pathname !== "/login") {
+          history.pushState({ mode: "login" }, "", "/login");
+        }
+        setTimeout(() => {
+          const uInput = document.getElementById("username");
+          if (uInput) uInput.focus();
+        }, 500);
+      } else {
+        container.classList.remove("is-login-mode");
+        if (pushHistory && window.location.pathname !== "/") {
+          history.pushState({ mode: "landing" }, "", "/");
+        }
+      }
+    }
+
+    if (goToLoginBtn) {
+      goToLoginBtn.addEventListener("click", function () {
+        setMode("login", true);
+      });
+    }
+
+    if (backToLandingBtn) {
+      backToLandingBtn.addEventListener("click", function () {
+        setMode("landing", true);
+      });
+    }
+
+    window.addEventListener("popstate", function (e) {
+      if (e.state && e.state.mode === "login") {
+        setMode("login", false);
+      } else if (e.state && e.state.mode === "landing") {
+        setMode("landing", false);
+      } else {
+        if (window.location.pathname === "/login") {
+          setMode("login", false);
+        } else {
+          setMode("landing", false);
+        }
+      }
+    });
+
+    if (togglePassword && passwordInput) {
+      togglePassword.addEventListener("click", function () {
+        const isHidden = passwordInput.type === "password";
+        passwordInput.type = isHidden ? "text" : "password";
+        togglePassword.innerHTML = isHidden
+          ? '<i class="bi bi-eye-slash"></i>'
+          : '<i class="bi bi-eye"></i>';
+      });
+    }
+
+    if (loginForm) {
+      loginForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        alertBox.classList.add("d-none");
+        alertBox.textContent = "";
+
+        const username = document.getElementById("username").value.trim();
+        const password = passwordInput.value;
+        const turnstileToken = getTurnstileToken();
+
+        if (!username || !password) {
+          alertBox.textContent = "Please enter both username and password.";
+          alertBox.classList.remove("d-none");
+          return;
+        }
+
+        if (turnstileEnabled && !turnstileToken) {
+          alertBox.textContent = "Please complete the human verification.";
+          alertBox.classList.remove("d-none");
+          return;
+        }
+
+        loginBtn.disabled = true;
+        loginSpinner.classList.remove("d-none");
+        loginBtnText.textContent = "Authenticating...";
+
+        try {
+          const response = await fetch("/api/login", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              username: username,
+              password: password,
+              turnstile_token: turnstileToken
+            })
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            showToast("Login successful! Redirecting…", "success");
+            setTimeout(function () {
+              window.location.href = data.redirect || "/dashboard";
+            }, 1000);
+          } else {
+            loginBtn.disabled = false;
+            loginSpinner.classList.add("d-none");
+            loginBtnText.textContent = "Sign In";
+            const errMsg = data.error || "Invalid credentials.";
+            alertBox.textContent = errMsg;
+            alertBox.classList.remove("d-none");
+            showToast(errMsg, "error");
+            resetTurnstile();
+          }
+        } catch (err) {
+          loginBtn.disabled = false;
+          loginSpinner.classList.add("d-none");
+          loginBtnText.textContent = "Sign In";
+          alertBox.textContent = "Connection error. Please try again.";
+          alertBox.classList.remove("d-none");
+          showToast("Connection error. Please try again.", "error");
+          resetTurnstile();
+        }
+      });
+    }
+  })();
+</script>
 {% endblock %}

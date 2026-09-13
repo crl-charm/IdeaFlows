@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Any, Optional
 
 from app.repositories.receivable_repository import ReceivableRepository
@@ -11,8 +12,8 @@ from app.repositories.receivable_repository import ReceivableRepository
 class ReceivableService:
     repo: ReceivableRepository
 
-    def list_all(self) -> list[dict[str, Any]]:
-        receivables = self.repo.list_all()
+    @staticmethod
+    def _serialize(receivables) -> list[dict[str, Any]]:
         return [
             {
                 "id": r.id,
@@ -29,6 +30,29 @@ class ReceivableService:
             }
             for r in receivables
         ]
+
+    def list_all(self) -> list[dict[str, Any]]:
+        return self._serialize(self.repo.list_all())
+
+    def list_paginated(
+        self,
+        page: int,
+        per_page: int,
+        status: str | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        pagination = self.repo.list_paginated(page, per_page, status, search)
+        return {
+            "data": self._serialize(pagination.items),
+            "pagination": {
+                "page": pagination.page,
+                "per_page": pagination.per_page,
+                "pages": pagination.pages,
+                "total": pagination.total,
+                "has_next": pagination.has_next,
+                "has_prev": pagination.has_prev,
+            },
+        }
 
     def list_unpaid(self) -> list[dict[str, Any]]:
         receivables = self.repo.list_unpaid()
@@ -57,8 +81,9 @@ class ReceivableService:
     ) -> dict[str, Any]:
         due = date.fromisoformat(due_date)
         incurred = date.fromisoformat(incurred_date) if incurred_date else None
+        amount_decimal = Decimal(str(amount_owed))
         receivable = self.repo.create(
-            customer_name, customer_contact, items_description, amount_owed, due, created_by, session_id, approved_by_staff, incurred
+            customer_name, customer_contact, items_description, amount_decimal, due, created_by, session_id, approved_by_staff, incurred
         )
         self.repo.save()
         return {"success": True, "data": {"id": receivable.id}}

@@ -11,8 +11,18 @@ class InventoryRepository:
     def get_item(self, item_id: int) -> Optional[InventoryItem]:
         return InventoryItem.query.filter_by(id=item_id).first()
 
+    def get_item_for_update(self, item_id: int) -> Optional[InventoryItem]:
+        return InventoryItem.query.filter_by(id=item_id).with_for_update().first()
+
     def get_by_menu_item_id(self, menu_item_id: int) -> Optional[InventoryItem]:
         return InventoryItem.query.filter_by(menu_item_id=menu_item_id).first()
+
+    def get_by_menu_item_id_for_update(self, menu_item_id: int) -> Optional[InventoryItem]:
+        return (
+            InventoryItem.query.filter_by(menu_item_id=menu_item_id)
+            .with_for_update()
+            .first()
+        )
 
     def list_by_menu_item_ids(self, menu_item_ids: list[int]) -> dict[int, InventoryItem]:
         if not menu_item_ids:
@@ -27,7 +37,8 @@ class InventoryRepository:
 
     def list_low_stock(self) -> list[InventoryItem]:
         return InventoryItem.query.filter(
-            InventoryItem.stock_qty < InventoryItem.low_stock_threshold
+            InventoryItem.stock_qty > 0,
+            InventoryItem.stock_qty <= InventoryItem.low_stock_threshold,
         ).all()
 
     def create(
@@ -47,26 +58,32 @@ class InventoryRepository:
         db.session.flush()
         return item
 
-    def deduct(self, item_id: int, qty: int, reason: str, user_id: Optional[int]) -> bool:
-        item = self.get_item(item_id)
-        if not item or item.stock_qty < qty:
+    def deduct(self, item_id: int, qty: float | Decimal, reason: str, user_id: Optional[int]) -> bool:
+        from decimal import Decimal
+        item = self.get_item_for_update(item_id)
+        if not item:
             return False
-        item.stock_qty -= qty
+        qty_dec = Decimal(str(qty))
+        if Decimal(str(item.stock_qty)) < qty_dec:
+            return False
+        item.stock_qty = Decimal(str(item.stock_qty)) - qty_dec
         item.updated_at = datetime.utcnow()
         log = InventoryLog(
-            inventory_item_id=item_id, change_qty=-qty, reason=reason, changed_by=user_id
+            inventory_item_id=item_id, change_qty=-qty_dec, reason=reason, changed_by=user_id
         )
         db.session.add(log)
         return True
 
-    def add(self, item_id: int, qty: int, reason: str, user_id: Optional[int]) -> bool:
-        item = self.get_item(item_id)
+    def add(self, item_id: int, qty: float | Decimal, reason: str, user_id: Optional[int]) -> bool:
+        from decimal import Decimal
+        item = self.get_item_for_update(item_id)
         if not item:
             return False
-        item.stock_qty += qty
+        qty_dec = Decimal(str(qty))
+        item.stock_qty = Decimal(str(item.stock_qty or 0)) + qty_dec
         item.updated_at = datetime.utcnow()
         log = InventoryLog(
-            inventory_item_id=item_id, change_qty=qty, reason=reason, changed_by=user_id
+            inventory_item_id=item_id, change_qty=qty_dec, reason=reason, changed_by=user_id
         )
         db.session.add(log)
         return True

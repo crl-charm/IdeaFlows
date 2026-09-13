@@ -105,6 +105,19 @@
             <label class="btn btn-outline-danger flex-fill" for="paymentBdo"><i class="bi bi-bank me-1"></i> BDO</label>
             <input type="radio" class="btn-check" name="paymentMethod" id="paymentBpi" value="bpi">
             <label class="btn btn-outline-warning text-dark flex-fill" for="paymentBpi"><i class="bi bi-bank2 me-1"></i> BPI</label>
+            <input type="radio" class="btn-check" name="paymentMethod" id="paymentQueenbank" value="queenbank">
+            <label class="btn btn-outline-warning text-dark flex-fill" for="paymentQueenbank"><i class="bi bi-bank2 me-1"></i> QueenBank</label>
+          </div>
+          <!-- Cash Payment Detail Box -->
+          <div id="cash-payment-details" class="mt-3 p-3 bg-light rounded border border-success-subtle" style="display: block;">
+            <div class="mb-2">
+              <label for="cashAmountGiven" class="form-label fw-semibold small text-success">Amount Given (₱)</label>
+              <input type="number" step="0.01" min="0" class="form-control border-success" id="cashAmountGiven" placeholder="Enter amount given">
+            </div>
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="small fw-semibold text-muted">Change:</span>
+              <span class="fw-bold text-success fs-5" id="cashChangeDisplay">₱0.00</span>
+            </div>
           </div>
         </div>
         <div class="d-flex justify-content-between w-100">
@@ -144,7 +157,7 @@
 
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" onclick="checkinCustomer()">Check In</button>
+        <button class="btn btn-primary" id="checkinCustomerBtn" onclick="checkinCustomer()">Check In</button>
       </div>
 
     </div>
@@ -204,7 +217,7 @@ function formatTime(seconds) {
 
 
 // CHECK-IN
-function checkinCustomer() {
+async function checkinCustomer() {
 
     let name = document.getElementById("customerName").value;
     let school = document.getElementById("school").value;
@@ -216,19 +229,26 @@ function checkinCustomer() {
         return;
     }
 
-    csrfFetch("/api/checkin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            customer_name: name,
-            school: school,
-            course: course,
-            number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
-            space_type_id: parseInt(spaceType)
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
+    const button = document.getElementById("checkinCustomerBtn");
+    try {
+        const data = await runButtonAction(button, {
+            label: "Checking in...",
+            slowLabel: "Still checking in..."
+        }, requestKey => fetchJSON("/api/checkin", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": requestKey
+            },
+            body: JSON.stringify({
+                customer_name: name,
+                school: school,
+                course: course,
+                number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
+                space_type_id: parseInt(spaceType)
+            })
+        }));
+        if (!data) return;
         if (data.error) {
             showToast(data.error, "error");
             return;
@@ -245,10 +265,14 @@ function checkinCustomer() {
         showToast("Customer checked in successfully!", "success");
         loadSessions();
         loadSpaceAvailability();
-    })
-    .catch(err => {
-        showToast("Failed to check in customer. Please try again.", "error");
-    });
+    } catch (err) {
+        if (err.data && err.data.duplicate) {
+            showToast("This check-in is already being processed. The list will refresh.", "info");
+            loadSessions();
+        } else {
+            showToast(err.message || "Failed to check in customer. Please try again.", "error");
+        }
+    }
 }
 
 function loadSpaceAvailability() {
@@ -283,9 +307,16 @@ function goToOrder(sessionId) {
 
 
 // VOID ITEM
-function voidItem(itemId, sessionId) {
-
-    if (!confirm("Remove this item?")) return;
+async function voidItem(itemId, sessionId) {
+    const confirmed = await showConfirmDialog({
+        title: "Remove Order Item",
+        message: "Are you sure you want to remove this item from the order?",
+        confirmText: "Remove Item",
+        confirmClass: "btn-danger",
+        iconType: "delete",
+        icon: '<i class="bi bi-trash3 fs-1 text-danger"></i>'
+    });
+    if (!confirmed) return;
 
     csrfFetch(`/api/void-item/${itemId}`, {
         method: "DELETE"
@@ -341,7 +372,7 @@ function viewOrder(sessionId) {
 
             document.getElementById("receipt-body").innerHTML = `
                 <div style="text-align:center;">
-                    <h4>IdeaHub</h4>
+                    <h4>IdeaFlow</h4>
                     <hr>
                 </div>
 
@@ -366,19 +397,51 @@ function viewOrder(sessionId) {
             document.getElementById("paymentGcash").checked = false;
             document.getElementById("paymentBdo").checked = false;
             document.getElementById("paymentBpi").checked = false;
+            document.getElementById("paymentQueenbank").checked = false;
+
+            const totalBill = data.total_bill;
+            document.getElementById("cashAmountGiven").value = "";
+            document.getElementById("cashChangeDisplay").textContent = "₱0.00";
+
+            const cashInput = document.getElementById("cashAmountGiven");
+            const changeDisplay = document.getElementById("cashChangeDisplay");
+
+            cashInput.oninput = function () {
+                const given = parseFloat(cashInput.value);
+                if (isNaN(given) || given < totalBill) {
+                    changeDisplay.textContent = "₱0.00";
+                    changeDisplay.classList.remove("text-success");
+                    changeDisplay.classList.add("text-danger");
+                } else {
+                    const change = given - totalBill;
+                    changeDisplay.textContent = "₱" + change.toFixed(2);
+                    changeDisplay.classList.remove("text-danger");
+                    changeDisplay.classList.add("text-success");
+                }
+            };
 
             function updatePaymentHint() {
                 const selected = document.querySelector('input[name="paymentMethod"]:checked');
                 const hint = document.getElementById("selected-payment-hint");
                 if (!hint || !selected) return;
-                const labels = { cash: "Cash", gcash: "GCash", bdo: "BDO", bpi: "BPI" };
+                const labels = { cash: "Cash", gcash: "GCash", bdo: "BDO", bpi: "BPI", queenbank: "QueenBank" };
                 hint.textContent = "Payment selected: " + (labels[selected.value] || selected.value);
+
+                const cashDetails = document.getElementById("cash-payment-details");
+                if (selected.value === "cash") {
+                    cashDetails.style.display = "block";
+                } else {
+                    cashDetails.style.display = "none";
+                    cashInput.value = "";
+                    changeDisplay.textContent = "₱0.00";
+                }
             }
 
             document.getElementById("paymentCash").onchange = updatePaymentHint;
             document.getElementById("paymentGcash").onchange = updatePaymentHint;
             document.getElementById("paymentBdo").onchange = updatePaymentHint;
             document.getElementById("paymentBpi").onchange = updatePaymentHint;
+            document.getElementById("paymentQueenbank").onchange = updatePaymentHint;
             updatePaymentHint();
 
             let modal = new bootstrap.Modal(document.getElementById('receiptModal'));
@@ -387,14 +450,30 @@ function viewOrder(sessionId) {
             document.getElementById("confirmCheckoutBtn").onclick = async function () {
                 const selected = document.querySelector('input[name="paymentMethod"]:checked');
                 const paymentMethod = selected ? selected.value : "cash";
-                const labels = { cash: "Cash", gcash: "GCash", bdo: "BDO", bpi: "BPI" };
+                const labels = { cash: "Cash", gcash: "GCash", bdo: "BDO", bpi: "BPI", queenbank: "QueenBank" };
                 const paymentLabel = labels[paymentMethod] || paymentMethod;
 
-                const classes = { cash: "btn-success", gcash: "btn-primary", bdo: "btn-danger", bpi: "btn-warning text-dark" };
+                let amountTendered = null;
+                if (paymentMethod === "cash") {
+                    const cashVal = cashInput.value.trim();
+                    if (!cashVal) {
+                        showToast("Amount tendered is required for cash payments.", "error");
+                        return;
+                    }
+                    const given = parseFloat(cashVal);
+                    if (isNaN(given) || given < totalBill) {
+                        showToast("Amount tendered must be at least the total bill.", "error");
+                        return;
+                    }
+                    amountTendered = given;
+                }
+
+                const classes = { cash: "btn-success", gcash: "btn-primary", bdo: "btn-danger", bpi: "btn-warning text-dark", queenbank: "btn-info" };
                 const icons = {
                     cash: '<i class="bi bi-cash-stack fs-1 text-success"></i>',
                     gcash: '<i class="bi bi-phone fs-1 text-primary"></i>',
                     bdo: '<i class="bi bi-bank fs-1 text-danger"></i>',
+                    queenbank: '<i class="bi bi-bank fs-1 text-info"></i>',
                     bpi: '<i class="bi bi-bank2 fs-1 text-warning"></i>'
                 };
 
@@ -410,28 +489,47 @@ function viewOrder(sessionId) {
 
                 const checkoutData = new FormData();
                 checkoutData.append("payment_method", paymentMethod);
+                if (amountTendered !== null) {
+                    checkoutData.append("amount_tendered", amountTendered);
+                }
 
-                csrfFetch(
-                    `/api/checkout/${sessionId}?payment_method=${encodeURIComponent(paymentMethod)}`,
-                    {
+                let checkoutUrl = `/api/checkout/${sessionId}?payment_method=${encodeURIComponent(paymentMethod)}`;
+                if (amountTendered !== null) {
+                    checkoutUrl += `&amount_tendered=${encodeURIComponent(amountTendered)}`;
+                }
+
+                const checkoutButton = document.getElementById("confirmCheckoutBtn");
+                try {
+                    const data = await runButtonAction(checkoutButton, {
+                        label: "Checking out...",
+                        slowLabel: "Still checking out..."
+                    }, requestKey => fetchJSON(checkoutUrl, {
                         method: "POST",
+                        headers: { "Idempotency-Key": requestKey },
                         body: checkoutData
-                    }
-                )
-                .then(res => res.json())
-                .then(data => {
+                    }));
+                    if (!data) return;
                     if (data.error) {
                         showToast(data.error, "error");
                         return;
                     }
                     bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
                     document.getElementById("payment-method-section").style.display = "none";
-                    showToast(`Customer checked out via ${data.payment_label || paymentLabel}.`, "success");
+                    let successMsg = `Customer checked out via ${data.payment_label || paymentLabel}.`;
+                    if (data.change_given !== undefined && data.change_given !== null && paymentMethod === "cash") {
+                        successMsg += ` Change: ₱${data.change_given.toFixed(2)}`;
+                    }
+                    showToast(successMsg, "success");
                     loadSessions();
-                })
-                .catch(err => {
-                    showToast("Failed to checkout customer. Please try again.", "error");
-                });
+                } catch (err) {
+                    if (err.data && err.data.duplicate) {
+                        showToast("This checkout is already being processed. The list will refresh.", "info");
+                        bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
+                        loadSessions();
+                    } else {
+                        showToast(err.message || "Failed to checkout customer. Please try again.", "error");
+                    }
+                }
             };
 
         })
@@ -586,15 +684,14 @@ function loadSessions() {
 }
 
 // REALTIME UPDATES
-// Socket.IO causes heavy long-poll traffic on Vercel serverless.
-// Keep lightweight polling instead.
+// Lightweight polling keeps dashboard data fresh if a socket connection drops.
 
 
 // INIT
 loadSessions();
 loadSpaceAvailability();
-window.createSmartPoller(loadSessions, 10000);
-window.createSmartPoller(loadSpaceAvailability, 15000);
+window.createSmartPoller(loadSessions, 10000, { runImmediately: false });
+window.createSmartPoller(loadSpaceAvailability, 15000, { runImmediately: false });
 
 </script>
 
