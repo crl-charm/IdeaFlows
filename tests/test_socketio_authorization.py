@@ -54,7 +54,8 @@ def test_financial_events_reach_admin_but_not_staff(app):
             username="socket_admin",
             role="admin",
             job_role="admin",
-            is_active=True,
+            # Production admin logins use an inactive shadow User row.
+            is_active=False,
         )
         admin.set_password("TestPassword123!")
         db.session.add(admin)

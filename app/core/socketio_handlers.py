@@ -41,7 +41,9 @@ def handle_connect(auth=None):
 
     if (
         not user
-        or not user.is_active
+        # Admin logins use an intentionally inactive shadow User row so they
+        # are not counted as active staff. Staff must still be active.
+        or (role != "admin" and not user.is_active)
         or role not in {"admin", "staff"}
         or session_age > lifetime_seconds
     ):
