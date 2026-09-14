@@ -110,3 +110,5 @@ Here is how the main files and folders are organized inside `app/`:
 - **`MD-Folders/SCALING.md`**: Production scaling, health checks, and release safety.
 - **`MD-Folders/OWNER_MAINTENANCE_RUNBOOK.md`**: Owner checklists for VPS,
   Cloudflare Access, R2, backups, Redis, MySQL, security, releases, and incidents.
+- **`MD-Folders/UI_UX_MOTION_PLAN.md`**: Non-invasive UI motion design,
+  implementation boundaries, and acceptance checks.

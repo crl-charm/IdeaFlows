@@ -31,6 +31,8 @@
 
   <!-- Custom CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/motion.css') }}?v=5">
+  <script defer src="{{ url_for('static', filename='js/motion.js') }}?v=5"></script>
 
   <style>
     #ih-toast-container {
@@ -291,6 +293,40 @@
 </head>
 
 <body>
+
+  <div class="ih-navigation-progress" aria-hidden="true"></div>
+
+  <div class="ih-skeleton-shell ih-skeleton-app" aria-hidden="true">
+    <div class="ih-skeleton-app-header">
+      <span class="ih-skeleton-circle"></span>
+      <span class="ih-skeleton-line"></span>
+      <span class="ih-skeleton-line"></span>
+      <span class="ih-skeleton-line"></span>
+    </div>
+    <div class="ih-skeleton-app-body">
+      <aside class="ih-skeleton-app-sidebar">
+        <div class="ih-skeleton-line"></div>
+        <div class="ih-skeleton-line"></div>
+        <div class="ih-skeleton-line"></div>
+        <div class="ih-skeleton-line"></div>
+        <div class="ih-skeleton-line"></div>
+        <div class="ih-skeleton-line"></div>
+        <div class="ih-skeleton-line"></div>
+      </aside>
+      <main class="ih-skeleton-app-main">
+        <div class="ih-skeleton-line ih-skeleton-heading"></div>
+        <div class="ih-skeleton-line ih-skeleton-subheading"></div>
+        <div class="ih-skeleton-grid">
+          <div class="ih-skeleton-tile"></div>
+          <div class="ih-skeleton-tile"></div>
+          <div class="ih-skeleton-tile"></div>
+          <div class="ih-skeleton-tile"></div>
+        </div>
+        <div class="ih-skeleton-line ih-skeleton-toolbar"></div>
+        <div class="ih-skeleton-panel"></div>
+      </main>
+    </div>
+  </div>
 
   <!-- TOP NAVBAR -->
   <nav class="navbar navbar-expand-md mobile-top-bar navbar-light bg-white shadow-sm px-3 px-md-4">

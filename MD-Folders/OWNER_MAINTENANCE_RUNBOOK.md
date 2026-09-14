@@ -5,7 +5,7 @@ contains no credentials and is safe to keep in the repository. Never paste
 passwords, access keys, database URLs, backup contents, or the real `.env` file
 into this document, Git, screenshots, or support chats.
 
-Last reviewed: 2026-09-12
+Last reviewed: 2026-09-14
 
 ## 1. Current production map
 
@@ -98,6 +98,74 @@ sudo tail -n 100 /var/log/nginx/error.log
 sudo journalctl -u redis-server --since today --priority warning --no-pager
 sudo journalctl -u mysql --since today --priority warning --no-pager
 ```
+
+### Manual daily off-site backup
+
+Until the automatic backup timer is implemented, perform this procedure once
+per business day, preferably after closing. It creates a new backup; it does not
+change or stop MySQL, and it never deletes an older backup.
+
+1. Create a timestamped, owner-only directory on the VPS:
+
+```bash
+backup_dir="/var/backups/ideaflow/daily-$(date +%Y%m%d-%H%M%S)"
+sudo install -d -m 700 "$backup_dir"
+echo "BACKUP DIRECTORY: $backup_dir"
+```
+
+2. Dump MySQL. Enter the `pos_user` database password only at the prompt:
+
+```bash
+sudo bash -c 'umask 077; mysqldump --single-transaction --routines --triggers --events --hex-blob --no-tablespaces -u pos_user -p pos_db > "$1/pos_db.sql"' _ "$backup_dir"
+echo "DUMP EXIT: $?"
+```
+
+Stop if `DUMP EXIT` is not `0`.
+
+3. Archive production-uploaded files:
+
+```bash
+sudo tar -C /var/www/pos -czf "$backup_dir/production-files.tar.gz" static/uploads
+sudo chmod 600 "$backup_dir/production-files.tar.gz"
+```
+
+4. Verify both local files before uploading:
+
+```bash
+sudo test -s "$backup_dir/pos_db.sql" && echo "DATABASE FILE: NON-EMPTY"
+sudo test -s "$backup_dir/production-files.tar.gz" && echo "FILES ARCHIVE: NON-EMPTY"
+echo "TABLE DEFINITIONS: $(sudo grep -c '^CREATE TABLE' "$backup_dir/pos_db.sql")"
+echo "DATA SECTIONS: $(sudo grep -c '^INSERT INTO' "$backup_dir/pos_db.sql")"
+echo "ARCHIVE ENTRIES: $(sudo tar -tzf "$backup_dir/production-files.tar.gz" | wc -l)"
+sudo sha256sum "$backup_dir/pos_db.sql" "$backup_dir/production-files.tar.gz"
+```
+
+Both files must be non-empty. Table definitions and archive entries must be
+greater than zero. Record the displayed checksums in the maintenance log.
+
+5. Upload using the repository helper. It prompts for the bucket-scoped R2 keys
+without saving them in the script or shell history:
+
+```bash
+cd /var/www/pos
+sudo venv/bin/python scripts/upload_backup_to_r2.py "$backup_dir"
+```
+
+Paste the S3 endpoint, Access Key ID, and Secret Access Key directly at their
+prompts, without quotation marks. Secret-key input is intentionally invisible.
+Success requires two `UPLOADED AND VERIFIED` lines followed by
+`DAILY R2 BACKUP COMPLETE`.
+
+6. In Cloudflare, open R2 > `ideaflow-backups` > Objects. Confirm today's
+`daily-YYYYMMDD-HHMMSS/` folder contains `pos_db.sql` and
+`production-files.tar.gz` with the expected non-zero sizes.
+
+Do not upload `.env`, put credentials in source code, use the public media
+bucket, enable public access on the backup bucket, or delete the local copy just
+because the upload completed. R2 encrypts objects at rest and TLS protects the
+upload in transit, but this manual process does not add separate client-side
+encryption. Automatic scheduling, retention, alerting, and restore testing remain
+separate required improvements.
 
 ## 5. Weekly checks (about 10 minutes)
 
