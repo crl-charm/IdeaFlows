@@ -199,6 +199,23 @@ class Config:
     # from silently re-enabling the removed Eventlet runtime.
     SOCKETIO_ASYNC_MODE = "threading"
 
+    # One active browser session per account. Tests and development keep this
+    # opt-in; production enables it by default and fails login closed if Redis
+    # cannot verify the lease.
+    SINGLE_SESSION_ENABLED = _env_bool(
+        "SINGLE_SESSION_ENABLED", FLASK_ENV == "production"
+    )
+    SESSION_LEASE_TTL_SECONDS = _env_int("SESSION_LEASE_TTL_SECONDS", 120, 60)
+    SESSION_HEARTBEAT_SECONDS = _env_int("SESSION_HEARTBEAT_SECONDS", 30, 15)
+    if SESSION_HEARTBEAT_SECONDS >= SESSION_LEASE_TTL_SECONDS:
+        raise RuntimeError(
+            "SESSION_HEARTBEAT_SECONDS must be less than SESSION_LEASE_TTL_SECONDS"
+        )
+    SESSION_LEASE_KEY_PREFIX = (
+        os.environ.get("SESSION_LEASE_KEY_PREFIX", "ideahub:active-login").strip()
+        or "ideahub:active-login"
+    )
+
     # Short-lived read-through caching. Operational/live transaction data is
     # deliberately excluded; menu mutations explicitly invalidate these keys.
     CACHE_ENABLED = _env_bool("CACHE_ENABLED", True)

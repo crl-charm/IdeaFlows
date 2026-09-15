@@ -1,10 +1,12 @@
 # Add these routes to your auth_routes.py or a new admin_routes.py
 
-from flask import Blueprint, render_template, request, jsonify, session, redirect
+from flask import Blueprint, current_app, render_template, request, jsonify, session, redirect
 from app.repositories.admin_repository import AdminRepository
 from app.services.admin_service import AdminService
 from app.utils.auth import login_required, admin_required
 from app.core.idempotency import idempotent_request
+from app.core.session_leases import SessionLeaseUnavailable
+from app.core.socketio_handlers import emit_session_revoked
 
 _service = AdminService(repo=AdminRepository())
 
@@ -57,6 +59,57 @@ def get_all_users():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
     return jsonify(_service.list_users(page=page, per_page=per_page))
+
+
+@admin_bp.route("/api/admin/active-sessions", methods=["GET"])
+@login_required
+@admin_required
+def get_active_sessions():
+    if not current_app.config.get("SINGLE_SESSION_ENABLED"):
+        return jsonify({"enabled": False, "sessions": []})
+    try:
+        active = current_app.extensions["session_leases"].list_active()
+    except SessionLeaseUnavailable:
+        return jsonify({"error": "Session registry temporarily unavailable"}), 503
+    return jsonify({
+        "enabled": True,
+        "current_identity": session.get("login_lease_identity"),
+        "sessions": active,
+    })
+
+
+@admin_bp.route("/api/admin/active-sessions/<path:identity>", methods=["DELETE"])
+@login_required
+@admin_required
+@idempotent_request("admin-revoke-active-session")
+def revoke_active_session(identity):
+    import logging
+    import re
+
+    if not re.fullmatch(r"(?:staff|admin):[1-9][0-9]*", identity or ""):
+        return jsonify({"error": "Invalid session identity"}), 400
+    if identity == session.get("login_lease_identity"):
+        return jsonify({"error": "Use Logout to end your own session."}), 400
+
+    lease_service = current_app.extensions["session_leases"]
+    try:
+        active = lease_service.get(identity)
+        if not active:
+            return jsonify({"error": "Session is no longer active"}), 404
+        emit_session_revoked(int(active["user_id"]))
+        revoked = lease_service.revoke(identity)
+    except (SessionLeaseUnavailable, KeyError, TypeError, ValueError):
+        return jsonify({"error": "Session registry temporarily unavailable"}), 503
+
+    if not revoked:
+        return jsonify({"error": "Session is no longer active"}), 404
+    logging.getLogger("security").warning(
+        "Admin %s revoked active session %s from %s",
+        session.get("username"),
+        identity,
+        request.remote_addr,
+    )
+    return jsonify({"message": "Session signed out."})
 
 
 # ── Edit user (PUT) ───────────────────────────────────────────────────────────

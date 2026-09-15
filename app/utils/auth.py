@@ -67,6 +67,16 @@ def _check_session_auth() -> Optional[Tuple]:
         stored_user_id = session.get("user_id")
         if stored_user_id is not None:
             found = User.query.get(stored_user_id)
+            stored_role = (session.get("role") or "").lower()
+            if found and not current_app.testing and (
+                (stored_role != "admin" and not found.is_active)
+                or (found.role or "").lower() != stored_role
+            ):
+                session.clear()
+                if _expects_json_response():
+                    return jsonify({"success": False, "error": "Unauthorized"}), 401
+                flash("Your account is no longer active.", "warning")
+                return redirect("/login")
             if not found:
                 # If session user_id doesn't map to a User, try remapping via known
                 # admin identity (either account_type/username or Admin.id).
@@ -127,6 +137,42 @@ def _check_session_auth() -> Optional[Tuple]:
             if _expects_json_response():
                 return jsonify({"success": False, "error": "Session expired"}), 401
             flash("Your session has expired. Please log in again.", "warning")
+            return redirect("/login")
+
+    if current_app.config.get("SINGLE_SESSION_ENABLED"):
+        from app.core.session_leases import (
+            SessionLeaseUnavailable,
+            current_lease_is_valid,
+        )
+
+        try:
+            lease_valid = current_lease_is_valid(refresh=True)
+        except SessionLeaseUnavailable:
+            security_logger.exception(
+                "Single-session registry unavailable for authenticated request"
+            )
+            if _expects_json_response():
+                return jsonify({
+                    "success": False,
+                    "error": "Authentication service temporarily unavailable",
+                }), 503
+            return "Authentication service temporarily unavailable", 503
+
+        if not lease_valid:
+            username = session.get("username", "unknown")
+            session.clear()
+            security_logger.warning(
+                "Expired or revoked login session for %s from %s",
+                username,
+                request.remote_addr,
+            )
+            if _expects_json_response():
+                return jsonify({
+                    "success": False,
+                    "error": "Session expired or was signed out",
+                    "code": "session_revoked",
+                }), 401
+            flash("Your session ended. Please log in again.", "warning")
             return redirect("/login")
 
     session["last_activity"] = datetime.utcnow().timestamp()

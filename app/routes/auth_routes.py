@@ -1,11 +1,15 @@
-from flask import Blueprint, render_template, request, jsonify, session, redirect
+from flask import Blueprint, current_app, render_template, request, jsonify, session, redirect
 from app.models import Admin, User, StaffAttendance
 from app import db, limiter, csrf
 from app.core.bot_defense import get_login_rate_limit_key
 from app.core.turnstile import verify_turnstile
 from datetime import datetime
 import logging
-from app.core.socketio_handlers import emit_staff_status_change
+from app.core.session_leases import SessionLeaseUnavailable
+from app.core.socketio_handlers import (
+    emit_login_attempt_blocked,
+    emit_staff_status_change,
+)
 
 
 bp = Blueprint("auth", __name__)
@@ -22,6 +26,9 @@ def get_redirect_by_role(role):
 def _lookup_account(username: str):
     user = User.query.filter_by(username=username, is_active=True).first()
     if user:
+        # Only normal staff rows may use the staff authentication path.
+        if (user.role or "").lower() != "staff":
+            return None, None
         return user, "staff"
     admin = Admin.query.filter_by(username=username).first()
     if admin:
@@ -74,6 +81,8 @@ def login_page():
 @csrf.exempt
 def login_api():
     """Secure login with rate limiting and account lockout"""
+    acquired_identity = None
+    acquired_token = None
     try:
         data = request.get_json()
 
@@ -119,20 +128,66 @@ def login_api():
 
         # Verify password
         if account.check_password(password):
+            if account_type == "admin":
+                admin_user = _get_or_create_admin_user(account)
+                db.session.commit()
+                session_user_id = admin_user.id
+                lease_identity = f"admin:{account.id}"
+                login_role = "admin"
+            else:
+                session_user_id = account.id
+                lease_identity = f"{account_type}:{account.id}"
+                login_role = account.role
+
+            if current_app.config.get("SINGLE_SESSION_ENABLED"):
+                lease_service = current_app.extensions["session_leases"]
+                try:
+                    acquired_token = lease_service.acquire(
+                        lease_identity,
+                        user_id=session_user_id,
+                        username=account.username,
+                        role=login_role,
+                        ip_address=request.remote_addr or "unknown",
+                        user_agent=request.user_agent.string or "unknown",
+                    )
+                except SessionLeaseUnavailable:
+                    security_logger.exception(
+                        "Single-session registry unavailable during login for %s",
+                        username,
+                    )
+                    return jsonify({
+                        "error": "Login is temporarily unavailable. Please try again shortly."
+                    }), 503
+
+                if acquired_token is None:
+                    emit_login_attempt_blocked(session_user_id)
+                    security_logger.warning(
+                        "Verified duplicate login blocked for %s from %s",
+                        username,
+                        request.remote_addr,
+                    )
+                    return jsonify({
+                        "error": (
+                            "This account is already signed in on another device. "
+                            "Log out there first or wait about two minutes."
+                        ),
+                        "code": "account_already_active",
+                    }), 409
+                acquired_identity = lease_identity
+
             # Clear existing session and start a fresh one
             session.clear()
             session.modified = True
 
-            if account_type == "admin":
-                admin_user = _get_or_create_admin_user(account)
-                session["user_id"] = admin_user.id
-            else:
-                session["user_id"] = account.id
+            session["user_id"] = session_user_id
 
             session["username"] = account.username
             session["account_type"] = account_type
-            session["role"] = "admin" if account_type == "admin" else account.role
+            session["role"] = login_role
             session["job_role"] = "admin" if account_type == "admin" else account.job_role
+            if acquired_token:
+                session["login_lease_identity"] = acquired_identity
+                session["login_lease_token"] = acquired_token
 
             if account_type == "staff":
                 # Close stale open sessions for this user
@@ -161,6 +216,13 @@ def login_api():
             return jsonify({"error": "Invalid credentials"}), 401
 
     except Exception as e:
+        if acquired_identity and acquired_token:
+            try:
+                current_app.extensions["session_leases"].release(
+                    acquired_identity, acquired_token
+                )
+            except SessionLeaseUnavailable:
+                pass
         security_logger.exception(f"Login error: {str(e)} from {request.remote_addr}")
         db.session.rollback()
         return jsonify({"error": "Login failed"}), 500
@@ -173,6 +235,18 @@ def logout():
         account_type = session.get("account_type")
         user_id = session.get("user_id")
         attendance_id = session.get("attendance_id")
+
+        if current_app.config.get("SINGLE_SESSION_ENABLED"):
+            try:
+                current_app.extensions["session_leases"].release(
+                    session.get("login_lease_identity", ""),
+                    session.get("login_lease_token", ""),
+                )
+            except SessionLeaseUnavailable:
+                security_logger.warning(
+                    "Could not release login lease during logout for %s",
+                    session.get("username", "unknown"),
+                )
 
         if account_type == "staff":
             if attendance_id:

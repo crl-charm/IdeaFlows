@@ -52,6 +52,7 @@ print(json.dumps({
     "turnstile": Config.TURNSTILE_ENABLED,
     "auto_migrate": Config.AUTO_MIGRATE_ON_STARTUP,
     "socketio": Config.SOCKETIO_ASYNC_MODE,
+    "single_session": Config.SINGLE_SESSION_ENABLED,
 }))
 """
 
@@ -74,6 +75,7 @@ print(json.dumps({
         "turnstile": True,
         "auto_migrate": False,
         "socketio": "threading",
+        "single_session": True,
     }
 
 

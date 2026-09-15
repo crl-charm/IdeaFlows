@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 from flask import current_app, request, session
-from flask_socketio import emit, join_room
+from flask_socketio import disconnect, emit, join_room
 
 from app import db, socketio
 from app.core.realtime import (
@@ -39,6 +39,17 @@ def handle_connect(auth=None):
     except (TypeError, ValueError):
         session_age = lifetime_seconds + 1
 
+    lease_valid = True
+    if current_app.config.get("SINGLE_SESSION_ENABLED"):
+        from app.core.session_leases import (
+            SessionLeaseUnavailable,
+            current_lease_is_valid,
+        )
+        try:
+            lease_valid = current_lease_is_valid(refresh=True)
+        except SessionLeaseUnavailable:
+            lease_valid = False
+
     if (
         not user
         # Admin logins use an intentionally inactive shadow User row so they
@@ -46,6 +57,7 @@ def handle_connect(auth=None):
         or (role != "admin" and not user.is_active)
         or role not in {"admin", "staff"}
         or session_age > lifetime_seconds
+        or not lease_valid
     ):
         logger.warning(
             "Socket.IO connection rejected user_id=%s role=%s ip=%s",
@@ -55,8 +67,9 @@ def handle_connect(auth=None):
         )
         return False
 
-    join_room(AUTHENTICATED_ROOM)
-    join_room(ADMIN_ROOM if role == "admin" else STAFF_ROOM)
+    if role in {"admin", "staff"}:
+        join_room(AUTHENTICATED_ROOM)
+        join_room(ADMIN_ROOM if role == "admin" else STAFF_ROOM)
     join_room(f"user:{user.id}")
     logger.info(
         "Socket.IO connected user_id=%s role=%s sid=%s ip=%s",
@@ -66,6 +79,21 @@ def handle_connect(auth=None):
         request.remote_addr,
     )
     emit('connected', {'authenticated': True, 'role': role})
+
+
+@socketio.on("session_heartbeat")
+def handle_session_heartbeat(_payload=None):
+    """Refresh the active login lease while an authenticated page is open."""
+    from app.core.session_leases import SessionLeaseUnavailable, current_lease_is_valid
+
+    try:
+        valid = current_lease_is_valid(refresh=True)
+    except SessionLeaseUnavailable:
+        return {"ok": False, "reason": "unavailable"}
+    if not valid:
+        disconnect()
+        return {"ok": False, "reason": "revoked"}
+    return {"ok": True}
 
 
 @socketio.on('disconnect')
@@ -153,5 +181,22 @@ def emit_staff_status_change(user_id: int, status: str) -> None:
     """Broadcast staff status updates (online/offline) to admin clients."""
     socketio.emit(
         'staff_status_change', {'user_id': user_id, 'status': status}, to=ADMIN_ROOM
+    )
+
+
+def emit_login_attempt_blocked(user_id: int) -> None:
+    """Tell the active browser that verified credentials were reused elsewhere."""
+    socketio.emit(
+        "login_attempt_blocked",
+        {"message": "Another device tried to sign in to this account."},
+        to=f"user:{int(user_id)}",
+    )
+
+
+def emit_session_revoked(user_id: int) -> None:
+    socketio.emit(
+        "session_revoked",
+        {"message": "This session was signed out by an administrator."},
+        to=f"user:{int(user_id)}",
     )
 

@@ -381,9 +381,17 @@
       <h1>Admin Panel</h1>
       <p>Manage staff accounts, analytics & operations</p>
     </div>
-    <button class="admin-btn-add" data-bs-toggle="modal" data-bs-target="#addUserModal">
-      <i class="bi bi-person-plus-fill me-2"></i> Add Staff
-    </button>
+    <div class="d-flex flex-wrap gap-2">
+      {% if config.SINGLE_SESSION_ENABLED %}
+      <button class="btn btn-light" data-bs-toggle="modal" data-bs-target="#activeSessionsModal"
+        onclick="loadActiveSessions()">
+        <i class="bi bi-shield-lock me-2"></i> Active Sessions
+      </button>
+      {% endif %}
+      <button class="admin-btn-add" data-bs-toggle="modal" data-bs-target="#addUserModal">
+        <i class="bi bi-person-plus-fill me-2"></i> Add Staff
+      </button>
+    </div>
   </div>
 
   <!-- STATS CARDS -->
@@ -677,6 +685,34 @@
 </div>
 
 
+{% if config.SINGLE_SESSION_ENABLED %}
+<!-- ACTIVE LOGIN SESSIONS MODAL -->
+<div class="modal fade" id="activeSessionsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title"><i class="bi bi-shield-lock me-2 text-warning"></i>Active Login Sessions</h5>
+          <small class="text-muted">One browser session is allowed per account.</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="modern-table">
+            <thead><tr><th>Account</th><th>Role</th><th>Last Seen</th><th>Device</th><th>Action</th></tr></thead>
+            <tbody id="active-sessions-body">
+              <tr><td colspan="5" class="text-center text-muted py-4">Loading active sessions...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+
 <!-- ADD USER MODAL -->
 <div class="modal fade" id="addUserModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -764,6 +800,63 @@
 
 {% block scripts %}
 <script>
+
+  async function loadActiveSessions() {
+    const body = document.getElementById("active-sessions-body");
+    if (!body) return;
+    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Loading active sessions...</td></tr>';
+    try {
+      const response = await fetch("/api/admin/active-sessions", { credentials: "include" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load sessions");
+      const sessions = payload.sessions || [];
+      if (!sessions.length) {
+        body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No active sessions.</td></tr>';
+        return;
+      }
+      body.innerHTML = sessions.map(function (row) {
+        const current = row.identity === payload.current_identity;
+        const action = current
+          ? '<span class="badge bg-success">Current session</span>'
+          : '<button class="btn btn-sm btn-outline-danger revoke-session-btn">Sign out</button>';
+        return '<tr data-identity="' + encodeURIComponent(row.identity || "") + '" data-username="' + encodeURIComponent(row.username || "account") + '">' +
+          '<td>' + escapeHTML(row.username || "Unknown") + '</td>' +
+          '<td><span class="badge bg-secondary text-capitalize">' + escapeHTML(row.role || "Unknown") + '</span></td>' +
+          '<td>' + escapeHTML(row.last_seen || "Unknown") + '</td>' +
+          '<td class="text-truncate" style="max-width:320px" title="' + escapeHTML(row.user_agent || "Unknown") + '">' + escapeHTML(row.user_agent || "Unknown") + '</td>' +
+          '<td>' + action + '</td></tr>';
+      }).join("");
+      body.querySelectorAll(".revoke-session-btn").forEach(function (button) {
+        button.addEventListener("click", function () {
+          const row = button.closest("tr");
+          revokeActiveSession(row.dataset.identity, row.dataset.username);
+        });
+      });
+    } catch (error) {
+      body.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-4">Could not load active sessions.</td></tr>';
+    }
+  }
+
+  async function revokeActiveSession(encodedIdentity, encodedUsername) {
+    const identity = decodeURIComponent(encodedIdentity);
+    const username = decodeURIComponent(encodedUsername);
+    const confirmed = await showConfirmDialog({
+      title: "Sign out this session?",
+      message: 'The active session for "' + username + '" will be disconnected.',
+      confirmText: "Sign Out",
+      confirmClass: "btn-danger"
+    });
+    if (!confirmed) return;
+    try {
+      const response = await csrfFetch("/api/admin/active-sessions/" + encodeURIComponent(identity), { method: "DELETE" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to sign out session");
+      showToast(payload.message || "Session signed out.", "success");
+      loadActiveSessions();
+    } catch (error) {
+      showToast(error.message || "Unable to sign out session.", "error");
+    }
+  }
 
   // LOAD USERS
   function loadUsers() {

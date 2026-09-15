@@ -902,6 +902,27 @@
       return window.__ideaFlowSocket;
     };
 
+    {% if config.SINGLE_SESSION_ENABLED %}
+    const sessionSocket = window.getIdeaFlowSocket();
+    if (sessionSocket) {
+      sessionSocket.on("login_attempt_blocked", function (payload) {
+        showToast((payload && payload.message) || "Another device tried to sign in to this account.", "warning");
+      });
+      sessionSocket.on("session_revoked", function (payload) {
+        showToast((payload && payload.message) || "This session has been signed out.", "warning");
+        window.setTimeout(function () { window.location.href = "/logout"; }, 700);
+      });
+      window.setInterval(function () {
+        if (document.hidden || !sessionSocket.connected) return;
+        sessionSocket.emit("session_heartbeat", {}, function (reply) {
+          if (reply && reply.reason === "revoked") {
+            window.location.href = "/logout";
+          }
+        });
+      }, {{ (config.SESSION_HEARTBEAT_SECONDS * 1000) | tojson }});
+    }
+    {% endif %}
+
     /** Coalesce a burst of local and Socket.IO refresh requests into one call. */
     window.createDebouncedRefresh = function createDebouncedRefresh(fn, delayMs) {
       let timer = null;

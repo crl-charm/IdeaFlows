@@ -88,6 +88,13 @@ def create_app():
     if redis_client is not None:
         app.extensions["redis_health"] = redis_client
 
+    from app.core.session_leases import SessionLeaseService
+    app.extensions["session_leases"] = SessionLeaseService(
+        redis_client,
+        ttl_seconds=app.config["SESSION_LEASE_TTL_SECONDS"],
+        key_prefix=app.config["SESSION_LEASE_KEY_PREFIX"],
+    )
+
     # Configure CORS restrictively
     CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
 
