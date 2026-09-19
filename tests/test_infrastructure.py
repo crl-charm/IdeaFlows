@@ -29,6 +29,20 @@ def test_liveness_probe_and_observability_headers(client):
     assert response.headers["Server-Timing"].startswith("app;dur=")
 
 
+def test_promotional_home_links_to_login_showcase(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert b"Coworking Space + Caf" in response.data
+    assert b'href="/welcome"' in response.data
+    assert b'class="mobile-menu"' in response.data
+    assert b"https://www.facebook.com/profile.php?id=100083293749959" in response.data
+
+    showcase = client.get("/welcome")
+    assert showcase.status_code == 200
+    assert b'id="goToLoginBtn"' in showcase.data
+
+
 def test_invalid_request_id_is_not_reflected(client):
     response = client.get("/health/live", headers={"X-Request-ID": "bad id value"})
 

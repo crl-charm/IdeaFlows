@@ -204,6 +204,10 @@ def create_app():
 
     @app.route("/")
     def home():
+        return render_template("promotional.html")
+
+    @app.route("/welcome")
+    def portal_intro():
         return render_template("landing.html")
 
     return app

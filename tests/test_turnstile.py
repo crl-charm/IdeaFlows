@@ -34,12 +34,12 @@ def _credentials(**extra):
     }
 
 
-def test_widget_is_rendered_on_both_login_surfaces(client):
-    for path in ("/", "/login"):
+def test_widget_is_rendered_on_login_surfaces(client):
+    for path in ("/welcome", "/login"):
         response = client.get(path)
         assert response.status_code == 200
         assert b"https://challenges.cloudflare.com/turnstile/v0/api.js" in response.data
-        assert b'test-public-site-key' in response.data
+        assert b"test-public-site-key" in response.data
         assert b'data-action="login"' in response.data
 
 

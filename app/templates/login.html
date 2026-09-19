@@ -174,8 +174,8 @@
         }, 500);
       } else {
         container.classList.remove("is-login-mode");
-        if (pushHistory && window.location.pathname !== "/") {
-          history.pushState({ mode: "landing" }, "", "/");
+        if (pushHistory && window.location.pathname !== "/welcome") {
+          history.pushState({ mode: "landing" }, "", "/welcome");
         }
       }
     }
