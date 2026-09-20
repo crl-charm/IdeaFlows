@@ -53,6 +53,8 @@ def test_public_sitemap_is_discoverable(client):
     assert b"Sitemap: https://idea-flows.online/sitemap.xml" in robots.data
     assert sitemap.mimetype == "application/xml"
     assert b"<loc>https://idea-flows.online/</loc>" in sitemap.data
+    assert "X-Robots-Tag" not in robots.headers
+    assert "X-Robots-Tag" not in sitemap.headers
 
 
 def test_invalid_request_id_is_not_reflected(client):
