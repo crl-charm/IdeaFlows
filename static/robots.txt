@@ -46,3 +46,5 @@ Allow: /static/images/
 
 # Moderate crawl rate
 Crawl-delay: 5
+
+Sitemap: https://idea-flows.online/sitemap.xml

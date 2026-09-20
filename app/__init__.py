@@ -202,6 +202,14 @@ def create_app():
     def robots_txt():
         return send_from_directory(static_folder, "robots.txt", mimetype="text/plain")
 
+    @app.route("/sitemap.xml")
+    def sitemap():
+        return send_from_directory(
+            static_folder,
+            "sitemap.xml",
+            mimetype="application/xml",
+        )
+
     @app.route("/manifest.webmanifest")
     def webmanifest():
         return send_from_directory(

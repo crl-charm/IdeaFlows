@@ -3,9 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="IdeaHub coworking space and cafe in Iloilo City.">
+  <meta name="description" content="Idea Hub Iloilo is a coworking space and café with regular and premium lounges, a boardroom, Wi-Fi, food, and drinks in Iloilo City.">
+  <link rel="canonical" href="https://idea-flows.online/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Idea Hub Coworking Space + Cafe in Iloilo City">
+  <meta property="og:description" content="Work, study, meet, and enjoy food and drinks at Idea Hub Iloilo.">
+  <meta property="og:url" content="https://idea-flows.online/">
+  <meta property="og:image" content="https://idea-flows.online/static/promotional/premium.jpg">
   {% include "partials/pwa_metadata.html" %}
-  <title>IdeaHub — Coworking Space + Café</title>
+  <title>Idea Hub Coworking Space + Cafe in Iloilo City | Official Website</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    "name": "Idea Hub Coworking Space + Cafe",
+    "alternateName": "IdeaHub Iloilo",
+    "url": "https://idea-flows.online/",
+    "logo": "https://idea-flows.online/static/promotional/logo.png",
+    "image": "https://idea-flows.online/static/promotional/premium.jpg",
+    "telephone": "+639177070701",
+    "email": "ideahub.inc7722@gmail.com",
+    "priceRange": "₱",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "2/F Sta. Cruz Bldg., corner Fuentes-Ledesma Sts.",
+      "addressLocality": "Iloilo City",
+      "addressRegion": "Iloilo",
+      "postalCode": "5000",
+      "addressCountry": "PH"
+    },
+    "openingHoursSpecification": {
+      "@type": "OpeningHoursSpecification",
+      "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+      "opens": "09:00",
+      "closes": "20:00"
+    },
+    "sameAs": ["https://www.facebook.com/profile.php?id=100083293749959"]
+  }
+  </script>
   <link rel="icon" href="{{ url_for('static', filename='promotional/logo.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -33,7 +68,7 @@
   <main>
     <section class="hero section-wrap">
       <div class="hero-copy">
-        <p class="eyebrow">Coworking space + café</p>
+        <p class="eyebrow">Idea Hub Iloilo · Coworking space + café</p>
         <h1>Your space to<br>work, study, and<br>create.</h1>
         <p class="lead">Work, study, collaborate, or meet while enjoying good food and drinks in one place.</p>
         <a class="button" href="#spaces">Explore our Spaces</a>

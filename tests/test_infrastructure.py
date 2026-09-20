@@ -37,10 +37,22 @@ def test_promotional_home_links_to_login_showcase(client):
     assert b'href="/welcome"' in response.data
     assert b'class="mobile-menu"' in response.data
     assert b"https://www.facebook.com/profile.php?id=100083293749959" in response.data
+    assert b'<link rel="canonical" href="https://idea-flows.online/">' in response.data
+    assert b'"@type": "LocalBusiness"' in response.data
 
     showcase = client.get("/welcome")
     assert showcase.status_code == 200
     assert b'id="goToLoginBtn"' in showcase.data
+
+
+def test_public_sitemap_is_discoverable(client):
+    robots = client.get("/robots.txt")
+    sitemap = client.get("/sitemap.xml")
+
+    assert robots.status_code == sitemap.status_code == 200
+    assert b"Sitemap: https://idea-flows.online/sitemap.xml" in robots.data
+    assert sitemap.mimetype == "application/xml"
+    assert b"<loc>https://idea-flows.online/</loc>" in sitemap.data
 
 
 def test_invalid_request_id_is_not_reflected(client):
