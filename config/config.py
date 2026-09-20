@@ -100,6 +100,7 @@ class Config:
             "default-src 'self'; "
             "base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
             "form-action 'self'; "
+            "worker-src 'self'; manifest-src 'self'; "
             "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
             "https://cdn.socket.io https://challenges.cloudflare.com "
             "https://static.cloudflareinsights.com; "

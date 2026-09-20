@@ -202,6 +202,25 @@ def create_app():
     def robots_txt():
         return send_from_directory(static_folder, "robots.txt", mimetype="text/plain")
 
+    @app.route("/manifest.webmanifest")
+    def webmanifest():
+        return send_from_directory(
+            static_folder,
+            "manifest.webmanifest",
+            mimetype="application/manifest+json",
+        )
+
+    @app.route("/sw.js")
+    def service_worker():
+        response = send_from_directory(
+            static_folder,
+            "sw.js",
+            mimetype="application/javascript",
+        )
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Service-Worker-Allowed"] = "/"
+        return response
+
     @app.route("/")
     def home():
         return render_template("promotional.html")
@@ -297,7 +316,9 @@ def register_security_middleware(app):
 
         # Uploaded media uses unique names and is safe to cache immutably. App
         # CSS/JS keeps a shorter cache so deployments are not stuck for a year.
-        if request.path.startswith('/static/uploads/'):
+        if request.path == '/static/js/pwa-register.js':
+            response.headers['Cache-Control'] = 'no-cache'
+        elif request.path.startswith('/static/uploads/'):
             response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         elif request.path.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'

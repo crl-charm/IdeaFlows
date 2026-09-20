@@ -1,0 +1,15 @@
+.pwa-install { margin-top: 1rem; text-align: center; }
+.pwa-install button { display: flex; align-items: center; justify-content: center; gap: .5rem; }
+.pwa-install-status { min-height: 1.25rem; margin: .5rem 0 0; color: #5b5f52; font-size: .8rem; }
+.pwa-install-dialog { width: min(28rem, calc(100% - 2rem)); border: 0; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%); }
+.pwa-install-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.pwa-install-dialog h2 { margin-top: 0; font-size: 1.5rem; }
+.pwa-install-dialog p { line-height: 1.6; }
+.pwa-update { position: fixed; right: 1rem; bottom: 1rem; z-index: 100000; width: min(25rem, calc(100% - 2rem)); border: 1px solid #e8dfc9; border-radius: .9rem; padding: 1rem; background: #fff; box-shadow: 0 1rem 3rem rgb(0 0 0 / 20%); color: #17211e; }
+.pwa-update p { margin: 0 0 .75rem; line-height: 1.45; }
+.pwa-update-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.pwa-update-actions button { border: 1px solid #2a4f43; border-radius: .45rem; padding: .55rem .8rem; background: #fff; color: #2a4f43; font: inherit; font-weight: 700; cursor: pointer; }
+.pwa-update-actions .pwa-update-now { background: #2a4f43; color: #fff; }
+.pwa-update-actions button:focus-visible { outline: 3px solid #ffc839; outline-offset: 2px; }
+.pwa-update-actions button:disabled { cursor: wait; opacity: .65; }
+@media (max-width: 767.98px) { .pwa-update { bottom: 5rem; } }
