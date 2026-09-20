@@ -86,7 +86,8 @@ def test_service_worker_delivery_and_safe_cache_boundary(app):
 
     assert response.status_code == 200
     assert response.mimetype == "application/javascript"
-    assert response.headers["Cache-Control"] == "no-cache"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Cloudflare-CDN-Cache-Control"] == "no-store"
     assert response.headers["Service-Worker-Allowed"] == "/"
     assert "worker-src 'self'" in response.headers["Content-Security-Policy"]
     assert "manifest-src 'self'" in response.headers["Content-Security-Policy"]
@@ -153,7 +154,8 @@ def test_updates_require_user_action_and_one_controlled_reload():
 
 
 def test_update_controller_is_always_revalidated(app):
-    response = app.test_client().get("/static/js/pwa-register.js")
+    response = app.test_client().get("/pwa-register.js")
 
     assert response.status_code == 200
-    assert response.headers["Cache-Control"] == "no-cache"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Cloudflare-CDN-Cache-Control"] == "no-store"
