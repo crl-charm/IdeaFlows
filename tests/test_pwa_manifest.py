@@ -85,7 +85,7 @@ def test_service_worker_delivery_and_safe_cache_boundary(app):
     offline = (STATIC / "offline.html").read_text(encoding="utf-8")
 
     assert response.status_code == 200
-    assert response.content_type == "application/javascript"
+    assert response.mimetype == "application/javascript"
     assert response.headers["Cache-Control"] == "no-cache"
     assert response.headers["Service-Worker-Allowed"] == "/"
     assert "worker-src 'self'" in response.headers["Content-Security-Policy"]
