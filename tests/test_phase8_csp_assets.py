@@ -35,6 +35,9 @@ def test_csp_has_exact_browser_asset_origins_without_wildcards(app):
     assert "https://cdn.jsdelivr.net" in directives["connect-src"]
     assert "https://cdn.socket.io" in directives["connect-src"]
     assert "https://cloudflareinsights.com" in directives["connect-src"]
+    assert "wss://idea-flows.online" in directives["connect-src"]
+    assert "ws:" not in directives["connect-src"]
+    assert "wss:" not in directives["connect-src"]
     assert "https://media.idea-flows.online" in directives["img-src"]
     assert directives["object-src"] == ["'none'"]
     assert all("*" not in source for sources in directives.values() for source in sources)

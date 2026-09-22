@@ -138,11 +138,11 @@
         <span class="section-label">Contact Us</span><h2>Come see the space.</h2>
         <address><p><b>Address:</b> 2/F Sta. Cruz Bldg., corner Fuentes-Ledesma Sts., Iloilo City</p><p><b>Contact Number:</b> <a href="tel:+639177070701">+63 917 707 0701</a></p><p><b>Email:</b> <a href="mailto:ideahub.inc7722@gmail.com">ideahub.inc7722@gmail.com</a></p><p><b>Hours:</b> Mon–Sun, 9:00 AM – 8:00 PM</p><p><b>Social Media:</b> <a href="https://www.facebook.com/profile.php?id=100083293749959" target="_blank" rel="noopener">Idea Hub Coworking Space + Cafe</a></p></address>
       </div>
-      <form action="mailto:ideahub.inc7722@gmail.com" method="post" enctype="text/plain">
-        <label><span>Your Name</span><input name="name" placeholder="Your Name" required></label>
-        <label><span>Your Email</span><input type="email" name="email" placeholder="Your Email" required></label>
+      <form id="contact-form" action="{{ url_for('home') }}" method="post">
+        <label><span>Your Name</span><input name="name" autocomplete="name" placeholder="Your Name" required></label>
+        <label><span>Your Email</span><input type="email" name="email" autocomplete="email" placeholder="Your Email" required></label>
         <label><span>Your Message</span><textarea name="message" placeholder="What would you like to ask?" required></textarea></label>
-        <button class="button" type="submit">Send Message</button>
+        <button class="button" type="submit">Open Email Draft</button>
       </form>
     </section>
   </main>
@@ -152,6 +152,13 @@
     <p class="copyright">© 2026 IdeaHub. All rights reserved.</p>
   </footer>
   <script>
+    document.getElementById("contact-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const { name, email, message } = Object.fromEntries(new FormData(event.currentTarget));
+      const body = `Name: ${name}\nEmail: ${email}\n\n${message}`;
+      location.href = `mailto:ideahub.inc7722@gmail.com?subject=${encodeURIComponent("IdeaHub inquiry")}&body=${encodeURIComponent(body)}`;
+    });
+
     const sections = [...document.querySelectorAll("main section[id]")];
     const links = [...document.querySelectorAll(".site-header nav a")];
     const reveal = document.querySelectorAll(".section > *, .space-row > *, .offer-grid article, .steps li, .hero > *");

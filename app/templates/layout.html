@@ -19,7 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap"
     rel="stylesheet">
 
   <!-- Bootstrap -->
@@ -31,7 +31,7 @@
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.2">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/motion.css') }}?v=5">
   <script defer src="{{ url_for('static', filename='js/motion.js') }}?v=5"></script>
 
@@ -837,7 +837,7 @@
         data = {};
       }
       if (!response.ok) {
-        const error = new Error(data.error || data.message || 'The request could not be completed.');
+        const error = new Error(data.message || data.error || 'The request could not be completed.');
         error.status = response.status;
         error.data = data;
         throw error;

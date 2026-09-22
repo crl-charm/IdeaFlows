@@ -39,6 +39,9 @@ def test_promotional_home_links_to_login_showcase(client):
     assert b"https://www.facebook.com/profile.php?id=100083293749959" in response.data
     assert b'<link rel="canonical" href="https://idea-flows.online/">' in response.data
     assert b'"@type": "LocalBusiness"' in response.data
+    assert b'<form id="contact-form" action="/" method="post">' in response.data
+    assert b'action="mailto:' not in response.data
+    assert b'encodeURIComponent(body)' in response.data
 
     showcase = client.get("/welcome")
     assert showcase.status_code == 200

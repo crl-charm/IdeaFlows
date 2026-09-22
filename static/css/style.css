@@ -11,7 +11,7 @@
 
   /* Unified Typography System */
   --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-heading: "Playfair Display", Georgia, serif;
+  --font-heading: "Newsreader", Georgia, serif;
 
   /* Sophisticated Semantic Status Colors */
   --success: #16a34a;       /* Elegant Green */
@@ -85,6 +85,10 @@ input, button, select, textarea {
 
 .navbar-brand {
   letter-spacing: 0.2px;
+}
+
+.navbar-brand span {
+  font-family: var(--font-heading);
 }
 
 .top-nav-link {
@@ -445,7 +449,7 @@ input, button, select, textarea {
 }
 
 .quote-text {
-  font-family: var(--font-heading, 'Playfair Display', serif);
+  font-family: var(--font-heading);
   font-size: 26px;
   font-weight: 700;
   color: #ffffff;
@@ -503,7 +507,7 @@ input, button, select, textarea {
 }
 
 .auth-hero-title {
-  font-family: var(--font-heading, 'Playfair Display', serif);
+  font-family: var(--font-heading);
   font-size: 34px;
   font-weight: 700;
   color: #1e293b;

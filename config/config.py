@@ -111,7 +111,8 @@ class Config:
             "https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
             "img-src 'self' data: https://media.idea-flows.online; "
-            "connect-src 'self' ws: wss: https://cdn.jsdelivr.net "
+            "connect-src 'self' ws://127.0.0.1:5000 ws://localhost:5000 "
+            "wss://idea-flows.online wss://www.idea-flows.online https://cdn.jsdelivr.net "
             "https://cdn.socket.io https://cloudflareinsights.com; "
             "frame-src https://challenges.cloudflare.com;"
         ),
