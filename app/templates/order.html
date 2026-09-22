@@ -524,6 +524,7 @@
   border-color: var(--brand);
   box-shadow: 0 16px 32px rgba(231, 197, 91, 0.15);
 }
+.menu-item-card.stock-conflict {border:2px solid #c34b3e;box-shadow:0 0 0 4px #c34b3e22}
 
 .menu-item-image {
   width: 100%;
@@ -729,6 +730,18 @@ let searchTerm = "";
 
 const refreshOrderMenu = window.createDebouncedRefresh(loadMenu, 150);
 if (socket) socket.on('menu_update', refreshOrderMenu);
+if (socket) socket.on('inventory_update', data => {
+  if (!data?.availability) return refreshOrderMenu();
+  allMenuData.forEach(item => {
+    const snapshot = data.availability[item.id];
+    if (!snapshot) return;
+    Object.assign(item, snapshot, {is_available:snapshot.can_order});
+    if (menuById[item.id]) Object.assign(menuById[item.id], snapshot, {is_available:snapshot.can_order});
+  });
+  renderMenuItems();
+  renderCart();
+});
+if (socket) socket.on('connect', refreshOrderMenu);
 
 function parseCategory(category) {
   if (!category) return { major: "Other", sub: "Other" };
@@ -821,6 +834,7 @@ function renderMenuItems() {
   filtered.forEach(item => {
     const card = document.createElement("div");
     card.className = item.is_available === false ? "menu-item-card unavailable" : "menu-item-card";
+    card.dataset.menuId = item.id;
 
     let nameHtml = `<h6 class="menu-item-name">${item.name}</h6>`;
     if (item.is_out_of_stock) {
@@ -833,9 +847,10 @@ function renderMenuItems() {
       <div class="menu-item-image">${item.image_url ? `<img loading="lazy" decoding="async" src="${item.image_url}" alt="${item.name}">` : '🍽️'}</div>
       <div class="menu-item-content">
         ${nameHtml}
+        <p class="small ${item.is_low_stock ? 'text-warning' : 'text-muted'} mb-2">${item.availability_message || ''}</p>
         <div class="menu-item-price">₱${Number(item.price).toFixed(2)}</div>
         ${item.is_available === false
-          ? `<button type="button" class="add-to-cart-btn unavailable-btn" onclick="showUnavailable('${item.name.replace(/'/g, "\\'")}')">Not Available</button>`
+          ? `<button type="button" class="add-to-cart-btn unavailable-btn" disabled>${item.is_out_of_stock ? 'Sold out' : 'Unavailable'}</button>`
           : `<button type="button" class="add-to-cart-btn" onclick="addToCart(${item.id})">+ Add</button>`}
       </div>
     `;
@@ -848,7 +863,7 @@ function showUnavailable(itemName) {
 }
 
 function loadMenu() {
-  fetch("/api/menu", { credentials: "include" })
+  return fetch("/api/menu", { credentials: "include" })
     .then(res => res.json())
     .then(data => {
       allMenuData = data || [];
@@ -857,11 +872,13 @@ function loadMenu() {
         menuById[item.id] = {
           name: item.name,
           price: item.price,
+          available_quantity: item.available_quantity,
           is_available: item.is_available !== false
         };
       });
       buildCategoryFilters();
       renderMenuItems();
+      if (cart.length) renderCart();
     })
     .catch(err => showToast("Failed to load menu. Please refresh the page.", "error"));
 }
@@ -911,11 +928,18 @@ async function voidExistingItem(itemId) {
   });
   if (!confirmed) return;
 
-  csrfFetch(`/api/void-item/${itemId}`, { method: "DELETE" })
+  const returnStock = await showConfirmDialog({
+    title: 'Can this stock be used again?',
+    message: 'Return stock only if the ingredients were not used or the serving is still safe to sell. Prepared, served or wasted food should stay deducted.',
+    confirmText: 'Return stock', cancelText: 'Keep deducted', confirmClass: 'btn-warning'
+  });
+  csrfFetch(`/api/void-item/${itemId}`, { method: "DELETE",
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({return_stock:returnStock, reason:returnStock ? 'Cancelled; stock can be used again' : 'Cancelled; stock used or not saleable'}) })
     .then(res => res.json())
     .then(data => {
       if (data.error) {
-        showToast(data.error, "error");
+        showToast(data.message || data.error, "error");
         return;
       }
       showToast("Item removed successfully.", "success");
@@ -970,6 +994,10 @@ function addToCart(id) {
     return;
   }
   const existing = cart.find(item => item.id === id);
+  if (meta.available_quantity != null && (existing?.quantity || 0) >= meta.available_quantity) {
+    showToast(`Only ${meta.available_quantity} ${meta.name} left.`, 'error');
+    return;
+  }
   if (existing) {
     existing.quantity += 1;
   } else {
@@ -989,18 +1017,25 @@ function renderCart() {
     updateMobileCartBadge();
     return;
   }
-  document.getElementById("submit-btn").disabled = false;
+  document.getElementById("submit-btn").disabled = cart.some(item => {
+    const meta = menuById[item.id];
+    return !meta?.is_available || (meta.available_quantity != null && item.quantity > meta.available_quantity);
+  });
   list.innerHTML = "";
   cart.forEach(item => {
     const itemTotal = item.price * item.quantity;
     total += itemTotal;
+    const available = menuById[item.id]?.available_quantity;
+    const tooMany = available != null && item.quantity > available;
     const li = document.createElement("div");
     li.className = "cart-item";
     li.innerHTML = `
       <div class="cart-item-name">${item.name}</div>
       <div class="cart-item-qty-price">
         <div class="cart-item-quantity">x${item.quantity}</div>
+        ${tooMany ? `<small class="text-danger">Only ${available} left</small>` : ''}
         <div class="cart-item-price">₱${itemTotal.toFixed(2)}</div>
+        ${item.quantity > 1 ? `<button class="cart-item-remove" aria-label="Remove one" onclick="decreaseCart(${item.id})">−</button>` : ''}
         <button class="cart-item-remove" onclick="removeFromCart(${item.id})">×</button>
       </div>
     `;
@@ -1012,6 +1047,12 @@ function renderCart() {
 
 function removeFromCart(id) {
   cart = cart.filter(item => item.id !== id);
+  renderCart();
+}
+
+function decreaseCart(id) {
+  const item = cart.find(row => row.id === id);
+  if (item) item.quantity = Math.max(1, item.quantity - 1);
   renderCart();
 }
 
@@ -1043,6 +1084,10 @@ async function submitOrder() {
     renderCart();
     loadCurrentOrders();
   } catch (err) {
+    await loadMenu();
+    (err.data?.affected_item_ids || []).forEach(id => {
+      document.querySelector(`.menu-item-card[data-menu-id="${Number(id)}"]`)?.classList.add('stock-conflict');
+    });
     if (err.data && err.data.duplicate) {
       showToast("This order is already being processed. Current orders will refresh.", "info");
       loadCurrentOrders();

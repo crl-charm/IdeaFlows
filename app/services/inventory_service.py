@@ -466,6 +466,7 @@ class InventoryService:
     def build_dashboard_snapshot(self) -> dict[str, Any]:
         """Load dashboard data in three bounded queries, independent of row count."""
         from app.models.menu_item import MenuItem, MenuItemIngredient
+        from app.services.menu_availability import MenuAvailability
 
         menu_items = MenuItem.query.filter(MenuItem.status != "deleted").all()
         item_map = {item.id: item for item in menu_items}
@@ -480,6 +481,7 @@ class InventoryService:
         for mapping in mappings:
             mappings_by_meal.setdefault(mapping.menu_item_id, []).append(mapping)
             mappings_by_ingredient.setdefault(mapping.ingredient_item_id, []).append(mapping)
+        availability = MenuAvailability(preloaded=(item_map, inventory_map, mappings))
 
         ingredients = [
             item for item in menu_items if is_ingredient_category(item.category)
@@ -490,26 +492,17 @@ class InventoryService:
 
         recipe_items: list[dict[str, Any]] = []
         for meal in meals:
-            capacity = self._calculate_recipe_capacity_from_loaded(
-                meal,
-                mappings_by_meal.get(meal.id, []),
-                inventory_map,
-                item_map,
-            )
+            snapshot = availability.snapshot(meal)
             row: dict[str, Any] = {
                 "id": meal.id,
                 "name": meal.name,
                 "category": meal.category,
-                "has_recipe": capacity["has_recipe"],
-                "is_low": capacity.get("is_low", False),
-                "is_warning": capacity.get("is_warning", False),
-                "is_out_of_stock": capacity.get(
-                    "is_out_of_stock", capacity["capacity"] <= 0
-                ),
-                "capacity": capacity["capacity"],
-                "availability_error": capacity.get("error"),
+                "has_recipe": bool(mappings_by_meal.get(meal.id)),
+                "is_low": snapshot["is_low_stock"],
+                "is_warning": False,
+                **snapshot,
             }
-            if not capacity["has_recipe"]:
+            if not row["has_recipe"]:
                 snap = self.resolve_inventory_snapshot(meal.id, inventory_map)
                 row.update(
                     inventory_item_id=snap["inventory_item_id"],

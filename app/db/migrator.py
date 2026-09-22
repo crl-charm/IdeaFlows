@@ -45,6 +45,10 @@ class SchemaMigrator:
             return
 
         checks = [
+            ("menu_items", "inventory_mode", "ALTER TABLE menu_items ADD COLUMN inventory_mode VARCHAR(16) NULL"),
+            ("order_inventory_allocations", "menu_item_id", "ALTER TABLE order_inventory_allocations ADD COLUMN menu_item_id INTEGER NULL"),
+            ("order_inventory_allocations", "ordered_units", "ALTER TABLE order_inventory_allocations ADD COLUMN ordered_units INTEGER NULL"),
+            ("order_inventory_allocations", "updated_at", "ALTER TABLE order_inventory_allocations ADD COLUMN updated_at DATETIME NULL"),
             (
                 "orders",
                 "status",

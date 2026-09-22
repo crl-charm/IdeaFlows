@@ -41,130 +41,74 @@ class OrderService:
         )
 
     def list_menu(self) -> list[dict[str, Any]]:
-        from app.services.inventory_service import InventoryService
-        from app.repositories.inventory_repository import InventoryRepository
-
-        inv_service = InventoryService(repo=InventoryRepository())
+        from app.services.menu_availability import MenuAvailability
         items = self.repo.list_menu_items()
-        results = []
-        for i in items:
-            cap = inv_service.calculate_recipe_capacity(i.id)
-            capacity = float(cap.get("capacity", 0))
-            is_out_of_stock = capacity <= 0 or cap.get("is_out_of_stock", False)
-
-            results.append(
-                {
-                    "id": i.id,
-                    "name": i.name,
-                    "price": float(i.price),
-                    "category": i.category,
-                    "description": i.description,
-                    "image_url": i.image_url,
-                    "is_available": bool(i.is_available) and not is_out_of_stock,
-                    "is_low_stock": cap.get("is_low", False),
-                    "is_out_of_stock": is_out_of_stock,
-                    "capacity": capacity,
-                }
-            )
-        return results
+        availability = MenuAvailability([item.id for item in items])
+        return [
+            dict(id=item.id, name=item.name, price=float(item.price or 0),
+                 category=item.category, description=item.description, image_url=item.image_url,
+                 **availability.snapshot(item), is_available=availability.snapshot(item)["can_order"])
+            for item in items
+        ]
 
     def add_order(self, *, session_id: int, items: list[dict], handled_by: Optional[int]) -> dict[str, Any] | tuple[dict[str, Any], int]:
-        # Resolve handled_by to a valid User ID (to avoid foreign key IntegrityError for admin accounts)
-        if handled_by:
-            from app.models import User
-            if not User.query.get(handled_by):
-                from flask import session as flask_session
-                username = flask_session.get("username")
-                u = User.query.filter_by(username=username).first()
-                if u:
-                    handled_by = u.id
-                else:
-                    handled_by = None
+        from app import db
+        from app.models import OrderItem, User
+        from app.services.menu_availability import MenuAvailability, StockError, whole_quantity
+        from app.core.socketio_handlers import emit_inventory_update
 
-        sess = self.repo.get_session(session_id)
-        if not sess:
-            return {"error": "Session not found"}, 404
-
-        for item in items:
-            menu_item_id = item.get("menu_item_id")
-            if not menu_item_id:
-                return {"error": "Invalid menu item in order"}, 400
-
-            menu_item = MenuItem.query.get(menu_item_id)
-            if not menu_item or menu_item.status == "deleted":
-                return {"error": "One or more items are no longer on the menu"}, 400
-            if not menu_item.is_available:
-                return {"error": f"{menu_item.name} is not available"}, 400
-
-        # Targeted Backend Diagnostics for Task 2
-        for item in items:
-            menu_item_id = item.get("menu_item_id")
-            qty = float(item.get("quantity", 1))
-            menu_item = MenuItem.query.get(menu_item_id)
-            if menu_item:
-                logger.info("add_order diagnostics: MenuItem ID: %s, Name: %s", menu_item.id, menu_item.name)
-                
-                from app.models.menu_item import MenuItemIngredient
-                from app.models.inventory import InventoryItem
-                
-                recipe = MenuItemIngredient.query.filter_by(menu_item_id=menu_item.id).all()
-                logger.info("add_order diagnostics: Recipe mappings found: %d", len(recipe))
-                for comp in recipe:
-                    ing = MenuItem.query.get(comp.ingredient_item_id)
-                    ing_name = ing.name if ing else "Unknown"
-                    ing_cat = ing.category if ing else "None"
-                    logger.info("add_order diagnostics: Ingredient ID: %s, Name: %s, Category: %s", comp.ingredient_item_id, ing_name, ing_cat)
-                    
-                    inv = InventoryItem.query.filter_by(menu_item_id=comp.ingredient_item_id).first()
-                    logger.info("add_order diagnostics: InventoryItem exists: %s", inv is not None)
-                    if inv:
-                        ratio = float(comp.conversion_ratio or 1.0)
-                        needed = qty * float(comp.quantity_required) * ratio
-                        logger.info("add_order diagnostics: Ingredient ID: %s, Required Qty: %s, Available Qty: %s", comp.ingredient_item_id, needed, inv.stock_qty)
-                    else:
-                        logger.info("add_order diagnostics: Ingredient ID: %s, Required Qty: %s, Available Qty: 0 (No Inventory Row)", comp.ingredient_item_id, qty * float(comp.quantity_required))
-
-        from app.repositories.inventory_repository import InventoryRepository
-        from app.services.inventory_service import InventoryService
-
-        inv_service = InventoryService(repo=InventoryRepository())
-        stock_error = inv_service.validate_order_stock(items)
-        if stock_error:
-            logger.info("add_order validation failure: %s", stock_error)
-            return stock_error, 400
-
-        order_id = self.repo.add_order_with_items(session_id=session_id, handled_by=handled_by, items=items)
-        
-        # Deduct inventory for each item in the order
-        from app.repositories.inventory_repository import InventoryRepository
-        from app.services.inventory_service import InventoryService
-        from app import socketio
-        
-        inv_repo = InventoryRepository()
-        inv_service = InventoryService(repo=inv_repo)
-        
-        deduction_succeeded = True
-        for item in items:
-            menu_item_id = item.get("menu_item_id")
-            qty = item.get("quantity", 1)
-            if menu_item_id:
-                deduction_succeeded = inv_service.deduct_on_order(
-                    menu_item_id, qty, commit=False
-                ) and deduction_succeeded
-
-        if not deduction_succeeded:
-            from app import db
-
+        try:
+            if not isinstance(items, list) or not items or len(items) > 200:
+                raise StockError("Choose at least one menu item.", "INVALID_ORDER", 400)
+            quantities = {}
+            for row in items:
+                if not isinstance(row, dict):
+                    raise StockError("Invalid order item.", "INVALID_ORDER", 400)
+                item_id = whole_quantity(row.get("menu_item_id"))
+                quantities[item_id] = quantities.get(item_id, 0) + whole_quantity(row.get("quantity", 1))
+                whole_quantity(quantities[item_id])
+            availability = MenuAvailability(sorted(quantities), lock=True)
+            if len(availability.items) != len(quantities):
+                raise StockError("An item is no longer on the menu.", "INVALID_ORDER", 400)
+            sess = self.repo.get_session(session_id)
+            if not sess or sess.status != "active":
+                raise StockError("Choose an active customer session.", "INVALID_SESSION", 400)
+            for item in availability.items.values():
+                snapshot = availability.snapshot(item)
+                shortage = (availability.shortage(item, quantities[item.id])
+                    if snapshot["availability_state"] in {"sold_out", "low", "available"}
+                    and snapshot["available_quantity"] is not None else None)
+                if not snapshot["can_order"]:
+                    error_code = snapshot["availability_error"] or "UNAVAILABLE"
+                    error_status = 400 if error_code in {
+                        "INVENTORY_CONFIGURATION",
+                        "INVENTORY_ROW_NOT_FOUND",
+                        "INVALID_UNIT_CONVERSION",
+                        "INSUFFICIENT_STOCK",
+                    } else 409
+                    raise StockError(
+                        f"{item.name}: Not enough {shortage} for this order." if shortage else
+                        f"{item.name}: {snapshot['availability_message']}",
+                        error_code,
+                        error_status,
+                        item_ids=[item.id],
+                    )
+                if shortage:
+                    raise StockError(f"{item.name}: Not enough {shortage} for this order.",
+                        item_ids=[item.id])
+            normalized = [dict(menu_item_id=key, quantity=value) for key, value in sorted(quantities.items())]
+            actor = handled_by if handled_by and db.session.get(User, handled_by) else None
+            order_id = self.repo.add_order_with_items(session_id=session_id, handled_by=actor, items=normalized)
+            order_items = OrderItem.query.filter_by(order_id=order_id).order_by(OrderItem.id).all()
+            availability.reserve(order_items, actor)
+            self.repo.commit()
+        except StockError as exc:
             db.session.rollback()
-            return {
-                "error": "INSUFFICIENT_STOCK",
-                "message": "Stock changed while the order was being saved. Please refresh and try again.",
-            }, 409
-
-        # The order, its items, inventory deductions, and inventory logs commit
-        # together. A failure rolls back the entire business action.
-        self.repo.commit()
-        
+            return {"error": exc.code, "message": str(exc), "affected_item_ids": exc.item_ids}, exc.status
+        except Exception:
+            db.session.rollback()
+            raise
+        emit_inventory_update("stock_change", {"order_id": order_id})
         self.notifier.order_status_changed({"order_id": order_id, "status": "preparing", "session_id": session_id})
         return {"message": "Order added successfully", "order_id": order_id}
 
@@ -306,49 +250,65 @@ class OrderService:
         self.notifier.order_status_changed({"session_id": session_id, "status": "done"})
         return {"message": "Session marked as served", "session_id": session_id}
 
-    def void_item(self, item_id: int) -> dict[str, Any] | tuple[dict[str, Any], int]:
-        item = self.repo.get_order_item(item_id)
-        if not item:
-            return {"error": "Item not found"}, 404
-        if item.quantity > 1:
-            item.quantity -= 1
-        else:
-            from app import db
-            db.session.delete(item)
-        self.repo.commit()
-        return {"message": "One item voided successfully"}
+    def void_item(self, item_id: int, *, actor=None, admin=False, request_key=None, return_stock=True, reason="Cancelled before preparation"):
+        from uuid import uuid4
+        from app import db
+        from app.models import OrderItem, InventoryItem, InventoryLog
+        from app.models.inventory import InventoryAction, OrderInventoryAllocation
+        from app.services.stock_management import action_key, record_action
+        from app.services.menu_availability import StockError
+        from app.core.socketio_handlers import emit_inventory_update
+        from sqlalchemy import update
 
-    def create_from_qr(self, order_data: dict[str, Any]) -> dict[str, Any]:
-        space_type_id = order_data.get("space_type_id")
-        customer_name = order_data.get("customer_name", "Walk-in")
-        items = order_data.get("items", [])
-
-        if not items:
-            return {"error": "No items in order"}
-
-        from app.models import CustomerSession, SpaceType
-        space = self.repo.db.session.query(SpaceType).filter_by(id=space_type_id).first()
-        if not space:
-            return {"error": "Space not found"}
-
-        session = CustomerSession(
-            customer_name=customer_name,
-            space_type_id=space_type_id,
-            number_of_people=1,
-        )
-        self.repo.db.session.add(session)
-        self.repo.db.session.flush()
-
-        order_id = self.repo.add_order_with_items(
-            session_id=session.id,
-            handled_by=None,
-            items=items,
-        )
-        self.repo.db.session.commit()
-        self.notifier.order_status_changed(
-            {"order_id": order_id, "status": "preparing", "session_id": session.id}
-        )
-        return {"success": True, "data": {"order_id": order_id, "session_id": session.id}}
+        try:
+            key = action_key(request_key or str(uuid4()), actor)
+            if InventoryAction.query.filter_by(request_key=key).first():
+                return {"message": "This cancellation was already recorded.", "duplicate": True}
+            item = OrderItem.query.filter_by(id=item_id).populate_existing().with_for_update().first()
+            if not item:
+                raise StockError("Item not found.", "NOT_FOUND", 404)
+            sess = self.repo.get_session(item.order.customer_session_id)
+            if not sess or sess.status != "active":
+                raise StockError("Paid or closed sessions need an owner billing correction.", "SESSION_CLOSED", 409)
+            prepared = _item_is_ready(item.status) or item.order.status in {"serving", "done"}
+            if prepared and not admin:
+                raise StockError("Ask the owner to cancel food already prepared or served.", "FORBIDDEN", 403)
+            if not isinstance(return_stock, bool) or not str(reason or "").strip():
+                raise StockError("Choose whether stock can be returned and enter a reason.", "INVALID_VOID", 400)
+            allocations = OrderInventoryAllocation.query.filter_by(order_item_id=item_id).order_by(
+                OrderInventoryAllocation.inventory_item_id).with_for_update().all()
+            if allocations and not request_key:
+                raise StockError("Refresh the page before cancelling.", "REQUEST_KEY_REQUIRED", 400)
+            if return_stock:
+                for allocation in allocations:
+                    row = InventoryItem.query.filter_by(id=allocation.inventory_item_id).populate_existing().with_for_update().first()
+                    if row is None or row.unit != allocation.unit:
+                        raise StockError("Stock units changed. Ask the owner to reconcile this cancellation.", "UNIT_HISTORY_CONFLICT")
+                    amount = allocation.quantity_per_unit
+                    if allocation.quantity_restored + amount > allocation.quantity_deducted:
+                        raise StockError("This stock has already been returned.", "ALREADY_RESTORED")
+                    db.session.execute(update(InventoryItem).where(InventoryItem.id == row.id).values(
+                        stock_qty=InventoryItem.stock_qty + amount), execution_options={"synchronize_session": False})
+                    allocation.quantity_restored += amount
+                    db.session.add(InventoryLog(inventory_item_id=row.id, change_qty=amount,
+                        reason=("Void return: " + reason)[:100], changed_by=actor))
+            order_id, session_id = item.order_id, item.order.customer_session_id
+            record_action(item.menu_item, "void_return" if return_stock and allocations else "void_no_return",
+                          1, reason, actor, key, item.id)
+            if item.quantity > 1:
+                item.quantity -= 1
+            else:
+                db.session.delete(item)
+            self.repo.commit()
+        except StockError as exc:
+            db.session.rollback()
+            return {"error": exc.code, "message": str(exc)}, exc.status
+        except Exception:
+            db.session.rollback()
+            raise
+        emit_inventory_update("stock_change", {"order_id": order_id})
+        self.notifier.order_status_changed({"order_id": order_id, "session_id": session_id, "status": "voided"})
+        return {"message": "One item cancelled." + (" Stock returned." if return_stock and allocations else " No stock returned.")}
 
     def toggle_order_item_status(self, item_id: int) -> dict[str, Any] | tuple[dict[str, Any], int]:
         item = self.repo.get_order_item(item_id)

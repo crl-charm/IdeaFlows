@@ -108,12 +108,13 @@
 
   .inventory-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 1.25rem;
   }
 
   .btn-icon {
-    flex: 1;
+    flex: 1 1 auto;
     background: white;
     border: 1px solid var(--border);
     padding: 0.45rem 0.5rem;
@@ -262,12 +263,12 @@
   <!-- HEADER -->
   <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom flex-wrap gap-3">
     <div>
-      <h1 class="h3 fw-bold text-dark m-0">Inventory Management</h1>
-      <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">Monitor ingredient levels, adjust stock, and view transaction logs</p>
+      <h1 class="h3 fw-bold text-dark m-0">Inventory</h1>
+      <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">Add ingredients, update their stock, and check what is running low. Meals are shown below.</p>
     </div>
     <div class="d-flex gap-2">
       <button class="btn-add-inventory" data-bs-toggle="modal" data-bs-target="#addItemModal">
-        <i class="bi bi-plus me-1"></i> Add Raw Ingredient
+        <i class="bi bi-plus me-1"></i> Add Ingredient
       </button>
     </div>
   </div>
@@ -296,21 +297,21 @@
   <!-- GLOBAL SEARCH -->
   <div class="mb-4 position-relative inventory-search-bar">
     <i class="bi bi-search search-icon"></i>
-    <input type="text" id="inventorySearchInput" class="form-control shadow-sm" placeholder="Search raw ingredients or meal recipes..." autocomplete="off">
+    <input type="text" id="inventorySearchInput" class="form-control shadow-sm" placeholder="Search ingredients or meals..." autocomplete="off">
   </div>
 
   <!-- DIRECT STOCK (primary monitoring) -->
   <div class="mb-2">
-    <h2 class="h5 fw-bold text-dark mb-1">Direct Stock Inventory</h2>
-    <p class="text-muted mb-3" style="font-size: 0.9rem;">Monitor every raw ingredient here — linked or not. Adjust stock and view logs without opening recipe details.</p>
+    <h2 class="h5 fw-bold text-dark mb-1">Ingredients &amp; Stock</h2>
+    <p class="text-muted mb-3" style="font-size: 0.9rem;">What you have on hand. Use Update stock when supplies arrive or a count needs correcting.</p>
     <div class="d-flex flex-wrap gap-2 mb-3" id="directStockFilters">
       <button type="button" class="filter-chip active" data-filter="all">All</button>
       <button type="button" class="filter-chip" data-filter="low">Low Stock</button>
       <button type="button" class="filter-chip" data-filter="warning">Warning</button>
       <button type="button" class="filter-chip" data-filter="normal">Normal</button>
       <button type="button" class="filter-chip" data-filter="out">Out of Stock</button>
-      <button type="button" class="filter-chip" data-filter="linked">Linked</button>
-      <button type="button" class="filter-chip" data-filter="unlinked">Unlinked</button>
+      <button type="button" class="filter-chip" data-filter="linked">Used in a recipe</button>
+      <button type="button" class="filter-chip" data-filter="unlinked">Not used in a recipe</button>
     </div>
   </div>
   <div class="row g-4 mb-5" id="direct-stock-grid"></div>
@@ -322,8 +323,9 @@
 
   <!-- RECIPE-BASED MEALS -->
   <div class="mb-2 pt-2 border-top">
-    <h2 class="h5 fw-bold text-dark mb-1">Recipe-Based Inventory</h2>
-    <p class="text-muted mb-3" style="font-size: 0.9rem;">Sellable meals — recipe capacity and meal-level status. Ingredient quantities always match Direct Stock above.</p>
+    <h2 class="h5 fw-bold text-dark mb-1">Meals &amp; Availability</h2>
+    <p class="text-muted mb-3" style="font-size: 0.9rem;">See meal stock or estimated servings. For recipe-based meals, ingredient stock above affects the estimate.</p>
+    <button type="button" id="setupReviewFilter" class="filter-chip mb-3" aria-pressed="false" onclick="toggleSetupReview()">Needs setup review: <span id="setupReviewCount">0</span></button>
   </div>
   <div class="row g-4" id="recipe-inventory-grid"></div>
   <div class="empty-state" id="recipeEmpty" style="display: none;">
@@ -338,23 +340,25 @@
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-plus-circle me-2 text-warning"></i>Add Raw Ingredient</h5>
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2 text-warning"></i>Add Ingredient</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <p class="text-muted small mb-3">Add a supply you keep on hand, such as rice, cheese, or milk.</p>
         <div class="mb-3">
-          <label class="form-label">Ingredient Name</label>
-          <input type="text" id="ingredientName" class="form-control" placeholder="e.g. Cheese, Wrapper, Bacon, Fries" required>
+          <label class="form-label" for="ingredientName">Ingredient name</label>
+          <input type="text" id="ingredientName" class="form-control" placeholder="e.g. Rice, cheese, milk" maxlength="100" required>
         </div>
         <div class="mb-3">
-          <label class="form-label">Starting Stock Quantity</label>
-          <input type="number" id="startQty" class="form-control" value="0" required>
+          <label class="form-label" for="startQty">How much do you have now?</label>
+          <input type="number" id="startQty" class="form-control" value="0" min="0" max="999999" step="0.01" aria-describedby="startQtyHelp" required>
+          <div id="startQtyHelp" class="form-text">Enter 0 if none yet. You can use decimals, such as 1.5 kilograms.</div>
         </div>
         <div class="mb-3">
-          <label class="form-label">Unit of Measure</label>
+          <label class="form-label" for="unit">How do you count it?</label>
           <select id="unit" class="form-select">
             <option value="pieces">pieces (pcs)</option>
-            <option value="klg">kilograms (klg)</option>
+            <option value="klg">kilograms (kg)</option>
             <option value="grams">grams (g)</option>
             <option value="trays">trays</option>
             <option value="packs">packs</option>
@@ -362,13 +366,14 @@
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label">Low Stock Threshold</label>
-          <input type="number" id="threshold" class="form-control" value="10" required>
+          <label class="form-label" for="threshold">Remind me to restock when this much is left</label>
+          <input type="number" id="threshold" class="form-control" value="10" min="0" max="999999" step="1" aria-describedby="thresholdHelp" required>
+          <div id="thresholdHelp" class="form-text">At this amount or less, the ingredient shows as running low. Enter 0 to turn off this reminder.</div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary-modal" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn-primary-modal" onclick="createIngredient()">Create</button>
+        <button type="button" class="btn-primary-modal" onclick="createIngredient()">Add ingredient</button>
       </div>
     </div>
   </div>
@@ -520,6 +525,7 @@
   </div>
 </div>
 
+{% include 'inventory_controls.html' %}
 {% endblock %}
 
 {% block scripts %}
@@ -531,6 +537,7 @@ let currentItemName = "";
 let currentMealId = null;
 let directStockItems = [];
 let recipeItems = [];
+let setupReviewOnly = false;
 let directStockFilter = 'all';
 let inventorySearchQuery = '';
 let ingredientSearchTimer = null;
@@ -550,6 +557,9 @@ const socket = window.getIdeaFlowSocket();
 const refreshInventory = window.createDebouncedRefresh(loadInventory, 150);
 
 if (socket) socket.on('inventory_update', refreshInventory);
+if (socket) socket.on('connect', refreshInventory);
+if (socket) socket.on('menu_update', refreshInventory);
+window.addEventListener('inventory-changed', refreshInventory);
 
 document.addEventListener('DOMContentLoaded', function() {
   loadInventory();
@@ -608,6 +618,7 @@ function loadInventory() {
       if (data.success) {
         directStockItems = data.direct_stock || [];
         recipeItems = data.data || [];
+        document.getElementById('setupReviewCount').textContent = recipeItems.filter(item => item.setup_review).length;
         inventorySummary = data.summary || null;
         updateInventorySummary();
         renderDirectStock();
@@ -633,20 +644,28 @@ function filterDirectStockItems(items) {
 }
 
 function filterRecipeItems(items) {
-  return items.filter(item => matchesInventorySearch(item.name));
+  return items.filter(item => matchesInventorySearch(item.name) && (!setupReviewOnly || item.setup_review));
+}
+
+function toggleSetupReview() {
+  setupReviewOnly = !setupReviewOnly;
+  const button = document.getElementById('setupReviewFilter');
+  button.classList.toggle('active', setupReviewOnly);
+  button.setAttribute('aria-pressed', String(setupReviewOnly));
+  renderRecipeInventory();
 }
 
 function renderDirectStockCard(item) {
-  const stockRatio = item.low_stock_threshold > 0
-    ? item.stock_qty / item.low_stock_threshold
-    : (item.stock_qty > 0 ? 2 : 0);
   let barClass = 'progress-ok';
   let progressPercent = item.low_stock_threshold > 0
     ? Math.min((item.stock_qty / (item.low_stock_threshold * 2)) * 100, 100)
-    : 0;
+    : (item.stock_qty > 0 ? 100 : 0);
   let statusHtml = '';
 
-  if (item.is_low) {
+  if (item.is_out_of_stock) {
+    statusHtml = '<span class="status-badge status-low">🔴 Out of stock</span>';
+    barClass = 'progress-low';
+  } else if (item.is_low) {
     statusHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
     barClass = 'progress-low';
   } else if (item.is_warning) {
@@ -657,8 +676,8 @@ function renderDirectStockCard(item) {
   }
 
   const linkedLabel = item.recipe_count > 0
-    ? `Used in: ${item.recipe_count} recipe${item.recipe_count === 1 ? '' : 's'}`
-    : 'Not linked to any recipe';
+    ? `Used in ${item.recipe_count} meal${item.recipe_count === 1 ? '' : 's'}`
+    : 'Not used in a meal recipe';
   const linkedTitle = item.linked_meal_names && item.linked_meal_names.length
     ? escapeHtml(item.linked_meal_names.join(', '))
     : '';
@@ -679,8 +698,8 @@ function renderDirectStockCard(item) {
             <p class="text-secondary mb-0 mt-2" style="font-size: 0.75rem;" title="${linkedTitle}">${linkedLabel}</p>
             <div class="mt-2">
               <div class="d-flex justify-content-between mb-1" style="font-size: 0.8rem;">
-                <span class="text-secondary">Stock: <strong class="text-dark">${parseFloat(item.stock_qty).toFixed(2)} ${escapeHtml(formatUnitSingular(item.stock_qty, item.unit))}</strong></span>
-                <span class="text-secondary">Min: ${item.low_stock_threshold}</span>
+                <span class="text-secondary">Stock: <strong class="text-dark">${Number(item.stock_qty).toLocaleString(undefined, {maximumFractionDigits: 2})} ${escapeHtml(formatUnitSingular(item.stock_qty, item.unit))}</strong></span>
+                <span class="text-secondary">Restock reminder: ${item.low_stock_threshold > 0 ? item.low_stock_threshold + ' ' + escapeHtml(formatUnitSingular(item.low_stock_threshold, item.unit)) : 'Off'}</span>
               </div>
               <div class="progress-bar-custom">
                 <div class="progress-fill ${barClass}" style="width: ${progressPercent}%"></div>
@@ -689,10 +708,10 @@ function renderDirectStockCard(item) {
           </div>
           <div class="inventory-actions">
             <button class="btn-icon" onclick="openAdjustModal(${invId}, ${item.stock_qty}, '${nameEsc}', ${item.menu_item_id})">
-              <i class="bi bi-plus-slash-minus"></i> Stock
+              <i class="bi bi-plus-slash-minus"></i> Update stock
             </button>
             <button class="btn-icon" onclick="viewLogsOrInit(${invId}, '${nameEsc}', ${item.menu_item_id})">
-              <i class="bi bi-journal-text"></i> Logs
+              <i class="bi bi-journal-text"></i> History
             </button>
             <button class="btn-icon btn-delete-item" onclick="deleteRawIngredient(${item.menu_item_id}, '${nameEsc}', ${item.recipe_count})" title="Delete ingredient">
               <i class="bi bi-trash"></i>
@@ -730,126 +749,16 @@ function renderDirectStock() {
 
 function renderRecipeInventory() {
   const grid = document.getElementById('recipe-inventory-grid');
-  const empty = document.getElementById('recipeEmpty');
   const filtered = filterRecipeItems(recipeItems);
-
-  if (recipeItems.length === 0) {
-    grid.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
-  empty.style.display = 'none';
-
-  if (filtered.length === 0) {
-    const msg = inventorySearchQuery.trim()
-      ? 'No meals match your search.'
-      : 'No meals to display.';
-    grid.innerHTML = `<div class="col-12"><p class="text-muted">${msg}</p></div>`;
-    return;
-  }
-
+  document.getElementById('recipeEmpty').style.display = recipeItems.length ? 'none' : 'block';
   grid.innerHTML = filtered.map(item => {
-    let statusHtml = '';
-    let stockBarHtml = '';
-    let buttonsHtml = '';
-    let categoryBadge = '';
-
-    if (item.has_recipe) {
-      categoryBadge = '<span class="badge bg-light text-dark border mt-2 py-1 px-2" style="font-size: 0.7rem; font-weight: 500;">📦 Recipe-based</span>';
-
-      if (item.is_low) {
-        statusHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
-      } else if (item.is_warning) {
-        statusHtml = '<span class="status-badge status-warning">🟡 Warning</span>';
-      } else {
-        statusHtml = '<span class="status-badge status-ok">✅ OK</span>';
-      }
-
-      stockBarHtml = `
-        <div class="mt-2">
-          <span class="text-secondary fw-semibold" style="font-size: 0.8rem;">Capacity:</span>
-          <span class="text-dark fw-bold" style="font-size: 0.85rem;">${item.capacity} servings</span>
-        </div>
-      `;
-
-      const nameEsc = escapeJsString(item.name);
-      buttonsHtml = `
-        <button class="btn-icon" onclick="openIngredientsModal(${item.id}, '${nameEsc}')">
-          <i class="bi bi-journal-text"></i> Ingredients
-        </button>
-        <button class="btn-icon btn-delete-item" onclick="deleteRecipe(${item.id}, '${nameEsc}')">
-          <i class="bi bi-trash"></i> Delete Recipe
-        </button>
-      `;
-    } else {
-      categoryBadge = '<span class="badge bg-light text-success border mt-2 py-1 px-2" style="font-size: 0.7rem; font-weight: 500;">✅ Direct Stock meal</span>';
-
-      const stockRatio = item.low_stock_threshold > 0 ? item.stock_qty / item.low_stock_threshold : 0;
-      let barClass = 'progress-ok';
-      let progressPercent = item.low_stock_threshold > 0
-        ? Math.min((item.stock_qty / (item.low_stock_threshold * 2)) * 100, 100)
-        : 0;
-
-      if (item.is_low) {
-        statusHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
-        barClass = 'progress-low';
-      } else if (item.is_warning) {
-        statusHtml = '<span class="status-badge status-warning">🟡 Warning</span>';
-        barClass = 'progress-warning';
-      } else {
-        statusHtml = '<span class="status-badge status-ok">✅ OK</span>';
-      }
-
-      stockBarHtml = `
-        <div class="mt-2">
-          <div class="d-flex justify-content-between mb-1" style="font-size: 0.8rem;">
-            <span class="text-secondary">Stock: <strong class="text-dark">${parseFloat(item.stock_qty).toFixed(2)} ${escapeHtml(formatUnitSingular(item.stock_qty, item.unit || ''))}</strong></span>
-            <span class="text-secondary">Min: ${item.low_stock_threshold}</span>
-          </div>
-          <div class="progress-bar-custom">
-            <div class="progress-fill ${barClass}" style="width: ${progressPercent}%"></div>
-          </div>
-        </div>
-      `;
-
-      const invId = item.inventory_item_id || 'null';
-      const nameEsc = escapeJsString(item.name);
-      buttonsHtml = `
-        <button class="btn-icon" onclick="openAdjustModal(${invId}, ${item.stock_qty}, '${nameEsc}', ${item.id})">
-          <i class="bi bi-plus-slash-minus"></i> Stock
-        </button>
-        <button class="btn-icon" onclick="openIngredientsModal(${item.id}, '${nameEsc}')">
-          <i class="bi bi-link-45deg"></i> Link
-        </button>
-        <button class="btn-icon" onclick="viewLogsOrInit(${invId}, '${nameEsc}', ${item.id})">
-          <i class="bi bi-journal-text"></i> Logs
-        </button>
-      `;
-    }
-
-    return `
-      <div class="col-md-6 col-lg-4">
-        <div class="modern-card">
-          <div class="card-body">
-            <div>
-              <div class="d-flex justify-content-between align-items-start gap-2">
-                <h5 class="fw-bold text-dark m-0" style="font-size: 1.05rem; line-height: 1.3;">${escapeHtml(item.name)}</h5>
-                ${statusHtml}
-              </div>
-              <div class="d-flex align-items-center gap-2 flex-wrap">
-                <span class="text-secondary" style="font-size: 0.75rem;">Category: ${escapeHtml(item.category || '')}</span>
-                ${categoryBadge}
-              </div>
-              ${stockBarHtml}
-            </div>
-            <div class="inventory-actions">
-              ${buttonsHtml}
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
+    return `<div class="col-md-6 col-lg-4"><div class="modern-card h-100"><div class="card-body">
+      <h5 class="fw-bold text-dark mb-1">${escapeHtml(item.name)}</h5>
+      <div class="inventory-count">${item.available_quantity == null ? 'Available while enabled' : item.available_quantity + ' ' + item.display_unit}</div>
+      ${InventoryUI.status(item)}
+    </div></div></div>`;
   }).join('');
+  if (recipeItems.length && !filtered.length) grid.innerHTML = '<p class="text-muted">No meals match your search.</p>';
 }
 
 function viewLogsOrInit(itemId, itemName, menuItemId) {
@@ -863,10 +772,14 @@ function viewLogsOrInit(itemId, itemName, menuItemId) {
 
 // CREATE RAW INGREDIENT
 function createIngredient() {
-  const name = document.getElementById('ingredientName').value.trim();
-  const startQty = parseInt(document.getElementById('startQty').value) || 0;
+  const nameInput = document.getElementById('ingredientName');
+  const stockInput = document.getElementById('startQty');
+  const thresholdInput = document.getElementById('threshold');
+  if (![nameInput, stockInput, thresholdInput].every(input => input.reportValidity())) return;
+  const name = nameInput.value.trim();
+  const startQty = Number(stockInput.value);
   const unit = document.getElementById('unit').value;
-  const threshold = parseInt(document.getElementById('threshold').value) || 10;
+  const threshold = Number(thresholdInput.value);
 
   if (!name) {
     showToast('Please enter an ingredient name', 'error');
@@ -884,19 +797,19 @@ function createIngredient() {
     })
   }).then(r => r.json()).then(data => {
     if (data.success) {
-      showToast('✓ Raw ingredient created successfully!', 'success');
+      showToast('Ingredient added.', 'success');
       bootstrap.Modal.getInstance(document.getElementById('addItemModal')).hide();
       
       // Clear values
-      document.getElementById('ingredientName').value = '';
-      document.getElementById('startQty').value = '0';
-      document.getElementById('threshold').value = '10';
+      nameInput.value = '';
+      stockInput.value = '0';
+      thresholdInput.value = '10';
       
       refreshInventory();
     } else {
       showToast('✗ Error: ' + (data.error || 'Failed to create ingredient'), 'error');
     }
-  });
+  }).catch(() => showToast('Could not add the ingredient. Please try again.', 'error'));
 }
 
 // INGREDIENTS MODAL FUNCTIONS
@@ -963,6 +876,7 @@ function fetchIngredientSearch(term) {
 
 function formatUnitSingular(qty, unit) {
   const val = Math.abs(parseFloat(qty));
+  if (unit === "klg") return "kg";
   if (val === 1.0) {
     if (unit === "pieces") return "piece";
     if (unit === "packs") return "pack";

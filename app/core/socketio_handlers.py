@@ -113,10 +113,32 @@ def emit_inventory_update(event_type, item_data):
         event_type: 'create', 'update', 'delete', 'stock_change'
         item_data: dict containing item information
     """
-    socketio.emit(
-        'inventory_update', compact_change(event_type, item_data),
-        to=AUTHENTICATED_ROOM,
-    )
+    from app.models import InventoryItem, MenuItemIngredient
+    from app.models.inventory import OrderInventoryAllocation
+    from app.services.menu_availability import MenuAvailability
+    from app.utils.inventory_helpers import is_ingredient_category
+
+    item_data = item_data or {}
+    payload = compact_change(event_type, item_data)
+    menu_ids = set()
+    if item_data.get("menu_item_id"):
+        menu_ids.add(item_data["menu_item_id"])
+    stock_ids = set()
+    if item_data.get("item_id"):
+        stock_ids.add(item_data["item_id"])
+    if item_data.get("order_id"):
+        stock_ids.update(row[0] for row in db.session.query(OrderInventoryAllocation.inventory_item_id)
+            .filter_by(order_id=item_data["order_id"]).distinct().all())
+    if stock_ids:
+        menu_ids.update(row[0] for row in db.session.query(InventoryItem.menu_item_id)
+            .filter(InventoryItem.id.in_(stock_ids)).all())
+    if menu_ids:
+        menu_ids.update(row[0] for row in db.session.query(MenuItemIngredient.menu_item_id)
+            .filter(MenuItemIngredient.ingredient_item_id.in_(menu_ids)).all())
+        availability = MenuAvailability(sorted(menu_ids))
+        payload["availability"] = {str(item.id): availability.snapshot(item)
+            for item in availability.items.values() if not is_ingredient_category(item.category) and item.status != "deleted"}
+    socketio.emit('inventory_update', payload, to=AUTHENTICATED_ROOM)
 
 
 def emit_menu_update(event_type, item_data):

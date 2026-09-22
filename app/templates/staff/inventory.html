@@ -124,20 +124,27 @@
 <div class="container-fluid inventory-container">
   <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom flex-wrap gap-3">
     <div>
-      <h1 class="h3 fw-bold text-dark m-0">Inventory Management</h1>
-      <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">Monitor raw ingredient stock first, then recipe meal capacity</p>
+      <h1 class="h3 fw-bold text-dark m-0">Inventory</h1>
+      <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">Check what is running low and tell the owner when supplies need replacing. Place orders from the Order page.</p>
     </div>
   </div>
 
   <div class="mb-4 position-relative inventory-search-bar">
     <i class="bi bi-search search-icon"></i>
-    <input type="text" id="inventorySearchInput" class="form-control shadow-sm" placeholder="Search raw ingredients or meal recipes..." autocomplete="off">
+    <input type="text" id="inventorySearchInput" class="form-control shadow-sm" placeholder="Search ingredients or meals..." autocomplete="off">
   </div>
 
+  {% if can_manage_kitchen %}
+  <section class="mb-4" aria-label="Prepared servings">
+    <h2 class="h5 fw-bold">Prepared servings</h2>
+    <p class="text-muted">Add a batch, record waste, or mark a meal sold out.</p>
+    <div id="prepared-kitchen-grid" class="kitchen-stock-grid"></div>
+  </section>
+  {% endif %}
   <div class="modern-card card">
     <div class="card-header">
-      <h5>Direct Stock — Raw Ingredients</h5>
-      <p class="text-muted mb-0 mt-1" style="font-size: 0.85rem;">All ingredients including those used in recipes</p>
+      <h5>Ingredients &amp; Stock</h5>
+      <p class="text-muted mb-0 mt-1" style="font-size: 0.85rem;">What is currently on hand</p>
     </div>
     <div class="px-3 pt-3 pb-0">
       <div class="d-flex flex-wrap gap-2 mb-2" id="directStockFilters">
@@ -146,8 +153,8 @@
         <button type="button" class="filter-chip" data-filter="warning">Warning</button>
         <button type="button" class="filter-chip" data-filter="normal">Normal</button>
         <button type="button" class="filter-chip" data-filter="out">Out of Stock</button>
-        <button type="button" class="filter-chip" data-filter="linked">Linked</button>
-        <button type="button" class="filter-chip" data-filter="unlinked">Unlinked</button>
+        <button type="button" class="filter-chip" data-filter="linked">Used in a recipe</button>
+        <button type="button" class="filter-chip" data-filter="unlinked">Not used in a recipe</button>
       </div>
     </div>
     <div class="card-body p-0">
@@ -157,8 +164,8 @@
             <tr>
               <th>Ingredient</th>
               <th>Stock</th>
-              <th>Threshold</th>
-              <th>Recipes</th>
+              <th>Restock reminder</th>
+              <th>Used in meals</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -172,7 +179,7 @@
 
   <div class="modern-card card">
     <div class="card-header">
-      <h5>Recipe-Based Meals</h5>
+      <h5>Meals &amp; Availability</h5>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -194,6 +201,7 @@
   </div>
 </div>
 
+{% include 'inventory_controls.html' %}
 {% endblock %}
 
 {% block scripts %}
@@ -202,6 +210,10 @@ let directStockItems = [];
 let recipeItems = [];
 let directStockFilter = 'all';
 let inventorySearchQuery = '';
+const inventorySocket = window.getIdeaFlowSocket();
+const refreshInventory = window.createDebouncedRefresh(loadInventory, 150);
+if (inventorySocket) ['inventory_update', 'menu_update', 'connect'].forEach(event => inventorySocket.on(event, refreshInventory));
+window.addEventListener('inventory-changed', refreshInventory);
 
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -282,7 +294,10 @@ function renderDirectStockTable() {
   tbody.innerHTML = filtered.map(item => {
     let rowClass = '';
     let badgeHtml = '';
-    if (item.is_low) {
+    if (item.is_out_of_stock) {
+      rowClass = 'table-danger-custom';
+      badgeHtml = '<span class="status-badge status-low">🔴 Out of stock</span>';
+    } else if (item.is_low) {
       rowClass = 'table-danger-custom';
       badgeHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
     } else if (item.is_warning) {
@@ -295,8 +310,8 @@ function renderDirectStockTable() {
     return `
       <tr class="${rowClass}">
         <td class="fw-semibold">${escapeHtml(item.name)}</td>
-        <td><strong>${item.stock_qty}</strong> ${escapeHtml(item.unit)}</td>
-        <td>${item.low_stock_threshold}</td>
+        <td><strong>${item.stock_qty}</strong> ${escapeHtml(item.unit === 'klg' ? 'kg' : item.unit)}</td>
+        <td>${item.low_stock_threshold > 0 ? item.low_stock_threshold + ' ' + escapeHtml(item.unit === 'klg' ? 'kg' : item.unit) : 'Off'}</td>
         <td>${item.recipe_count}</td>
         <td>${badgeHtml}</td>
       </tr>
@@ -306,52 +321,21 @@ function renderDirectStockTable() {
 
 function renderRecipeTable() {
   const tbody = document.getElementById('recipe-inventory-body');
-  tbody.innerHTML = '';
   const filtered = recipeItems.filter(item => matchesInventorySearch(item.name));
-
-  if (recipeItems.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No menu meals found.</td></tr>';
-    return;
+  const kitchenGrid = document.getElementById('prepared-kitchen-grid');
+  if (kitchenGrid) {
+    kitchenGrid.innerHTML = filtered.filter(item => item.inventory_mode === 'prepared').map(item => `<article class="kitchen-stock-card">
+      <h3>${escapeHtml(item.name)}</h3>
+      <p class="inventory-count">${item.available_quantity} servings ready</p>
+      ${InventoryUI.status(item)}${InventoryUI.actions(item)}
+    </article>`).join('') || '<p class="text-muted">Prepared meals will appear here after the owner chooses “Prepared servings” in Menu.</p>';
   }
-
-  if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No meals match your search.</td></tr>';
-    return;
-  }
-
-  filtered.forEach(item => {
-    let typeBadge = '';
-    let capacityText = '';
-    let rowClass = '';
-    let badgeHtml = '';
-
-    if (item.has_recipe) {
-      typeBadge = '<span class="badge bg-light text-dark border">Recipe-based</span>';
-      capacityText = `<strong>${item.capacity} servings</strong> available`;
-    } else {
-      typeBadge = '<span class="badge bg-light text-success border">Direct stock meal</span>';
-      capacityText = `<strong>${item.stock_qty} ${escapeHtml(item.unit || '')}</strong> in stock`;
-    }
-
-    if (item.is_low) {
-      rowClass = 'table-danger-custom';
-      badgeHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
-    } else if (item.is_warning) {
-      rowClass = 'table-warning-custom';
-      badgeHtml = '<span class="status-badge status-warning">🟡 Warning</span>';
-    } else {
-      badgeHtml = '<span class="status-badge status-ok">✅ OK</span>';
-    }
-
-    tbody.innerHTML += `
-      <tr class="${rowClass}">
-        <td class="fw-semibold">${escapeHtml(item.name)}</td>
-        <td>${typeBadge}</td>
-        <td>${capacityText}</td>
-        <td>${badgeHtml}</td>
-      </tr>
-    `;
-  });
+  tbody.innerHTML = filtered.length ? filtered.map(item => `<tr>
+    <td class="fw-semibold">${escapeHtml(item.name)}${InventoryUI.actions(item)}</td>
+    <td>${InventoryUI.labels[item.inventory_mode] || ''}</td>
+    <td><strong>${item.available_quantity == null ? 'No quantity tracking' : item.available_quantity + ' ' + item.display_unit}</strong></td>
+    <td>${InventoryUI.status(item)}</td>
+  </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted py-4">No meals match your search.</td></tr>';
 }
 </script>
 {% endblock %}

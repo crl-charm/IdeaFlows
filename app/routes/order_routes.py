@@ -116,7 +116,10 @@ def orders_view_page(session_id):
 @login_required
 @idempotent_request("void-order-item")
 def void_item(item_id):
-    resp = _service.void_item(item_id)
+    data = request.get_json(silent=True) or {}
+    resp = _service.void_item(item_id, actor=flask_session.get("user_id"),
+        admin=flask_session.get("role") == "admin", request_key=request.headers.get("Idempotency-Key"),
+        return_stock=data.get("return_stock", True), reason=data.get("reason", "Cancelled before preparation"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

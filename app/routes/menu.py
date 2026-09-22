@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request, render_template, current_app
+from flask import Blueprint, jsonify, request, render_template, current_app, session
 from flask.views import MethodView
 import os
+import json
 import uuid
 from werkzeug.utils import secure_filename
 import logging
@@ -26,6 +27,17 @@ menu_bp = Blueprint("menu", __name__, url_prefix="/admin/menu")
 _service = MenuService(repo=MenuRepository())
 
 logger = logging.getLogger(__name__)
+
+
+def _recipe_from_request(data):
+    raw = data.get("recipe_ingredients")
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        from app.services.menu_availability import StockError
+        raise StockError("Check the ingredient list and try again.", "INVALID_RECIPE", 400)
 
 def get_valid_categories():
     try:
@@ -125,6 +137,7 @@ def api_create_category() -> tuple:
 @csrf.exempt
 @idempotent_request("admin-create-menu-item")
 def api_create_item() -> tuple:
+    from app.services.menu_availability import StockError
     if request.is_json:
         data = request.get_json() or {}
         category = str(data.get("category", "")).strip()
@@ -132,10 +145,11 @@ def api_create_item() -> tuple:
         price = str(data.get("price", "")).strip()
         description = str(data.get("description", "")).strip() or None
     else:
-        category = request.form.get("category", "").strip()
-        name = request.form.get("name", "").strip()
-        price = request.form.get("price", "").strip()
-        description = request.form.get("description", "").strip() or None
+        data = request.form
+        category = data.get("category", "").strip()
+        name = data.get("name", "").strip()
+        price = data.get("price", "").strip()
+        description = data.get("description", "").strip() or None
     
     # Validate category
     valid_cats = get_valid_categories()
@@ -156,6 +170,13 @@ def api_create_item() -> tuple:
     except ValueError:
         return jsonify({"success": False, "error": "Price must be a valid number"}), 400
     
+    try:
+        recipe_ingredients = _recipe_from_request(data)
+        if recipe_ingredients is not None and not isinstance(recipe_ingredients, list):
+            raise StockError("Ingredients must be a list.", "INVALID_RECIPE", 400)
+    except StockError as exc:
+        return jsonify({"success": False, "error": str(exc)}), exc.status
+
     # Handle image upload
     image_url = None
     if 'image' in request.files:
@@ -171,7 +192,17 @@ def api_create_item() -> tuple:
             category=category,
             description=description,
             image_url=image_url,
+            inventory_mode=data.get("inventory_mode", "untracked"),
+            stock_quantity=data.get("stock_quantity", 0),
+            stock_threshold=data.get("stock_threshold", 3),
+            actor=session.get("user_id"),
+            recipe_ingredients=recipe_ingredients,
         )
+    except StockError as exc:
+        from app import db
+        db.session.rollback()
+        delete_old_image(image_url)
+        return jsonify({"success": False, "error": str(exc)}), exc.status
     except Exception:
         from app import db
         db.session.rollback()
@@ -274,7 +305,14 @@ def api_create_item_variants() -> tuple:
 @idempotent_request("admin-update-menu-item")
 def api_update_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
+    from app.services.menu_availability import StockError
     from app import db
+    try:
+        recipe_ingredients = _recipe_from_request(request.form)
+        if recipe_ingredients is not None and not isinstance(recipe_ingredients, list):
+            raise StockError("Ingredients must be a list.", "INVALID_RECIPE", 400)
+    except StockError as exc:
+        return jsonify({"success": False, "error": str(exc)}), exc.status
     
     category = request.form.get("category", "").strip()
     valid_cats = get_valid_categories()
@@ -316,7 +354,17 @@ def api_update_item(item_id: int) -> tuple:
             category=category if category else None,
             description=request.form.get("description", "").strip() or None,
             image_url=image_url,
+            inventory_mode=request.form.get("inventory_mode") or None,
+            stock_quantity=request.form.get("stock_quantity", 0),
+            stock_threshold=request.form.get("stock_threshold", 3),
+            actor=session.get("user_id"),
+            recipe_ingredients=recipe_ingredients,
+            confirm_recipe_switch=request.form.get("confirm_recipe_switch") == "true",
         )
+    except StockError as exc:
+        db.session.rollback()
+        delete_old_image(image_url)
+        return jsonify({"success": False, "error": str(exc)}), exc.status
     except Exception:
         db.session.rollback()
         delete_old_image(image_url)

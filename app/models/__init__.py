@@ -10,7 +10,7 @@ from .transaction import Transaction
 from .boardroom_booking import BoardroomBooking
 from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
-from .inventory import InventoryItem, InventoryLog
+from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
 from .receivable import Receivable
 from .payable import Payable
 from .expense import Expense
