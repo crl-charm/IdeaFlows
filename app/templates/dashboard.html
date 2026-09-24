@@ -148,9 +148,9 @@
         <input type="number" id="numberOfPeople" class="form-control mb-2" placeholder="Number of People" min="1" value="1">
 
         <select id="spaceType" class="form-control">
-            <option value="1">Regular Lounge</option>
-            <option value="2">Premium Lounge</option>
-            <option value="3">Boardroom</option>
+            {% for space in space_types %}
+            <option value="{{ space.id }}">{{ space.name }}</option>
+            {% endfor %}
         </select>
 
       </div>

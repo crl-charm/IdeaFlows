@@ -41,22 +41,23 @@ class SessionService:
             status="active",
         )
 
-        if space_type_id:
-            space = self.repo.get_space_type(space_type_id)
-            if space and space.capacity:
-                occupied = self.repo.sum_active_occupancy(space_type_id)
-                if occupied + number_of_people > space.capacity:
-                    seats_left = max(int(space.capacity) - int(occupied), 0)
-                    return (
-                        {
-                            "error": (
-                                f"{space.name} has only {seats_left} seat(s) left. "
-                                f"Requested seats: {number_of_people}."
-                            ),
-                            "full": True,
-                        },
-                        409,
-                    )
+        space = self.repo.get_space_type(space_type_id) if space_type_id else None
+        if not space:
+            return {"error": "Please select a valid space."}, 400
+        if space.capacity:
+            occupied = self.repo.sum_active_occupancy(space_type_id)
+            if occupied + number_of_people > space.capacity:
+                seats_left = max(int(space.capacity) - int(occupied), 0)
+                return (
+                    {
+                        "error": (
+                            f"{space.name} has only {seats_left} seat(s) left. "
+                            f"Requested seats: {number_of_people}."
+                        ),
+                        "full": True,
+                    },
+                    409,
+                )
 
         self.repo.add_session(sess)
         return {"message": "Customer checked in successfully", "session_id": sess.id}, 200

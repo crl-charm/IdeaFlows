@@ -1,4 +1,5 @@
 from decimal import Decimal
+from time import time
 
 import pytest
 from sqlalchemy import text
@@ -14,7 +15,7 @@ from app.models import (
 @pytest.fixture
 def app():
     application = create_app()
-    application.config["TESTING"] = True
+    application.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SINGLE_SESSION_ENABLED=False)
     return application
 
 
@@ -68,3 +69,30 @@ def test_operational_reset_preserves_accounts_and_reseeds_defaults(app):
         with pytest.raises(RuntimeError, match=r"Unreviewed tables: \['unexpected_records'\]"):
             preview_reset()
         db.session.execute(text("DROP TABLE unexpected_records"))
+
+
+def test_checkin_uses_current_space_ids_after_reset(app):
+    with app.app_context():
+        db.session.add_all([
+            SpaceType(id=10, name="Regular Lounge", rate_per_minute=Decimal("0.1667")),
+            SpaceType(id=11, name="Premium Lounge", rate_per_minute=Decimal("0.3333")),
+            SpaceType(id=12, name="Boardroom", rate_per_minute=Decimal("4.1667")),
+        ])
+        db.session.commit()
+
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, username="test_user", role="staff", last_activity=time())
+    page = client.get("/dashboard")
+    assert page.status_code == 200
+    assert b'<option value="11">Premium Lounge</option>' in page.data
+
+    valid = client.post("/api/checkin", json={
+        "customer_name": "Carl", "number_of_people": 1, "space_type_id": 11,
+    })
+    assert valid.status_code == 200
+    invalid = client.post("/api/checkin", json={
+        "customer_name": "Other", "number_of_people": 1, "space_type_id": 2,
+    })
+    assert invalid.status_code == 400
+    assert invalid.get_json()["error"] == "Please select a valid space."

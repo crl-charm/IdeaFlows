@@ -1,12 +1,13 @@
 from flask import Blueprint, render_template, session, redirect
 from app.utils.auth import login_required
+from app.models import SpaceType
 
 bp = Blueprint("dashboard", __name__)
 
 @bp.route("/dashboard")
 @login_required
 def dashboard():
-    return render_template("dashboard.html")
+    return render_template("dashboard.html", space_types=SpaceType.query.order_by(SpaceType.id).all())
 
 
 @bp.route("/checkout-records")
