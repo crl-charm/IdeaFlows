@@ -914,13 +914,64 @@
         window.setTimeout(function () { window.location.href = "/logout"; }, 700);
       });
       window.setInterval(function () {
-        if (document.hidden || !sessionSocket.connected) return;
+        if (!sessionSocket.connected) return;
         sessionSocket.emit("session_heartbeat", {}, function (reply) {
-          if (reply && reply.reason === "revoked") {
-            window.location.href = "/logout";
-          }
+          if (reply && reply.reason === "revoked") window.location.href = "/logout";
         });
       }, {{ (config.SESSION_HEARTBEAT_SECONDS * 1000) | tojson }});
+    }
+    {% endif %}
+
+    {% if session.get("user_id") %}
+    if (!window.__ideaFlowSessionTrackingStarted) {
+      window.__ideaFlowSessionTrackingStarted = true;
+      const activityIntervalMs = {{ (config.SESSION_HEARTBEAT_SECONDS * 1000) | tojson }};
+      const idleTimeoutMs = {{ (config.PERMANENT_SESSION_LIFETIME * 1000) | tojson }};
+      let lastActivitySentAt = 0;
+      let activityPending = false;
+      let idleTimer;
+
+      async function checkSession() {
+        try {
+          const response = await fetch("/api/session-status", { credentials: "include" });
+          if (response.status === 401) window.location.href = "/login";
+        } catch (_) { }
+      }
+
+      function scheduleIdleCheck() {
+        window.clearTimeout(idleTimer);
+        idleTimer = window.setTimeout(checkSession, idleTimeoutMs);
+      }
+
+      async function recordUserActivity() {
+        const now = Date.now();
+        if (activityPending || now - lastActivitySentAt < activityIntervalMs) return;
+        lastActivitySentAt = now;
+        activityPending = true;
+        try {
+          const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+          const response = await fetch("/api/session-activity", {
+            method: "POST",
+            headers: { "X-CSRFToken": token },
+            credentials: "include",
+            keepalive: true
+          });
+          if (response.status === 401) window.location.href = "/login";
+          else if (response.ok) scheduleIdleCheck();
+        } catch (_) { }
+        finally { activityPending = false; }
+      }
+
+      ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"].forEach(function (eventName) {
+        document.addEventListener(eventName, recordUserActivity, { passive: true });
+      });
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) checkSession();
+      });
+      window.setInterval(function () {
+        if (!document.hidden) checkSession();
+      }, activityIntervalMs);
+      scheduleIdleCheck();
     }
     {% endif %}
 

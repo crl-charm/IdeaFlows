@@ -23,6 +23,8 @@ def register_observability(app) -> None:
 
     @app.after_request
     def finish_request_metrics(response):
+        if not hasattr(g, "request_started_at"):
+            return response
         elapsed_ms = (time.perf_counter() - g.request_started_at) * 1000
         response.headers["X-Request-ID"] = g.request_id
         response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"

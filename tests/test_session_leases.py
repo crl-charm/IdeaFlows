@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import fnmatch
+import re
 from threading import Lock
+from time import time
 
 import pytest
 
-from app import create_app
+from app import create_app, db, socketio
 from app.core.session_leases import SessionLeaseService, SessionLeaseUnavailable
+from app.models import Admin, StaffAttendance
 
 
 @pytest.fixture
@@ -279,3 +283,127 @@ def test_admin_can_list_and_revoke_other_session_but_not_own(app, monkeypatch):
     revoked = admin_browser.delete("/api/admin/active-sessions/staff:8")
     assert revoked.status_code == 200
     assert lease_service.get("staff:8") is None
+
+
+def test_background_requests_do_not_keep_a_login_alive(app):
+    _enable_single_session(app)
+    browser = app.test_client()
+    assert _login(browser).status_code == 200
+    leases = app.extensions["session_leases"]
+    redis_client = leases._redis
+    socket_client = socketio.test_client(app, flask_test_client=browser)
+    assert socket_client.is_connected()
+
+    redis_client.advance(60)
+    assert browser.get("/api/session-status").status_code == 200
+    assert socket_client.emit("session_heartbeat", {}, callback=True) == {"ok": True}
+    redis_client.advance(61)
+    assert leases.get("staff:1") is None
+    assert browser.get("/api/session-status").status_code == 401
+
+    assert _login(browser).status_code == 200
+    redis_client.advance(60)
+    assert browser.post("/api/session-activity").status_code == 200
+    redis_client.advance(61)
+    assert leases.get("staff:1") is not None
+    assert browser.get("/api/session-status").status_code == 200
+
+
+def test_one_hour_idle_timeout_releases_lease_and_closes_attendance(app):
+    _enable_single_session(app)
+    app.config["PERMANENT_SESSION_LIFETIME"] = 60
+    browser = app.test_client()
+    assert _login(browser).status_code == 200
+    last_activity = datetime.now(timezone.utc) - timedelta(seconds=61)
+    with browser.session_transaction() as flask_session:
+        flask_session["last_activity"] = last_activity.timestamp()
+    with app.app_context():
+        attendance = StaffAttendance.query.filter_by(user_id=1).one()
+        attendance.time_in = last_activity.replace(tzinfo=None)
+        attendance.last_activity_at = attendance.time_in
+        db.session.commit()
+
+    assert browser.get("/api/session-status").status_code == 401
+    assert app.extensions["session_leases"].get("staff:1") is None
+    with app.app_context():
+        attendance = StaffAttendance.query.filter_by(user_id=1).one()
+        assert attendance.time_out == last_activity.replace(tzinfo=None) + timedelta(seconds=60)
+
+
+def test_staff_presence_and_active_sessions_use_the_same_lease(app):
+    _enable_single_session(app)
+    staff_browser = app.test_client()
+    assert _login(staff_browser).status_code == 200
+    leases = app.extensions["session_leases"]
+    admin_token = leases.acquire(
+        "admin:7", user_id=1, username="admin", role="admin",
+        ip_address="127.0.0.1", user_agent="admin-browser",
+    )
+    admin_browser = app.test_client()
+    with admin_browser.session_transaction() as flask_session:
+        flask_session.update({
+            "user_id": 1, "username": "admin", "role": "admin", "account_type": "admin",
+            "last_activity": time(), "login_lease_identity": "admin:7",
+            "login_lease_token": admin_token,
+        })
+
+    assert admin_browser.get("/api/admin/users").get_json()[0]["is_online"] is True
+    listed = admin_browser.get("/api/admin/active-sessions").get_json()["sessions"]
+    assert {row["identity"] for row in listed} == {"admin:7", "staff:1"}
+
+    leases._redis.advance(100)
+    assert leases.validate("admin:7", admin_token) is True
+    leases._redis.advance(21)
+    assert admin_browser.get("/api/admin/users").get_json()[0]["is_online"] is False
+    with app.app_context():
+        assert StaffAttendance.query.filter_by(user_id=1).one().time_out is not None
+
+
+def test_real_staff_and_admin_logins_both_appear_in_active_sessions(app):
+    _enable_single_session(app)
+    with app.app_context():
+        admin = Admin(full_name="Site Admin", username="site_admin")
+        admin.set_password("TestPassword123!")
+        db.session.add(admin)
+        db.session.commit()
+        admin_identity = f"admin:{admin.id}"
+
+    staff_browser = app.test_client()
+    admin_browser = app.test_client()
+    assert _login(staff_browser).status_code == 200
+    assert admin_browser.post(
+        "/api/login", json={"username": "site_admin", "password": "TestPassword123!"}
+    ).status_code == 200
+    listed = admin_browser.get("/api/admin/active-sessions").get_json()["sessions"]
+    assert {row["identity"] for row in listed} == {"staff:1", admin_identity}
+    assert admin_browser.delete("/api/admin/active-sessions/staff:1").status_code == 200
+    assert admin_browser.get("/api/admin/users").get_json()[0]["is_online"] is False
+    with app.app_context():
+        assert StaffAttendance.query.filter_by(user_id=1).one().time_out is not None
+
+
+def test_old_browser_logout_does_not_close_a_newer_staff_login(app):
+    _enable_single_session(app)
+    old_browser = app.test_client()
+    new_browser = app.test_client()
+    assert _login(old_browser).status_code == 200
+    app.extensions["session_leases"]._redis.advance(121)
+    assert _login(new_browser).status_code == 200
+    assert old_browser.get("/logout").status_code == 302
+    with app.app_context():
+        rows = StaffAttendance.query.filter_by(user_id=1).order_by(StaffAttendance.id).all()
+        assert len(rows) == 2
+        assert rows[0].time_out is not None
+        assert rows[1].time_out is None
+
+
+def test_activity_update_requires_the_page_csrf_token(app):
+    _enable_single_session(app)
+    app.config["WTF_CSRF_ENABLED"] = True
+    browser = app.test_client()
+    assert _login(browser).status_code == 200
+    page = browser.get("/dashboard")
+    token = re.search(rb'<meta name="csrf-token" content="([^"]+)"', page.data).group(1).decode()
+
+    assert browser.post("/api/session-activity").status_code == 400
+    assert browser.post("/api/session-activity", headers={"X-CSRFToken": token}).status_code == 200

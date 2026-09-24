@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
@@ -16,11 +18,35 @@ class AdminRepository:
             .paginate(page=page, per_page=per_page, error_out=False)
         )
 
-    def list_online_staff_ids(self) -> set[int]:
+    def list_online_staff_ids(self, idle_seconds: float) -> set[int]:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=idle_seconds)
         rows = StaffAttendance.query.with_entities(StaffAttendance.user_id).filter(
-            StaffAttendance.time_out.is_(None)
+            StaffAttendance.time_out.is_(None),
+            func.coalesce(StaffAttendance.last_activity_at, StaffAttendance.time_in) > cutoff,
         )
         return {row.user_id for row in rows.all()}
+
+    def close_inactive_staff_attendance(self, online_ids: set[int], idle_seconds: float) -> None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        changed = False
+        for row in StaffAttendance.query.filter(StaffAttendance.time_out.is_(None)).all():
+            if row.user_id in online_ids:
+                continue
+            row.time_out = min(now, row.last_activity_at + timedelta(seconds=idle_seconds)) if row.last_activity_at else now
+            changed = True
+        if changed:
+            db.session.commit()
+
+    def close_staff_attendance(self, user_id: int, ended_at: datetime) -> None:
+        rows = StaffAttendance.query.filter(
+            StaffAttendance.user_id == user_id,
+            StaffAttendance.time_out.is_(None),
+            StaffAttendance.time_in <= ended_at,
+        ).all()
+        for row in rows:
+            row.time_out = ended_at
+        if rows:
+            db.session.commit()
 
     def get_staff_user(self, user_id: int):
         return User.query.filter_by(id=user_id, role="staff").first()

@@ -75,6 +75,7 @@ def test_server_failure_releases_key_for_safe_retry(app, client):
 def test_every_business_write_route_has_idempotency_protection(app):
     excluded_endpoints = {
         "auth.login_api",
+        "auth.session_activity",
         "honeypot_trap",
         "decoy_wp-login_php",
         "decoy_wp-admin",

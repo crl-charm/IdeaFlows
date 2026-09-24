@@ -46,7 +46,7 @@ def handle_connect(auth=None):
             current_lease_is_valid,
         )
         try:
-            lease_valid = current_lease_is_valid(refresh=True)
+            lease_valid = current_lease_is_valid(refresh=False)
         except SessionLeaseUnavailable:
             lease_valid = False
 
@@ -83,12 +83,13 @@ def handle_connect(auth=None):
 
 @socketio.on("session_heartbeat")
 def handle_session_heartbeat(_payload=None):
-    """Refresh the active login lease while an authenticated page is open."""
+    """Check the active login lease without extending an idle session."""
     from app.core.session_leases import SessionLeaseUnavailable, current_lease_is_valid
 
     try:
-        valid = current_lease_is_valid(refresh=True)
+        valid = current_lease_is_valid(refresh=False)
     except SessionLeaseUnavailable:
+        disconnect()
         return {"ok": False, "reason": "unavailable"}
     if not valid:
         disconnect()

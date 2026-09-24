@@ -183,7 +183,7 @@ class Config:
     # Using 'None' would require Secure=True AND cross-site context — not needed here.
     SESSION_COOKIE_SAMESITE = 'Lax'
     SESSION_COOKIE_SECURE = os.environ.get('FLASK_ENV') == 'production'
-    PERMANENT_SESSION_LIFETIME = 7200  # 2 hours
+    PERMANENT_SESSION_LIFETIME = 3600  # One hour without user activity
 
     # Rate Limiting
     RATELIMIT_DEFAULT = os.environ.get("RATELIMIT_DEFAULT", "100 per minute")
@@ -207,7 +207,8 @@ class Config:
     SINGLE_SESSION_ENABLED = _env_bool(
         "SINGLE_SESSION_ENABLED", FLASK_ENV == "production"
     )
-    SESSION_LEASE_TTL_SECONDS = _env_int("SESSION_LEASE_TTL_SECONDS", 120, 60)
+    # The Redis lease and HTTP idle check must expire at the same deadline.
+    SESSION_LEASE_TTL_SECONDS = PERMANENT_SESSION_LIFETIME
     SESSION_HEARTBEAT_SECONDS = _env_int("SESSION_HEARTBEAT_SECONDS", 30, 15)
     if SESSION_HEARTBEAT_SECONDS >= SESSION_LEASE_TTL_SECONDS:
         raise RuntimeError(

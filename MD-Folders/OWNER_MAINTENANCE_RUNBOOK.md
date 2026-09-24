@@ -167,6 +167,30 @@ upload in transit, but this manual process does not add separate client-side
 encryption. Automatic scheduling, retention, alerting, and restore testing remain
 separate required improvements.
 
+### One-time operational data reset (keep accounts)
+
+Use only after deploying `app/db/reset_operational_data.py`. Schedule downtime,
+ask everyone to log out, stop the app, and complete the verified database backup
+above before executing the reset. Check that the preview names the expected
+production database (`pos_db`) and review every table count.
+
+```bash
+sudo systemctl stop ideahub
+# Complete and verify the backup steps above before continuing.
+cd /var/www/pos
+venv/bin/python -m app.db.reset_operational_data
+venv/bin/python -m app.db.reset_operational_data --execute --expect-database pos_db
+sudo systemctl start ideahub
+```
+
+The command deletes menu, inventory, orders, customer sessions, transactions,
+bookings, finance records, and staff attendance. It preserves the `admins` and
+`users` tables, then recreates default spaces, categories, and an empty budget.
+Analytics will be empty because their source records are deleted. Menu images
+stored in Cloudflare R2 or local uploads are separate and are not removed by
+this database reset. If the preview reports an unreviewed or missing table, stop
+and inspect the production schema before running `--execute`.
+
 ## 5. Weekly checks (about 10 minutes)
 
 - [ ] Confirm the latest Hostinger weekly backup completed and note its date.

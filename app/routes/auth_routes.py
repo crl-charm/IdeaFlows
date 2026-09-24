@@ -3,9 +3,10 @@ from app.models import Admin, User, StaffAttendance
 from app import db, limiter, csrf
 from app.core.bot_defense import get_login_rate_limit_key
 from app.core.turnstile import verify_turnstile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
-from app.core.session_leases import SessionLeaseUnavailable
+from app.core.session_leases import SessionLeaseUnavailable, current_lease_is_valid
+from app.utils.auth import end_login_session, login_required, session_idle_deadline
 from app.core.socketio_handlers import (
     emit_login_attempt_blocked,
     emit_staff_status_change,
@@ -185,6 +186,8 @@ def login_api():
             session["account_type"] = account_type
             session["role"] = login_role
             session["job_role"] = "admin" if account_type == "admin" else account.job_role
+            now = datetime.now(timezone.utc)
+            session["last_activity"] = now.timestamp()
             if acquired_token:
                 session["login_lease_identity"] = acquired_identity
                 session["login_lease_token"] = acquired_token
@@ -192,11 +195,15 @@ def login_api():
             if account_type == "staff":
                 # Close stale open sessions for this user
                 open_sessions = StaffAttendance.query.filter_by(user_id=account.id, time_out=None).all()
+                idle_seconds = current_app.config["PERMANENT_SESSION_LIFETIME"]
+                if hasattr(idle_seconds, "total_seconds"):
+                    idle_seconds = idle_seconds.total_seconds()
+                now_utc = now.replace(tzinfo=None)
                 for obs in open_sessions:
-                    obs.time_out = datetime.utcnow()
+                    obs.time_out = min(now_utc, obs.last_activity_at + timedelta(seconds=idle_seconds)) if obs.last_activity_at else now_utc
 
                 # Log attendance
-                attendance = StaffAttendance(user_id=account.id, time_in=datetime.utcnow())
+                attendance = StaffAttendance(user_id=account.id, time_in=now_utc, last_activity_at=now_utc)
                 db.session.add(attendance)
                 db.session.commit()
                 session["attendance_id"] = attendance.id
@@ -228,49 +235,39 @@ def login_api():
         return jsonify({"error": "Login failed"}), 500
 
 
+@bp.route("/api/session-status")
+@login_required
+def session_status():
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/session-activity", methods=["POST"])
+@login_required
+def session_activity():
+    """Extend the idle deadline only after browser user input."""
+    now = datetime.now(timezone.utc)
+    if session.get("account_type") == "staff" and session.get("attendance_id"):
+        attendance = db.session.get(StaffAttendance, session["attendance_id"])
+        if attendance and attendance.user_id == session.get("user_id") and attendance.time_out is None:
+            attendance.last_activity_at = now.replace(tzinfo=None)
+            db.session.commit()
+
+    if current_app.config.get("SINGLE_SESSION_ENABLED"):
+        try:
+            if not current_lease_is_valid(refresh=True):
+                end_login_session()
+                return jsonify({"error": "Session expired or was signed out"}), 401
+        except SessionLeaseUnavailable:
+            return jsonify({"error": "Authentication service temporarily unavailable"}), 503
+
+    session["last_activity"] = now.timestamp()
+    return jsonify({"ok": True})
+
+
 @bp.route("/logout")
 def logout():
     """Secure logout with session cleanup"""
-    try:
-        account_type = session.get("account_type")
-        user_id = session.get("user_id")
-        attendance_id = session.get("attendance_id")
-
-        if current_app.config.get("SINGLE_SESSION_ENABLED"):
-            try:
-                current_app.extensions["session_leases"].release(
-                    session.get("login_lease_identity", ""),
-                    session.get("login_lease_token", ""),
-                )
-            except SessionLeaseUnavailable:
-                security_logger.warning(
-                    "Could not release login lease during logout for %s",
-                    session.get("username", "unknown"),
-                )
-
-        if account_type == "staff":
-            if attendance_id:
-                attendance = StaffAttendance.query.get(attendance_id)
-                if attendance and attendance.time_out is None:
-                    attendance.time_out = datetime.utcnow()
-                    db.session.commit()
-
-            # Close all stale open sessions for this staff user
-            if user_id:
-                open_sessions = StaffAttendance.query.filter_by(user_id=user_id, time_out=None).all()
-                for obs in open_sessions:
-                    obs.time_out = datetime.utcnow()
-                db.session.commit()
-
-                # Emit real-time status update
-                emit_staff_status_change(user_id, "offline")
-
-        username = session.get("username", "unknown")
-        security_logger.info(f"Logout: {username} from {request.remote_addr}")
-        session.clear()
-        session.modified = True
-        return redirect("/login")
-    except Exception as e:
-        security_logger.error(f"Logout error: {str(e)}")
-        session.clear()
-        return redirect("/login")
+    username = session.get("username", "unknown")
+    end_login_session(ended_at=session_idle_deadline())
+    security_logger.info("Logout: %s from %s", username, request.remote_addr)
+    return redirect("/login")

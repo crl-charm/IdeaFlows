@@ -1,5 +1,7 @@
 # Add these routes to your auth_routes.py or a new admin_routes.py
 
+from datetime import datetime, timezone
+
 from flask import Blueprint, current_app, render_template, request, jsonify, session, redirect
 from app.repositories.admin_repository import AdminRepository
 from app.services.admin_service import AdminService
@@ -58,7 +60,10 @@ def admin_page():
 def get_all_users():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
-    return jsonify(_service.list_users(page=page, per_page=per_page))
+    try:
+        return jsonify(_service.list_users(page=page, per_page=per_page))
+    except SessionLeaseUnavailable:
+        return jsonify({"error": "Session registry temporarily unavailable"}), 503
 
 
 @admin_bp.route("/api/admin/active-sessions", methods=["GET"])
@@ -69,6 +74,7 @@ def get_active_sessions():
         return jsonify({"enabled": False, "sessions": []})
     try:
         active = current_app.extensions["session_leases"].list_active()
+        _service.active_staff_ids(active)
     except SessionLeaseUnavailable:
         return jsonify({"error": "Session registry temporarily unavailable"}), 503
     return jsonify({
@@ -96,13 +102,16 @@ def revoke_active_session(identity):
         active = lease_service.get(identity)
         if not active:
             return jsonify({"error": "Session is no longer active"}), 404
-        emit_session_revoked(int(active["user_id"]))
+        revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
         revoked = lease_service.revoke(identity)
     except (SessionLeaseUnavailable, KeyError, TypeError, ValueError):
         return jsonify({"error": "Session registry temporarily unavailable"}), 503
 
     if not revoked:
         return jsonify({"error": "Session is no longer active"}), 404
+    if identity.startswith("staff:"):
+        _service.repo.close_staff_attendance(int(active["user_id"]), revoked_at)
+    emit_session_revoked(int(active["user_id"]))
     logging.getLogger("security").warning(
         "Admin %s revoked active session %s from %s",
         session.get("username"),
@@ -163,7 +172,10 @@ def get_customer_count():
 @login_required
 @admin_required
 def get_staff_attendance():
-    return jsonify(_service.staff_attendance())
+    try:
+        return jsonify(_service.staff_attendance())
+    except SessionLeaseUnavailable:
+        return jsonify({"error": "Session registry temporarily unavailable"}), 503
 
 
 # ── Space Capacity ──────────────────────────────────────────────────────────

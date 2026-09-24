@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from time import time
 
 from app import create_app
 
@@ -27,7 +28,7 @@ def _set_session(client, role: str, user_id: int = 1):
         sess["user_id"] = user_id
         sess["username"] = f"test_{role}"
         sess["role"] = role
-        sess["last_activity"] = __import__("datetime").datetime.utcnow().timestamp()
+        sess["last_activity"] = time()
 
 
 class TestAdminRBAC:

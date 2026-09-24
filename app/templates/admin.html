@@ -801,10 +801,10 @@
 {% block scripts %}
 <script>
 
-  async function loadActiveSessions() {
+  async function loadActiveSessions(showLoading = true) {
     const body = document.getElementById("active-sessions-body");
     if (!body) return;
-    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Loading active sessions...</td></tr>';
+    if (showLoading) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Loading active sessions...</td></tr>';
     try {
       const response = await fetch("/api/admin/active-sessions", { credentials: "include" });
       const payload = await response.json();
@@ -1381,6 +1381,11 @@
   loadCapacity();
   loadSpacePrices();
   window.createSmartPoller(loadUsers, 30000, { runImmediately: false });
+  window.createSmartPoller(function () {
+    if (document.getElementById("activeSessionsModal")?.classList.contains("show")) {
+      return loadActiveSessions(false);
+    }
+  }, 30000, { runImmediately: false });
   window.createSmartPoller(loadStaffAnalytics, 60000, { runImmediately: false });
   window.createSmartPoller(loadCapacity, 60000, { runImmediately: false });
   window.createSmartPoller(loadSpacePrices, 120000, { runImmediately: false });
@@ -1390,6 +1395,9 @@
   const refreshStaffStatus = window.createDebouncedRefresh(function () {
     loadUsers();
     loadStaffAnalytics();
+    if (document.getElementById("activeSessionsModal")?.classList.contains("show")) {
+      loadActiveSessions(false);
+    }
 
     // Reload the attendance records in-place if the modal is currently open!
     const modalEl = document.getElementById("staffAttendanceModal");

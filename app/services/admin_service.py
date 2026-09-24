@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from flask import current_app
+
 from app.dto.serializers import serialize_user
 from app.models import Admin, User
 from app.repositories.admin_repository import AdminRepository
@@ -50,11 +52,22 @@ class AdminService:
 
     def list_users(self, page: int, per_page: int):
         pagination = self.repo.list_staff_paginated(page, per_page)
-        online_user_ids = self.repo.list_online_staff_ids()
+        online_user_ids = self.active_staff_ids()
         return [
             {**serialize_user(u), "is_online": u.id in online_user_ids}
             for u in pagination.items
         ]
+
+    def active_staff_ids(self, leases=None) -> set[int]:
+        lifetime = current_app.config["PERMANENT_SESSION_LIFETIME"]
+        idle_seconds = lifetime.total_seconds() if hasattr(lifetime, "total_seconds") else float(lifetime)
+        if current_app.config.get("SINGLE_SESSION_ENABLED"):
+            active = leases if leases is not None else current_app.extensions["session_leases"].list_active()
+            online_ids = {int(row["user_id"]) for row in active if row.get("identity", "").startswith("staff:")}
+        else:
+            online_ids = self.repo.list_online_staff_ids(idle_seconds)
+        self.repo.close_inactive_staff_attendance(online_ids, idle_seconds)
+        return online_ids
 
     def edit_user(self, user_id: int, data: dict[str, Any]):
         user = self.repo.get_staff_user(user_id)
@@ -128,6 +141,7 @@ class AdminService:
         return data
 
     def staff_attendance(self):
+        self.active_staff_ids()
         logs = self.repo.list_staff_attendance()
         return [
             {

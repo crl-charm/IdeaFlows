@@ -87,7 +87,7 @@ Blueprints in `app/__init__.py` are organized logically into functional domain m
 ### Session Hygiene
 - `SESSION_COOKIE_HTTPONLY = True` prevents JavaScript cookie access.
 - `SESSION_COOKIE_SAMESITE = 'Lax'` mitigates cross-site request forgery.
-- `PERMANENT_SESSION_LIFETIME = 7200` (2 hours) automatically invalidates inactive sessions.
+- `PERMANENT_SESSION_LIFETIME = 3600` (1 hour) invalidates sessions without user activity.
 
 ### Input Sanitization & XSS Defense
 - **Server-Side**: String inputs are sanitized via `sanitize_input()` in `app/utils/auth.py` to strip/escape dangerous HTML tags.

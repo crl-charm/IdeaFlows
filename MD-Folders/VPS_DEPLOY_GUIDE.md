@@ -317,14 +317,17 @@ sudo -u ideahub git pull
 # Install any new Python dependencies
 sudo -u ideahub .venv/bin/pip install -r requirements.txt
 
-# Restart the service (migrations run automatically on startup)
+# Apply schema updates before restart (setup.sh disables startup migration)
+sudo -u ideahub .venv/bin/python -m app.db.run_migrations
+
+# Restart the service
 systemctl restart ideahub
 
 # Verify it's running
 systemctl status ideahub
 ```
 
-> **Note:** The app runs `SchemaMigrator` on startup, so new database columns/tables are applied automatically.
+> **Note:** The standard setup sets `AUTO_MIGRATE_ON_STARTUP=false`. Run the migration command after pulling a release that changes the database schema.
 
 ---
 
