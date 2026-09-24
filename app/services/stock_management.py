@@ -38,7 +38,31 @@ def change_stock(menu_id, data, actor, key, *, admin=False, commit=True):
     action = data.get("action")
     reason = str(data.get("reason") or "").strip()
     row = availability.stock.get(menu_id)
-    if action == "setup":
+    if action == "servings":
+        mode = availability.mode(item)
+        if mode not in {"prepared", "recipe", "untracked"}:
+            raise StockError("This item is counted in pieces, not servings.", "INVALID_MODE", 400)
+        quantity = whole_quantity(data.get("quantity"), allow_zero=True)
+        if row is None:
+            row = InventoryItem(menu_item_id=menu_id, stock_qty=0, unit="servings")
+            db.session.add(row)
+            db.session.flush()
+        if row.unit != "servings" and OrderInventoryAllocation.query.filter_by(inventory_item_id=row.id).first():
+            raise StockError("This stock has previous sales in another unit. Ask the owner to reconcile it.", "UNIT_HISTORY_CONFLICT")
+        previous = row.stock_qty
+        result = db.session.execute(update(InventoryItem).where(
+            InventoryItem.id == row.id, InventoryItem.stock_qty == previous
+        ).values(stock_qty=quantity, unit="servings"), execution_options={"synchronize_session": False})
+        if result.rowcount != 1:
+            raise StockError("The serving count changed. Refresh and try again.")
+        if mode == "untracked":
+            item.inventory_mode = "prepared"
+        elif item.inventory_mode is None:
+            item.inventory_mode = mode
+        db.session.add(InventoryLog(inventory_item_id=row.id, change_qty=Decimal(quantity) - previous,
+            reason="Manual serving estimate", changed_by=actor))
+        record_action(item, "servings", quantity, "Manual serving estimate", actor, key)
+    elif action == "setup":
         if not admin:
             raise StockError("Only the owner can change stock setup.", "FORBIDDEN", 403)
         mode = data.get("inventory_mode")
@@ -46,10 +70,10 @@ def change_stock(menu_id, data, actor, key, *, admin=False, commit=True):
             raise StockError("Choose how to count this item.", "INVALID_MODE", 400)
         if not reason:
             raise StockError("Enter a reason for the setup change.", "REASON_REQUIRED", 400)
-        if mode in {"prepared", "direct"}:
+        if mode in {"prepared", "direct", "recipe"}:
             quantity = whole_quantity(data.get("quantity"), allow_zero=True)
             threshold = whole_quantity(data.get("threshold", 3), allow_zero=True)
-            unit = "servings" if mode == "prepared" else "pieces"
+            unit = "pieces" if mode == "direct" else "servings"
             if row is None:
                 row = InventoryItem(menu_item_id=menu_id, stock_qty=0, unit=unit)
                 db.session.add(row)

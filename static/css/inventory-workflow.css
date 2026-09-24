@@ -5,13 +5,9 @@
 .inventory-state.disabled {background:#eef0f2;color:#59616c}
 .inventory-actions button {min-height:40px}
 .inventory-actions button:focus-visible,summary:focus-visible {outline:3px solid #d5a724;outline-offset:3px}
-#stock-dialog {width:min(94vw,480px);max-height:90vh;overflow:auto;border:1px solid #e6e9e5;border-radius:18px;padding:1.5rem;box-shadow:0 24px 80px #172d3540;color:#25322e}
-#stock-dialog::backdrop {background:#172d3566}
-#stock-dialog .form-control,#stock-dialog .form-select {min-height:44px}
+#stock-dialog,#servings-dialog {width:min(94vw,480px);max-height:90vh;overflow:auto;border:1px solid #e6e9e5;border-radius:18px;padding:1.5rem;box-shadow:0 24px 80px #172d3540;color:#25322e}
+#stock-dialog::backdrop,#servings-dialog::backdrop {background:#172d3566}
+#stock-dialog .form-control,#stock-dialog .form-select,#servings-dialog .form-control,#servings-dialog .form-select {min-height:44px}
 .stock-history summary {cursor:pointer;min-height:32px}
 .inventory-advanced {margin-top:1rem;font-size:.8rem;color:#667069}
-.kitchen-stock-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem}
-.kitchen-stock-card {padding:1.2rem;border:1px solid #e3e8e3;border-radius:14px;background:#fff;box-shadow:0 8px 22px #172d3510}
-.kitchen-stock-card h3 {font-size:1.05rem;font-weight:700;margin:0}
-.kitchen-stock-card .inventory-actions {margin-top:1rem}
-@media(max-width:575px){#stock-dialog{padding:1.1rem}.inventory-count{font-size:1.3rem}.inventory-actions{gap:.4rem}}
+@media(max-width:575px){#stock-dialog,#servings-dialog{padding:1.1rem}.inventory-count{font-size:1.3rem}.inventory-actions{gap:.4rem}}

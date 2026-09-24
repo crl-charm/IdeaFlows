@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from math import ceil
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import selectinload
 
 from app import db
@@ -57,6 +58,22 @@ class SessionRepository:
     def get_space_type(self, space_type_id: int) -> Optional[SpaceType]:
         return SpaceType.query.get(space_type_id)
 
+    def blocking_booking_at(self, local_now: datetime, *, whole_hub_only: bool = False) -> Optional[BoardroomBooking]:
+        query = BoardroomBooking.query.filter(
+            or_(
+                BoardroomBooking.status == "active",
+                and_(
+                    BoardroomBooking.status == "booked",
+                    BoardroomBooking.date == local_now.date(),
+                    BoardroomBooking.start_time <= local_now.time(),
+                    BoardroomBooking.end_time > local_now.time(),
+                ),
+            ),
+        )
+        if whole_hub_only:
+            query = query.filter(BoardroomBooking.booking_type == "whole_hub")
+        return query.first()
+
     def add_session(self, sess: CustomerSession) -> None:
         db.session.add(sess)
         db.session.commit()
@@ -71,6 +88,10 @@ class SessionRepository:
             return
         linked.status = "completed"
         linked.ended_at = time_out_utc
+        if linked.expected_end_at:
+            extra_seconds = (time_out_utc + timedelta(hours=8) - linked.expected_end_at).total_seconds() - 600
+            if extra_seconds > 0:
+                linked.extended_minutes = (linked.extended_minutes or 0) + ceil(extra_seconds / 60)
 
     def create_transaction(self, tx: Transaction) -> None:
         db.session.add(tx)
@@ -87,6 +108,10 @@ class SessionRepository:
             .scalar()
         ) or 0
         return float(total)
+
+    def get_order_item_for_session(self, session_id: int, item_id: int) -> Optional[OrderItem]:
+        return (OrderItem.query.join(Order, OrderItem.order_id == Order.id)
+                .filter(Order.customer_session_id == session_id, OrderItem.id == item_id).first())
 
     def list_transactions(self) -> list[Transaction]:
         return (

@@ -60,6 +60,7 @@ def test_menu_setup_and_inventory_dashboard_share_availability(app):
 
 def test_menu_create_mode_and_stock_are_atomic(app, client):
     from app.models.menu_category import MenuCategory
+    from app.services.menu_availability import MenuAvailability
     with app.app_context():
         owner = User(full_name="Owner Test", username="owner_menu_setup", role="admin",
                      job_role="admin", is_active=True, password="not-used")
@@ -71,8 +72,11 @@ def test_menu_create_mode_and_stock_are_atomic(app, client):
         "price": "80", "inventory_mode": "prepared", "stock_quantity": "5", "stock_threshold": "2"})
     bad = client.post("/admin/menu/api/items", data={"name": "Bad Count Meal", "category": "Main Dish",
         "price": "80", "inventory_mode": "prepared", "stock_quantity": "1.5"})
+    plain = client.post("/admin/menu/api/items", data={"name": "Plain Meal", "category": "Main Dish",
+        "price": "70"})
     assert good.status_code == 201, good.get_json()
     assert bad.status_code == 400
+    assert plain.status_code == 201, plain.get_json()
     changed = client.patch(f"/admin/menu/api/items/{good.get_json()['data']['id']}", data={
         "inventory_mode": "direct", "stock_quantity": "3", "stock_threshold": "1"})
     assert changed.status_code == 200, changed.get_json()
@@ -82,11 +86,16 @@ def test_menu_create_mode_and_stock_are_atomic(app, client):
         stock = InventoryItem.query.filter_by(menu_item_id=good_item.id).one()
         assert (stock.stock_qty, stock.unit) == (3, "pieces")
         assert MenuItem.query.filter_by(name="Bad Count Meal").first() is None
+        plain_meal = db.session.get(MenuItem, plain.get_json()["data"]["id"])
+        assert plain_meal.inventory_mode == "prepared"
+        assert MenuAvailability([plain_meal.id]).snapshot(plain_meal)["availability_message"] == "Sold out"
 
 
-def test_typed_menu_recipe_creates_shared_raw_stock_and_deducts_orders(app, client):
+def test_typed_menu_recipe_uses_manual_servings_without_deducting_raw_stock(app, client):
     from app.models.menu_category import MenuCategory
+    from app.models.inventory import OrderInventoryAllocation
     from app.services.menu_availability import MenuAvailability
+
     with app.app_context():
         owner = User(full_name="Recipe Owner", username="recipe_owner", role="admin",
                      job_role="admin", is_active=True, password="not-used")
@@ -94,16 +103,11 @@ def test_typed_menu_recipe_creates_shared_raw_stock_and_deducts_orders(app, clie
         db.session.commit()
         owner_id = owner.id
     _set_auth_session(client, "admin", owner_id)
-    menu_page = client.get("/admin/menu")
-    assert menu_page.status_code == 200
-    assert menu_page.get_data(as_text=True).count("+ Add Ingredient") == 2
     ingredients = [
         {"name": "Corned beef", "quantity": "30", "unit": "grams"},
         {"name": "Egg", "quantity": "1", "unit": "pieces"},
         {"name": "Rice", "quantity": "30", "unit": "grams"},
         {"name": "Cucumber slices", "quantity": "3", "unit": "pieces"},
-        {"name": "Salt", "quantity": "1", "unit": "grams"},
-        {"name": "Pepper", "quantity": "1", "unit": "grams"},
     ]
     created = client.post("/admin/menu/api/items", data={"name": "Corned Beef Silog",
         "price": "120", "category": "Main Dish", "recipe_ingredients": json.dumps(ingredients)})
@@ -111,59 +115,107 @@ def test_typed_menu_recipe_creates_shared_raw_stock_and_deducts_orders(app, clie
     meal_id = created.get_json()["data"]["id"]
     with app.app_context():
         meal = db.session.get(MenuItem, meal_id)
-        assert meal.inventory_mode == "recipe" and len(meal.ingredients) == 6
-        assert MenuAvailability([meal_id]).snapshot(meal)["can_order"] is False
-        stock = {row.menu_item.name: row for row in InventoryItem.query.all()}
-        stock_ids = {name: row.id for name, row in stock.items()}
-        rice_menu_id = stock["Rice"].menu_item_id
-        assert all(row.stock_qty == 0 for row in stock.values())
-        for name, amount in {"Corned beef": 120, "Egg": 24, "Rice": 120,
-                             "Cucumber slices": 30, "Salt": 99, "Pepper": 99}.items():
-            stock[name].stock_qty = amount
+        assert meal.inventory_mode == "recipe" and len(meal.ingredients) == 4
+        assert MenuAvailability([meal_id]).snapshot(meal)["availability_message"] == "Sold out"
+        meal_stock = InventoryItem.query.filter_by(menu_item_id=meal_id).one()
+        assert meal_stock.stock_qty == 0 and meal_stock.unit == "servings"
+        raw_stock = {row.menu_item.name: row for row in InventoryItem.query.all()
+                     if row.menu_item.category == "ingredient"}
+        for name, amount in {"Corned beef": 120, "Egg": 24, "Rice": 120, "Cucumber slices": 30}.items():
+            raw_stock[name].stock_qty = amount
         customer = CustomerSession(customer_name="Recipe test", space_type_id=1,
                                    number_of_people=1, status="active")
         db.session.add(customer)
         db.session.commit()
         customer_id = customer.id
+        meal_stock_id = meal_stock.id
+        raw_ids = {name: row.id for name, row in raw_stock.items()}
+        # Raw stock does not calculate the serving count.
+        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 0
+    set_count = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+        json={"action": "servings", "quantity": 4}, headers={"Idempotency-Key": "recipe-servings-first"})
+    assert set_count.status_code == 200, set_count.get_json()
+    with app.app_context():
+        meal = db.session.get(MenuItem, meal_id)
         assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 4
         placed = OrderService(OrderRepository(), get_notifier()).add_order(
             session_id=customer_id, items=[{"menu_item_id": meal_id, "quantity": 1}], handled_by=owner_id)
         assert not isinstance(placed, tuple), placed
-        assert {name: InventoryItem.query.filter_by(id=row.id).one().stock_qty for name, row in stock.items()} == {
-            "Corned beef": 90, "Egg": 23, "Rice": 90, "Cucumber slices": 27, "Salt": 98, "Pepper": 98}
-        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 3
-        before_orders = Order.query.count()
+        assert InventoryItem.query.filter_by(menu_item_id=meal_id).one().stock_qty == 3
+        assert {name: InventoryItem.query.filter_by(id=row_id).one().stock_qty
+                for name, row_id in raw_ids.items()} == {
+                    "Corned beef": 120, "Egg": 24, "Rice": 120, "Cucumber slices": 30}
+        allocation = OrderInventoryAllocation.query.filter_by(order_id=placed["order_id"]).one()
+        assert allocation.inventory_item_id == meal_stock_id and allocation.quantity_deducted == 1
         too_many = OrderService(OrderRepository(), get_notifier()).add_order(
             session_id=customer_id, items=[{"menu_item_id": meal_id, "quantity": 4}], handled_by=owner_id)
         assert isinstance(too_many, tuple) and too_many[1] == 409
-        assert "Corned beef" in too_many[0]["message"]
-        assert Order.query.count() == before_orders
-        assert InventoryItem.query.filter_by(id=stock["Rice"].id).one().stock_qty == 90
-    shared = client.post("/admin/menu/api/items", data={"name": "Rice Plate", "price": "80",
-        "category": "Main Dish", "recipe_ingredients": json.dumps([
-            {"name": " rice ", "quantity": "30", "unit": "grams"}])})
-    assert shared.status_code == 201, shared.get_json()
-    ingredients[0]["quantity"] = "40"
-    edited = client.patch(f"/admin/menu/api/items/{meal_id}", data={
-        "recipe_ingredients": json.dumps(ingredients)})
-    assert edited.status_code == 200, edited.get_json()
-    with app.app_context():
-        from app.models.inventory import OrderInventoryAllocation
-        assert MenuItem.query.filter(db.func.lower(MenuItem.name) == "rice").count() == 1
-        second = db.session.get(MenuItem, shared.get_json()["data"]["id"])
-        assert second.ingredients[0].ingredient_item_id == rice_menu_id
-        assert MenuAvailability([second.id]).snapshot(second)["available_quantity"] == 3
-        assert MenuAvailability([meal_id]).snapshot(db.session.get(MenuItem, meal_id))["available_quantity"] == 2
         order_item = db.session.get(Order, placed["order_id"]).items[0]
-        old_corn_beef = OrderInventoryAllocation.query.filter_by(
-            order_item_id=order_item.id, inventory_item_id=stock_ids["Corned beef"]).one()
-        assert old_corn_beef.quantity_deducted == 30
-        service = OrderService(OrderRepository(), get_notifier())
-        returned = service.void_item(order_item.id, request_key="typed-recipe-void")
-        repeated = service.void_item(order_item.id, request_key="typed-recipe-void")
-        assert returned["message"].endswith("Stock returned.") and repeated["duplicate"] is True
-        assert InventoryItem.query.filter_by(id=stock_ids["Rice"]).one().stock_qty == 120
-        assert InventoryItem.query.filter_by(id=stock_ids["Corned beef"]).one().stock_qty == 120
+        returned = OrderService(OrderRepository(), get_notifier()).void_item(
+            order_item.id, request_key="recipe-serving-void")
+        assert returned["message"].endswith("Stock returned.")
+        assert InventoryItem.query.filter_by(menu_item_id=meal_id).one().stock_qty == 4
+        assert InventoryItem.query.filter_by(id=raw_ids["Rice"]).one().stock_qty == 120
+
+
+def test_cook_sets_servings_and_updates_raw_stock_independently(app, client):
+    from app.services.menu_availability import MenuAvailability
+
+    with app.app_context():
+        cook = User(full_name="Cook", username="servings_cook", role="staff",
+                    job_role="cook", is_active=True, password="not-used")
+        cashier = User(full_name="Cashier", username="servings_cashier", role="staff",
+                       job_role="cashier", is_active=True, password="not-used")
+        db.session.add_all([cook, cashier])
+        db.session.commit()
+        meal_id = MenuService(MenuRepository()).create("Rice Bowl", 80, "Main Dish",
+            recipe_ingredients=[{"name": "Rice", "quantity": "30", "unit": "grams"}])["data"]["id"]
+        ingredient_id = db.session.get(MenuItem, meal_id).ingredients[0].ingredient_item_id
+        cook_id, cashier_id = cook.id, cashier.id
+
+    _set_auth_session(client, "staff", cook_id)
+    page = client.get("/inventory")
+    assert page.status_code == 200
+    assert 'id="raw-stock-form"' in page.get_data(as_text=True)
+    set_count = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+        json={"action": "servings", "quantity": 12}, headers={"Idempotency-Key": "cook-count-12"})
+    assert set_count.status_code == 200, set_count.get_json()
+    raw_count = client.patch(f"/inventory/api/ingredients/{ingredient_id}/stock",
+        json={"quantity": "120.50"}, headers={"Idempotency-Key": "cook-raw-120"})
+    assert raw_count.status_code == 200, raw_count.get_json()
+    bad_raw = client.patch(f"/inventory/api/ingredients/{ingredient_id}/stock",
+        json={"quantity": "1.555"}, headers={"Idempotency-Key": "cook-raw-invalid"})
+    assert bad_raw.status_code == 400
+    menu_item = next(item for item in client.get("/menu-view/api/items").get_json()["data"] if item["id"] == meal_id)
+    assert menu_item["availability_message"] == "12 servings left" and menu_item["is_available"] is True
+    pos_item = next(item for item in client.get("/api/menu").get_json() if item["id"] == meal_id)
+    assert pos_item["available_quantity"] == 12 and pos_item["can_order"] is True
+    with app.app_context():
+        meal = db.session.get(MenuItem, meal_id)
+        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 12
+        assert InventoryItem.query.filter_by(menu_item_id=ingredient_id).one().stock_qty == Decimal("120.50")
+
+    zero = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+        json={"action": "servings", "quantity": 0}, headers={"Idempotency-Key": "cook-count-zero"})
+    assert zero.status_code == 200
+    menu_item = next(item for item in client.get("/menu-view/api/items").get_json()["data"] if item["id"] == meal_id)
+    assert menu_item["availability_message"] == "Sold out" and menu_item["is_available"] is False
+    assert "Sold out" in client.get("/menu-view").get_data(as_text=True)
+    pos_item = next(item for item in client.get("/api/menu").get_json() if item["id"] == meal_id)
+    assert pos_item["availability_message"] == "Sold out" and pos_item["can_order"] is False
+    with app.app_context():
+        assert MenuAvailability([meal_id]).snapshot(db.session.get(MenuItem, meal_id))["availability_message"] == "Sold out"
+        assert InventoryItem.query.filter_by(menu_item_id=ingredient_id).one().stock_qty == Decimal("120.50")
+    bad = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+        json={"action": "servings", "quantity": "1.5"}, headers={"Idempotency-Key": "cook-bad-count"})
+    assert bad.status_code == 400
+    _set_auth_session(client, "staff", cashier_id)
+    denied = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+        json={"action": "servings", "quantity": 5}, headers={"Idempotency-Key": "cashier-count"})
+    assert denied.status_code == 403
+    denied_raw = client.patch(f"/inventory/api/ingredients/{ingredient_id}/stock",
+        json={"quantity": 5}, headers={"Idempotency-Key": "cashier-raw-count"})
+    assert denied_raw.status_code == 403
 
 
 def test_typed_recipe_edit_and_invalid_save_are_atomic(app, client):
@@ -204,7 +256,7 @@ def test_typed_recipe_edit_and_invalid_save_are_atomic(app, client):
         assert InventoryItem.query.filter_by(menu_item_id=meal.ingredients[0].ingredient_item_id).one().stock_qty == 0
 
 
-def test_typed_recipe_switch_requires_confirmation_and_keeps_old_count(app, client):
+def test_typed_recipe_reference_keeps_old_serving_count(app, client):
     from app.models.menu_category import MenuCategory
     from app.services.menu_availability import MenuAvailability
     with app.app_context():
@@ -217,20 +269,18 @@ def test_typed_recipe_switch_requires_confirmation_and_keeps_old_count(app, clie
             inventory_mode="prepared", stock_quantity=5)["data"]["id"]
     _set_auth_session(client, "admin", owner_id)
     data = {"recipe_ingredients": json.dumps([{"name": "Egg", "quantity": "1", "unit": "pieces"}])}
-    refused = client.patch(f"/admin/menu/api/items/{meal_id}", data=data)
-    assert refused.status_code == 400
-    accepted = client.patch(f"/admin/menu/api/items/{meal_id}", data={**data, "confirm_recipe_switch": "true"})
+    accepted = client.patch(f"/admin/menu/api/items/{meal_id}", data=data)
     assert accepted.status_code == 200, accepted.get_json()
     with app.app_context():
         meal = db.session.get(MenuItem, meal_id)
-        assert meal.inventory_mode == "recipe"
+        assert meal.inventory_mode == "prepared"
         assert InventoryItem.query.filter_by(menu_item_id=meal_id).one().stock_qty == 5
-        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 0
+        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 5
     removed = client.patch(f"/admin/menu/api/items/{meal_id}", data={"recipe_ingredients": "[]"})
     assert removed.status_code == 200, removed.get_json()
     with app.app_context():
         meal = db.session.get(MenuItem, meal_id)
-        assert meal.inventory_mode == "untracked" and not meal.ingredients
+        assert meal.inventory_mode == "prepared" and not meal.ingredients
         assert InventoryItem.query.filter_by(menu_item_id=meal_id).one().stock_qty == 5
 
 
@@ -247,7 +297,7 @@ def test_typed_recipe_converts_grams_to_existing_kilogram_stock(app):
         meal = db.session.get(MenuItem, meal_id)
         assert meal.ingredients[0].ingredient_item_id == rice.id
         assert meal.ingredients[0].conversion_ratio == Decimal("0.0010")
-        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 133
+        assert MenuAvailability([meal_id]).snapshot(meal)["available_quantity"] == 0
 
 
 def test_prepared_void_returns_one_serving_once(app):
@@ -374,7 +424,7 @@ class TestStockStatus:
 
 
 class TestRecipeCapacity:
-    def _setup_meal_with_ingredient(self, stock_qty="10.00", threshold=5):
+    def _setup_meal_with_ingredient(self, stock_qty="10.00", servings="5", threshold=5):
         meal = MenuItem(name="Test Meal", price=Decimal("100"), category="Main", is_available=True)
         ing = MenuItem(name="Test Ing", price=Decimal("0"), category="Ingredient", is_available=True)
         db.session.add_all([meal, ing])
@@ -396,6 +446,8 @@ class TestRecipeCapacity:
                 low_stock_threshold=threshold,
             )
         )
+        db.session.add(InventoryItem(menu_item_id=meal.id, stock_qty=Decimal(servings),
+                                     unit="servings", low_stock_threshold=1))
         db.session.commit()
         return meal, ing
 
@@ -410,7 +462,7 @@ class TestRecipeCapacity:
 
     def test_zero_stock_unavailable(self, app):
         with app.app_context():
-            meal, _ = self._setup_meal_with_ingredient(stock_qty="0")
+            meal, _ = self._setup_meal_with_ingredient(stock_qty="10", servings="0")
             service = InventoryService(repo=InventoryRepository())
             cap = service.calculate_recipe_capacity(meal.id)
             assert cap["capacity"] == 0
@@ -434,7 +486,7 @@ class TestRecipeCapacity:
             db.session.commit()
             service = InventoryService(repo=InventoryRepository())
             cap = service.calculate_recipe_capacity(meal.id)
-            assert cap["error"] == "INVENTORY_ROW_NOT_FOUND"
+            assert cap["error"] is None
             assert cap["capacity"] == 0
 
     def test_invalid_unit_without_conversion(self, app):
@@ -460,11 +512,13 @@ class TestRecipeCapacity:
                     low_stock_threshold=1,
                 )
             )
+            db.session.add(InventoryItem(menu_item_id=meal.id, stock_qty=3,
+                                         unit="servings", low_stock_threshold=1))
             db.session.commit()
             service = InventoryService(repo=InventoryRepository())
             cap = service.calculate_recipe_capacity(meal.id)
-            assert cap["error"] == "INVALID_UNIT_CONVERSION"
-            assert cap["capacity"] == 0
+            assert cap["error"] is None
+            assert cap["capacity"] == 3
 
     def test_category_casing_availability(self, app):
         with app.app_context():
@@ -489,10 +543,12 @@ class TestRecipeCapacity:
                     low_stock_threshold=5,
                 )
             )
+            db.session.add(InventoryItem(menu_item_id=meal.id, stock_qty=2,
+                                         unit="servings", low_stock_threshold=1))
             db.session.commit()
             service = InventoryService(repo=InventoryRepository())
             cap = service.calculate_recipe_capacity(meal.id)
-            assert cap["capacity"] == 5
+            assert cap["capacity"] == 2
             assert cap["is_available"] is True
 
 
@@ -723,7 +779,9 @@ class TestOrdering:
                 unit="pieces",
                 low_stock_threshold=2,
             )
-            db.session.add(inv)
+            meal_stock = InventoryItem(menu_item_id=meal.id, stock_qty=5,
+                                       unit="servings", low_stock_threshold=2)
+            db.session.add_all([inv, meal_stock])
             sess = self._active_session()
             db.session.commit()
             meal_id, sess_id, ing_id = meal.id, sess.id, ing.id
@@ -736,7 +794,9 @@ class TestOrdering:
             )
             assert not isinstance(result, tuple)
             db.session.refresh(inv)
-            assert float(inv.stock_qty) == 4.0
+            db.session.refresh(meal_stock)
+            assert float(inv.stock_qty) == 5.0
+            assert float(meal_stock.stock_qty) == 4.0
 
     def test_order_and_stock_roll_back_together_if_deduction_loses_a_race(
         self, app, monkeypatch
@@ -792,20 +852,22 @@ class TestOrdering:
                     low_stock_threshold=2,
                 )
             )
+            db.session.add(InventoryItem(menu_item_id=meal.id, stock_qty=1,
+                                         unit="servings", low_stock_threshold=1))
             sess = self._active_session()
             db.session.commit()
 
             service = OrderService(repo=OrderRepository(), notifier=get_notifier())
             result = service.add_order(
                 session_id=sess.id,
-                items=[{"menu_item_id": meal.id, "quantity": 1}],
+                items=[{"menu_item_id": meal.id, "quantity": 2}],
                 handled_by=None,
             )
             assert isinstance(result, tuple)
             payload, status = result
             assert status == 409
             assert payload.get("message") or payload.get("error")
-            assert "Low Ing" in payload["message"]
+            assert "Low Meal" in payload["message"]
 
     def test_ordering_missing_inventory_row(self, app):
         with app.app_context():
@@ -833,9 +895,8 @@ class TestOrdering:
             )
             assert isinstance(result, tuple)
             payload, status = result
-            assert status == 400
-            assert payload.get("error") == "INVENTORY_ROW_NOT_FOUND"
-            assert "has no inventory record" in payload.get("message")
+            assert status == 409
+            assert payload.get("message") == "Missing Inv Meal: Sold out"
 
     def test_ordering_invalid_unit_conversion(self, app):
         with app.app_context():
@@ -860,6 +921,8 @@ class TestOrdering:
                     low_stock_threshold=2,
                 )
             )
+            db.session.add(InventoryItem(menu_item_id=meal.id, stock_qty=2,
+                                         unit="servings", low_stock_threshold=1))
             sess = self._active_session()
             db.session.commit()
 
@@ -869,8 +932,7 @@ class TestOrdering:
                 items=[{"menu_item_id": meal.id, "quantity": 1}],
                 handled_by=None,
             )
-            assert isinstance(result, tuple)
-            payload, status = result
-            assert status == 400
-            assert payload.get("error") == "INVALID_UNIT_CONVERSION"
+            assert not isinstance(result, tuple)
+            assert InventoryItem.query.filter_by(menu_item_id=ing.id).one().stock_qty == 10
+            assert InventoryItem.query.filter_by(menu_item_id=meal.id).one().stock_qty == 1
 

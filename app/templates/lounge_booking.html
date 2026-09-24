@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}Boardroom Booking{% endblock %}
+{% block title %}Space Bookings{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -59,7 +59,7 @@
   <div class="boardroom-shell">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
-      <h3 class="mb-0">Boardroom Booking</h3>
+      <h3 class="mb-0">Space Bookings</h3>
       <small id="booking-count" class="text-muted">Loading bookings...</small>
     </div>
     <div class="d-flex gap-2 align-items-center">
@@ -108,6 +108,7 @@
           <tr>
             <th>Customer</th>
             <th>Time</th>
+            <th>Space / Price</th>
             <th class="d-none d-md-table-cell">Course</th>
             <th class="d-none d-md-table-cell">People</th>
             <th>Status</th>
@@ -125,11 +126,16 @@
   <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-calendar-check me-2 text-warning"></i>New Boardroom Booking</h5>
+        <h5 class="modal-title"><i class="bi bi-calendar-check me-2 text-warning"></i>New Booking</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="text" class="form-control mb-2" id="b-name" placeholder="Customer Name">
+        <label class="form-label small text-muted mb-1" for="b-type">Reserve</label>
+        <select id="b-type" class="form-select mb-2" onchange="bookingTypeChanged()">
+          <option value="boardroom">Boardroom</option>
+          <option value="whole_hub">Whole Hub — ₱500/hour (all spaces)</option>
+        </select>
         <input type="date" class="form-control mb-2" id="b-date">
         <div class="row g-2 mb-1">
           <div class="col">
@@ -162,13 +168,23 @@
           </div>
         </div>
         <small class="text-muted d-block mb-2">Booking hours: 7:00 AM to 10:00 PM</small>
+        {% if session.get('role') == 'admin' %}
+        <div id="boardroom-price-field" class="mb-2">
+          <label class="form-label small text-muted mb-1" for="b-hourly-rate">Boardroom price per hour (₱)</label>
+          <input type="number" id="b-hourly-rate" class="form-control" min="0" max="100000" step="0.01" value="250">
+          <small class="text-muted">Default ₱250. Owner may enter a friend’s price for this booking.</small>
+        </div>
+        {% endif %}
+        {% if session.get('role') != 'admin' %}<small id="boardroom-default-price" class="text-muted d-block mb-2">Boardroom: ₱250 per hour. Ask the owner to set a friend’s price.</small>{% endif %}
+        <small id="whole-hub-price-note" class="text-muted d-none mb-2">Whole Hub is ₱500 per hour and reserves all three spaces.</small>
         <input type="text" class="form-control mb-2" id="b-course" placeholder="Course (optional)">
         <input type="number" class="form-control mb-2" id="b-people" min="1" placeholder="Number of People">
         <input type="text" class="form-control" id="b-purpose" placeholder="Purpose (optional)">
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-warning fw-bold text-white" onclick="submitBooking()">Save Booking</button>
+        <button class="btn btn-outline-primary" onclick="submitBooking(true)">Walk in now (1 hour)</button>
+        <button class="btn btn-warning fw-bold text-white" onclick="submitBooking(false)">Save Advance Booking</button>
       </div>
     </div>
   </div>
@@ -296,7 +312,11 @@
 {% block scripts %}
 <script>
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function escapeBookingText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function fmtDate(str) {
   const [y, m, d] = str.split("-").map(Number);
@@ -356,6 +376,14 @@ function initTimeSelectors() {
   document.getElementById("b-end-min").value = "00";
   document.getElementById("b-end-period").value = "AM";
 }
+function bookingTypeChanged() {
+  const wholeHub = document.getElementById('b-type').value === 'whole_hub';
+  const rateField = document.getElementById('boardroom-price-field');
+  if (rateField) rateField.classList.toggle('d-none', wholeHub);
+  const defaultRate = document.getElementById('boardroom-default-price');
+  if (defaultRate) defaultRate.classList.toggle('d-none', wholeHub);
+  document.getElementById('whole-hub-price-note').classList.toggle('d-none', !wholeHub);
+}
 function initEditTimeSelectors() {
   document.getElementById("e-start-hour").innerHTML = buildHourOptions();
   document.getElementById("e-start-min").innerHTML = buildMinuteOptions();
@@ -412,6 +440,7 @@ document.getElementById("scheduleDate").value = todayStr();
 document.getElementById("b-date").value = todayStr();
 initTimeSelectors();
 initEditTimeSelectors();
+bookingTypeChanged();
 
 function loadSchedule() {
   const date = document.getElementById("scheduleDate").value || todayStr();
@@ -443,7 +472,7 @@ function renderSchedule(bookings) {
 
     const hit = bookings.find(b => {
       const bs = toMinutes(b.start_time);
-      const be = toMinutes(b.end_time);
+      const be = toMinutes(b.end_time) + 10; // Free time to leave after the booking ends.
       return bs < slotEnd && be > m && (b.status === "booked" || b.status === "active");
     });
 
@@ -460,7 +489,7 @@ function renderSchedule(bookings) {
       ${hit ? busyStyle : "background:#dcfce7; color:#15803d; border:1px solid #86efac;"}
     `;
     slot.textContent = hit
-      ? `${hit.status === "active" ? "● In Session" : "⛔ Booked"} ${hit.customer_name} (${fmt12(hit.start_time)}-${fmt12(hit.end_time)})`
+      ? `${hit.status === "active" ? "● In Session" : "⛔ Booked"} ${hit.booking_type === 'whole_hub' ? 'Whole Hub' : 'Boardroom'} — ${hit.customer_name} (${fmt12(hit.start_time)}-${fmt12(hit.end_time)})`
       : "✓ Available";
 
     grid.appendChild(lbl);
@@ -471,7 +500,7 @@ function renderSchedule(bookings) {
 function renderList(bookings) {
   const tbody = document.getElementById("bookings-list");
   if (!bookings.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">No bookings for this date.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No bookings for this date.</td></tr>`;
     return;
   }
 
@@ -498,12 +527,13 @@ function renderList(bookings) {
       ? `${fmt12(b.start_time)} – ${fmt12(b.end_time)}<br><span class="late-hint-badge"><i class="bi bi-exclamation-circle me-1"></i>Waiting — was due ${fmt12(b.start_time)}</span>`
       : `${fmt12(b.start_time)} – ${fmt12(b.end_time)}`;
 
-    const purposeText = b.purpose || "N/A";
+    const purposeText = escapeBookingText(b.purpose || "N/A");
     return `
       <tr>
-        <td>${b.customer_name}</td>
+        <td>${escapeBookingText(b.customer_name)}</td>
         <td>${timeCell}</td>
-        <td class="d-none d-md-table-cell">${b.course || "N/A"}</td>
+        <td>${b.booking_type === 'whole_hub' ? 'Whole Hub' : 'Boardroom'}<br><small>₱${Number(b.hourly_rate).toFixed(2)}/hr</small></td>
+        <td class="d-none d-md-table-cell">${escapeBookingText(b.course || "N/A")}</td>
         <td class="d-none d-md-table-cell">${b.number_of_people}</td>
         <td>${badgeFor(b.status)}</td>
         <td class="d-none d-md-table-cell">${purposeText}</td>
@@ -513,18 +543,31 @@ function renderList(bookings) {
   }).join("");
 }
 
-function submitBooking() {
-  const startTime = to24Hour(
+function submitBooking(walkIn = false) {
+  let startTime = to24Hour(
     document.getElementById("b-start-hour").value,
     document.getElementById("b-start-min").value,
     document.getElementById("b-start-period").value
   );
-  const endTime = to24Hour(
+  let endTime = to24Hour(
     document.getElementById("b-end-hour").value,
     document.getElementById("b-end-min").value,
     document.getElementById("b-end-period").value
   );
 
+  if (walkIn) {
+    const now = new Date();
+    const end = new Date(now.getTime() + 60 * 60000);
+    const opening = new Date(now); opening.setHours(7, 0, 0, 0);
+    const closing = new Date(now); closing.setHours(22, 0, 0, 0);
+    if (now < opening || end > closing) {
+      showToast('Walk-ins must fit within 7:00 AM to 10:00 PM.', 'error');
+      return;
+    }
+    startTime = nowTime24();
+    endTime = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+    document.getElementById('b-date').value = todayStr();
+  }
   const payload = {
     customer_name: document.getElementById("b-name").value.trim(),
     date: document.getElementById("b-date").value,
@@ -532,8 +575,12 @@ function submitBooking() {
     end_time: endTime,
     course: document.getElementById("b-course").value.trim(),
     number_of_people: document.getElementById("b-people").value,
-    purpose: document.getElementById("b-purpose").value.trim()
+    purpose: document.getElementById("b-purpose").value.trim(),
+    booking_type: document.getElementById('b-type').value,
+    walk_in: walkIn
   };
+  const rateInput = document.getElementById('b-hourly-rate');
+  if (rateInput && payload.booking_type === 'boardroom') payload.hourly_rate = rateInput.value;
 
   if (!payload.customer_name || !payload.date || !payload.start_time || !payload.end_time || !payload.number_of_people) {
     showToast("Please fill in all required fields.", "error");
@@ -561,11 +608,14 @@ function submitBooking() {
       showToast(data.error, "error");
       return;
     }
-    showToast("Boardroom booking saved.", "success");
+    showToast(walkIn ? 'Customer checked in — see the Dashboard.' : 'Booking saved.', 'success');
     bootstrap.Modal.getInstance(document.getElementById("bookingModal")).hide();
     document.getElementById("scheduleDate").value = payload.date;
     ["b-name", "b-course", "b-people", "b-purpose"].forEach(id => document.getElementById(id).value = "");
     initTimeSelectors();
+    document.getElementById('b-type').value = 'boardroom';
+    if (rateInput) rateInput.value = '250';
+    bookingTypeChanged();
     loadSchedule();
   })
   .catch(() => showToast("Failed to create booking.", "error"));

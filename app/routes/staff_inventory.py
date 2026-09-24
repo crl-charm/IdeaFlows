@@ -54,6 +54,36 @@ def stock_action(menu_id):
     return jsonify(result)
 
 
+@staff_inventory_bp.route("/api/ingredients/<int:menu_id>/stock", methods=["PATCH"])
+@login_required
+@idempotent_request("staff-ingredient-stock-count")
+def set_ingredient_stock(menu_id):
+    from app import db
+    from app.models import MenuItem, InventoryItem
+    from app.services.stock_management import kitchen_access
+    from app.core.socketio_handlers import emit_inventory_update
+    from app.utils.inventory_helpers import is_ingredient_category
+
+    if not kitchen_access(session.get("user_id")):
+        return jsonify(error="Only the owner or a cook can update ingredients."), 403
+    ingredient = db.session.get(MenuItem, menu_id)
+    if not ingredient or ingredient.status == "deleted" or not is_ingredient_category(ingredient.category):
+        return jsonify(error="Ingredient not found."), 404
+    rows = InventoryItem.query.filter_by(menu_item_id=menu_id).all()
+    if not rows:
+        return jsonify(error="Ask the owner to add this ingredient and its unit first."), 400
+    if len(rows) != 1:
+        return jsonify(error="Duplicate stock records need owner review."), 409
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="Enter a valid stock quantity."), 400
+    result = _service.update_stock(rows[0].id, data.get("quantity"), "Manual count", session.get("user_id"))
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    emit_inventory_update("stock_change", {"item_id": rows[0].id})
+    return jsonify(result)
+
+
 @staff_inventory_bp.route("/api/history", methods=["GET"])
 @login_required
 def stock_history():

@@ -423,7 +423,7 @@
 
 
       <button class="btn w-100 text-start mb-2 sidebar-btn nav-btn" onclick="window.location.href='/lounge-booking'">
-        <i class="bi bi-calendar-check me-2"></i>Boardroom Booking
+        <i class="bi bi-calendar-check me-2"></i>Space Bookings
       </button>
 
       <!-- SPACES -->
@@ -447,6 +447,10 @@
       <!-- STAFF OPERATIONS -->
       {% if session.get("role") == "staff" %}
       <div class="sidebar-section-label">Operations</div>
+
+      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/daily-balance'">
+        <i class="bi bi-cash-stack me-2"></i>Daily Balance
+      </button>
 
       <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/inventory'">
         <i class="bi bi-boxes me-2"></i>Inventory

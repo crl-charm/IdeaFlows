@@ -17,6 +17,9 @@ class Transaction(db.Model):
     total_bill = db.Column(db.Numeric(10,2), nullable=False)
     payment_method = db.Column(db.String(50), nullable=False, default="cash")
     amount_tendered = db.Column(db.Numeric(10, 2), nullable=True)
+    discount_type = db.Column(db.String(20), nullable=True)
+    discount_item_id = db.Column(db.Integer, nullable=True)
+    discount_amount = db.Column(db.Numeric(10, 2), nullable=False, default=0)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

@@ -55,6 +55,10 @@ def create_app():
             redis_client = None
             app.logger.warning("Redis unavailable; using safe local fallbacks: %s", exc)
 
+    # Register handlers before init_app so repeated app factories (including tests)
+    # attach them to every Socket.IO server instance.
+    from app.core import socketio_handlers
+
     socketio.init_app(
         app,
         cors_allowed_origins=app.config["CORS_ORIGINS"],
@@ -177,7 +181,7 @@ def create_app():
     from app.controllers.finance_controller import FinanceController
 
     register_admin_blueprint(app, sales_bp)
-    register_admin_blueprint(app, sales_balance_bp)
+    app.register_blueprint(sales_balance_bp)
     register_admin_blueprint(app, expenses_bp)
     app.register_blueprint(staff_expenses_bp)
     register_admin_blueprint(app, receivables_bp)
@@ -194,9 +198,6 @@ def create_app():
     ]
     for controller in controllers:
         controller.register(app)
-
-    # Import Socket.IO handlers to register event handlers
-    from app.core import socketio_handlers
 
     @app.route("/robots.txt")
     def robots_txt():
@@ -248,6 +249,10 @@ def create_app():
     @app.route("/welcome")
     def portal_intro():
         return render_template("landing.html")
+
+    if app.config.get("AUTO_MIGRATE_ON_STARTUP", True) and app.config.get("FLASK_ENV") != "testing":
+        from app.db.bootstrap import initialize_database
+        initialize_database(app, strict=app.config.get("FLASK_ENV") == "production")
 
     return app
 
@@ -313,6 +318,17 @@ def register_security_middleware(app):
         if path in ("/", "/login", "/logout", "/register"):
             return None
         if path.startswith("/static/"):
+            return None
+        staff_balance_reads = {
+            "/admin/daily-balance",
+            "/admin/daily-balance/api/reports",
+            "/admin/daily-balance/api/soft-balances",
+            "/admin/daily-balance/api/today-stats",
+            "/admin/daily-balance/api/reports/export-csv",
+            "/admin/daily-balance/api/reports/export-pdf",
+            "/admin/daily-balance/api/reports/export-excel",
+        }
+        if request.method == "GET" and path in staff_balance_reads:
             return None
         if not is_admin_path(path):
             return None

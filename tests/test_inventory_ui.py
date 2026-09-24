@@ -20,7 +20,8 @@ def test_inventory_pages_show_zero_stock_as_out_of_stock():
     assert "Ingredients &amp; Stock" in admin and "Ingredients &amp; Stock" in staff
     assert "Out of stock" in admin and "Out of stock" in staff
     assert "InventoryUI.actions(item)" not in admin
-    assert "InventoryUI.actions" in staff
+    assert "InventoryUI.actions(item)" not in staff
+    assert "Set available servings" in admin and "Set available servings" in staff
 
 
 def test_add_ingredient_form_uses_plain_language_and_keeps_fractional_stock():

@@ -13,7 +13,7 @@
   <i class="bi bi-receipt me-2"></i>Checkout Records
 </button>
 <button type="button" class="btn w-100 text-start mb-2 drawer-nav-btn nav-btn" data-href="/lounge-booking">
-  <i class="bi bi-calendar-check me-2"></i>Boardroom Booking
+  <i class="bi bi-calendar-check me-2"></i>Space Bookings
 </button>
 
 <div class="sidebar-section-label">Spaces</div>
@@ -32,6 +32,9 @@
 {% if session.get("role") == "staff" %}
 <div class="sidebar-section-label">Operations</div>
 
+<button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/admin/daily-balance">
+  <i class="bi bi-cash-stack me-2"></i>Daily Balance
+</button>
 <button type="button" class="btn w-100 text-start mb-1 drawer-nav-btn nav-btn" data-href="/inventory">
   <i class="bi bi-boxes me-2"></i>Inventory
 </button>

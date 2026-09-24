@@ -8,7 +8,7 @@ from flask import render_template
 from openpyxl import load_workbook
 
 from app import create_app, db
-from app.models import CustomerSession, SpaceType, Transaction
+from app.models import CustomerSession, SpaceType, Transaction, MenuItem, Order, OrderItem
 from app.utils.billing import calculate_time_bill
 from app.utils.payment import normalize_payment_method, payment_method_label
 from app.repositories.sales_repository import SalesRepository
@@ -74,6 +74,38 @@ def test_queenbank_checkout_reporting_and_saved_receipt(app):
 def test_queenbank_normalization():
     assert normalize_payment_method(' QueenBank ') == 'queenbank'
     assert payment_method_label('queenbank') == 'QueenBank'
+
+
+def test_pwd_discount_applies_to_one_unit_of_selected_food_item(app):
+    with app.app_context():
+        now = datetime.utcnow()
+        space = SpaceType(name='Premium Lounge', rate_per_minute=Decimal('0.3333'))
+        menu = MenuItem(name='Meal', price=Decimal('120.00'), category='Main Dish')
+        db.session.add_all([space, menu])
+        db.session.flush()
+        customer = CustomerSession(customer_name='PWD Customer', space_type_id=space.id,
+                                   number_of_people=2, time_in=now-timedelta(minutes=75), status='active')
+        db.session.add(customer)
+        db.session.flush()
+        order = Order(customer_session_id=customer.id)
+        db.session.add(order)
+        db.session.flush()
+        item = OrderItem(order_id=order.id, menu_item_id=menu.id, quantity=2, price=Decimal('120.00'))
+        db.session.add(item)
+        db.session.commit()
+        service = SessionService(SessionRepository(), SimpleNamespace(now=lambda: now),
+                                 SimpleNamespace(session_checked_out=lambda _: None))
+        assert service.preview_checkout(customer.id, 'pwd', item.id)['discount_amount'] == 24
+        assert service.preview_checkout(customer.id, 'pwd', 999)[1] == 400
+        assert service.preview_checkout(customer.id, 'pwd', '1.5')[1] == 400
+        result = service.checkout(customer.id, 'cash', '300', 'pwd', item.id)
+        assert result['food_bill'] == 240
+        assert result['discount_amount'] == 24
+        assert result['total_bill'] == 246
+        tx = Transaction.query.filter_by(session_id=customer.id).one()
+        assert tx.discount_type == 'pwd'
+        assert tx.discount_item_id == item.id
+        assert tx.discount_amount == Decimal('24.00')
 
 
 def test_queenbank_daily_balance_exports(app):

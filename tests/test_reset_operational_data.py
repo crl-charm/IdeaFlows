@@ -59,7 +59,7 @@ def test_operational_reset_preserves_accounts_and_reseeds_defaults(app):
         assert after["users"] == after["admins"] == 1
         assert (db.session.get(User, 1).password, db.session.get(Admin, admin.id).password) == account_passwords
         assert {name: after[name] for name in ("space_types", "menu_categories", "finance_budgets")} == {
-            "space_types": 3,
+            "space_types": 4,
             "menu_categories": 3,
             "finance_budgets": 1,
         }

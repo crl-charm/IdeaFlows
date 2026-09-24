@@ -14,7 +14,7 @@
         <option value="prepared">Count servings — kitchen prepares a batch</option>
         <option value="direct">Count pieces — bottles, cans and packaged items</option>
         <option value="untracked">Don't track quantity — manually available</option>
-        <option value="recipe">Recipe ingredients — advanced</option>
+        <option value="recipe">Manual servings with an ingredient list</option>
       </select>
     </div>
     <div id="stock-quantity-field" class="mb-3">
@@ -36,6 +36,31 @@
     </div>
   </form>
 </dialog>
+{% if session.get('role') == 'admin' or can_manage_kitchen|default(false) %}
+<dialog id="servings-dialog" aria-labelledby="servings-dialog-title">
+  <form id="servings-form">
+    <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+      <h2 id="servings-dialog-title" class="h5 m-0">Set available servings</h2>
+      <button type="button" class="btn-close" aria-label="Close" onclick="document.getElementById('servings-dialog').close()"></button>
+    </div>
+    <p class="text-muted small">Enter how many servings you expect to make. Orders reduce this number; raw ingredients are updated separately.</p>
+    <div class="mb-3">
+      <label for="servings-meal" class="form-label">Menu item</label>
+      <select id="servings-meal" class="form-select" required></select>
+    </div>
+    <div class="mb-3">
+      <label for="servings-count" class="form-label">Servings available now</label>
+      <input id="servings-count" class="form-control" type="number" inputmode="numeric" min="0" max="999999" step="1" required>
+      <div class="form-text">Enter 0 to show Sold out on the menu.</div>
+    </div>
+    <p id="servings-error" class="text-danger small" role="alert"></p>
+    <div class="d-flex justify-content-end gap-2">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('servings-dialog').close()">Cancel</button>
+      <button type="submit" id="servings-save" class="btn btn-warning fw-semibold">Save servings</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 {% if session.get('role') == 'admin' or can_manage_kitchen|default(false) %}
 <details class="prepared-summary mt-4 p-3 bg-white rounded-3 border">
   <summary class="fw-semibold">Prepared servings summary</summary>

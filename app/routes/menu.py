@@ -192,7 +192,7 @@ def api_create_item() -> tuple:
             category=category,
             description=description,
             image_url=image_url,
-            inventory_mode=data.get("inventory_mode", "untracked"),
+            inventory_mode=data.get("inventory_mode", "untracked" if category == "Beverages" or recipe_ingredients else "prepared"),
             stock_quantity=data.get("stock_quantity", 0),
             stock_threshold=data.get("stock_threshold", 3),
             actor=session.get("user_id"),

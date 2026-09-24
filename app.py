@@ -1,12 +1,8 @@
 import os
 
 from app import create_app, socketio
-from app.db.bootstrap import initialize_database
 
 app = create_app()
-
-if app.config.get("AUTO_MIGRATE_ON_STARTUP", True):
-    initialize_database(app, strict=app.config.get("FLASK_ENV") == "production")
 
 
 if __name__ == "__main__":

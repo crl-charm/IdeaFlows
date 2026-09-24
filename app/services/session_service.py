@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
 from app.utils.billing import calculate_time_bill
@@ -17,6 +17,21 @@ class SessionService:
     repo: SessionRepository
     clock: Clock
     notifier: Notifier
+
+    def _discount(self, session_id: int, discount_type: str | None, discount_item_id: Any) -> tuple[Decimal, str | None, int | None]:
+        discount_type = (discount_type or "").strip().lower()
+        if not discount_type and discount_item_id in (None, ""):
+            return Decimal("0.00"), None, None
+        if discount_type not in {"pwd", "senior"}:
+            raise ValueError("Choose PWD or Senior Citizen discount.")
+        if isinstance(discount_item_id, bool) or not str(discount_item_id).isdigit():
+            raise ValueError("Choose one food item for the discount.")
+        item_id = int(discount_item_id)
+        item = self.repo.get_order_item_for_session(session_id, item_id)
+        if not item or not item.quantity or item.quantity < 1:
+            raise ValueError("The selected food item is no longer in this customer's order.")
+        amount = (Decimal(str(item.price)) * Decimal("0.20")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return amount, discount_type, item_id
 
     def checkin(
         self,
@@ -44,8 +59,15 @@ class SessionService:
         space = self.repo.get_space_type(space_type_id) if space_type_id else None
         if not space:
             return {"error": "Please select a valid space."}, 400
+        if space.name == "Whole Hub":
+            return {"error": "Start a Whole Hub booking from Boardroom Booking."}, 400
+        blocking = self.repo.blocking_booking_at(now + timedelta(hours=8), whole_hub_only=space.name != "Boardroom")
+        if blocking:
+            return {"error": "This space is reserved for a booking right now."}, 409
+        occupied = self.repo.sum_active_occupancy(space_type_id)
+        if space.name == "Boardroom" and occupied:
+            return {"error": "Boardroom is currently occupied.", "full": True}, 409
         if space.capacity:
-            occupied = self.repo.sum_active_occupancy(space_type_id)
             if occupied + number_of_people > space.capacity:
                 seats_left = max(int(space.capacity) - int(occupied), 0)
                 return (
@@ -73,11 +95,9 @@ class SessionService:
         for sess in sessions:
             time_difference = now - sess.time_in
             minutes_used = time_difference.total_seconds() / 60
-            rate = sess.space_type.rate_per_minute
-            current_bill = calculate_time_bill(sess.space_type, minutes_used)
-
             linked = boardroom_by_session.get(sess.id)
-            purpose = linked.purpose if linked and sess.space_type.name == "Boardroom" else None
+            current_bill = calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=now)
+            purpose = linked.purpose if linked else None
 
             result.append(
                 {
@@ -96,28 +116,36 @@ class SessionService:
 
         return result
 
-    def preview_checkout(self, session_id: int) -> dict[str, Any] | tuple[dict[str, Any], int]:
+    def preview_checkout(self, session_id: int, discount_type: str | None = None, discount_item_id: Any = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         sess = self.repo.get_session(session_id)
         if not sess:
             return {"error": "Session not found"}, 404
 
         now = self.clock.now()
         minutes_used = (now - sess.time_in).total_seconds() / 60
-        rate = sess.space_type.rate_per_minute
-        time_bill = calculate_time_bill(sess.space_type, minutes_used)
+        linked = self.repo.get_active_boardroom_bookings_by_session_ids([session_id]).get(session_id)
+        time_bill = calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=now)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
-        total_bill = (time_bill + food_total).quantize(Decimal("0.01"))
+        try:
+            discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id)
+        except ValueError as exc:
+            return {"error": str(exc)}, 400
+        total_bill = (time_bill + food_total - discount_amount).quantize(Decimal("0.01"))
 
         return {
             "customer_name": sess.customer_name,
             "minutes_used": minutes_used,
             "time_bill": float(time_bill),
             "food_bill": float(food_total),
+            "discount_amount": float(discount_amount),
+            "discount_type": selected_type,
+            "discount_item_id": selected_item_id,
             "total_bill": float(total_bill),
         }
 
     def checkout(
-        self, session_id: int, payment_method: str = "cash", amount_tendered: Any = None
+        self, session_id: int, payment_method: str = "cash", amount_tendered: Any = None,
+        discount_type: str | None = None, discount_item_id: Any = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         # Serialize checkout attempts for this session on databases that support
         # row locks (MySQL in production). This prevents two different browser
@@ -133,9 +161,14 @@ class SessionService:
         time_out = self.clock.now()
         minutes_used = (time_out - sess.time_in).total_seconds() / 60
         rate = sess.space_type.rate_per_minute
-        time_bill = calculate_time_bill(sess.space_type, minutes_used)
+        linked = self.repo.get_active_boardroom_bookings_by_session_ids([session_id]).get(session_id)
+        time_bill = calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=time_out)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
-        total_bill = (time_bill + food_total).quantize(Decimal("0.01"))
+        try:
+            discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id)
+        except ValueError as exc:
+            return {"error": str(exc)}, 400
+        total_bill = (time_bill + food_total - discount_amount).quantize(Decimal("0.01"))
 
         sess.payment_method = payment_method
         tx = Transaction(
@@ -144,6 +177,9 @@ class SessionService:
             food_bill=food_total,
             total_bill=total_bill,
             payment_method=payment_method,
+            discount_type=selected_type,
+            discount_item_id=selected_item_id,
+            discount_amount=discount_amount,
         )
 
         if payment_method == "cash":
@@ -184,6 +220,7 @@ class SessionService:
             "rate_per_minute": float(rate),
             "time_bill": float(time_bill),
             "food_bill": float(food_total),
+            "discount_amount": float(discount_amount),
             "total_bill": float(total_bill),
             "payment_method": payment_method,
             "payment_label": payment_method_label(payment_method),
@@ -199,11 +236,12 @@ class SessionService:
 
     def space_availability(self) -> list[dict[str, Any]]:
         spaces = self.repo.list_space_types_for_availability()
+        whole_hub_reserved = self.repo.blocking_booking_at(self.clock.now() + timedelta(hours=8), whole_hub_only=True)
         rows: list[dict[str, Any]] = []
         for space in spaces:
             occupied = self.repo.sum_active_occupancy(space.id)
             cap = int(space.capacity) if space.capacity else 0
-            left = max(cap - occupied, 0) if cap else None
+            left = 0 if whole_hub_reserved else (max(cap - occupied, 0) if cap else None)
             rows.append(
                 {
                     "space_id": space.id,

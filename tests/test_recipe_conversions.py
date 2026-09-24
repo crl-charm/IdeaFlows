@@ -173,79 +173,34 @@ class TestRecipeConversions:
             assert float(log.change_qty) == 0.0
             assert "linked to Bangus Silog" in log.reason
 
-            # Verify capacity math: Stock 3.00 klg, recipe requires 1.00 pieces (ratio 0.25) -> capacity = 3 / 0.25 = 12 servings
+            # The client, not the recipe math, enters the serving estimate.
             inv_item.stock_qty = Decimal("3.00")
             inv_item.unit = "klg"
             db.session.commit()
 
+            from app.services.stock_management import change_stock
+            change_stock(meal_id, {"action": "servings", "quantity": 12}, admin_id, "manual-12")
             service = InventoryService(repo=InventoryRepository())
             recipe_items = service.build_recipe_inventory_items()
             meal_record = next(x for x in recipe_items if x["id"] == meal_id)
             assert meal_record["capacity"] == 12
 
-    def test_deduction_and_backward_compatibility(self, app):
+    def test_legacy_recipe_units_do_not_control_manual_servings(self, app):
+        from app.services.stock_management import change_stock
+
         with app.app_context():
-            # Test precise deduction: order 1 meal -> deducts 0.25 klg from 3.00 klg stock
-            meal = MenuItem(name="Bangus Silog", price=Decimal("145.00"), category="Main Dish", is_available=True)
-            ing = MenuItem(name="Fish bangus", price=Decimal("0.00"), category="ingredient", is_available=True)
-            db.session.add_all([meal, ing])
+            meal = MenuItem(name="Legacy Rice", price=Decimal("50.00"), category="Main Dish", is_available=True)
+            ingredient = MenuItem(name="Rice Raw", price=0, category="ingredient", is_available=True)
+            db.session.add_all([meal, ingredient])
+            db.session.flush()
+            db.session.add(MenuItemIngredient(menu_item_id=meal.id, ingredient_item_id=ingredient.id,
+                quantity_required=2, unit=None, conversion_ratio=1))
+            raw = InventoryItem(menu_item_id=ingredient.id, stock_qty=10, unit="cups")
+            db.session.add(raw)
             db.session.commit()
 
-            # Set up recipe link (1 pieces, ratio = 0.25)
-            link = MenuItemIngredient(
-                menu_item_id=meal.id,
-                ingredient_item_id=ing.id,
-                quantity_required=Decimal("1.00"),
-                unit="pieces",
-                conversion_ratio=Decimal("0.2500")
-            )
-            inv_item = InventoryItem(
-                menu_item_id=ing.id,
-                stock_qty=Decimal("3.00"),
-                unit="klg",
-                low_stock_threshold=1
-            )
-            db.session.add_all([link, inv_item])
-            db.session.commit()
-
-            service = InventoryService(repo=InventoryRepository())
-            # Deduct on order (quantity = 1)
-            assert service.deduct_on_order(meal.id, 1) is True
-
-            # Check stock is updated to 2.75 klg
-            db.session.refresh(inv_item)
-            assert float(inv_item.stock_qty) == 2.75
-
-            # ----------------------------------------------------
-            # Test Backward Compatibility: Legacy Link (unit=None, ratio=None/1.0)
-            # ----------------------------------------------------
-            legacy_meal = MenuItem(name="Legacy Rice", price=Decimal("50.00"), category="Main Dish", is_available=True)
-            legacy_ing = MenuItem(name="Rice Raw", price=Decimal("0.00"), category="ingredient", is_available=True)
-            db.session.add_all([legacy_meal, legacy_ing])
-            db.session.commit()
-
-            legacy_link = MenuItemIngredient(
-                menu_item_id=legacy_meal.id,
-                ingredient_item_id=legacy_ing.id,
-                quantity_required=Decimal("2.00"),
-                unit=None,
-                conversion_ratio=Decimal("1.0000") # default fallback is 1.0
-            )
-            legacy_inv = InventoryItem(
-                menu_item_id=legacy_ing.id,
-                stock_qty=Decimal("10.00"),
-                unit="cups",
-                low_stock_threshold=2
-            )
-            db.session.add_all([legacy_link, legacy_inv])
-            db.session.commit()
-
-            # Capacity: 10.00 cups stock / 2.00 required = 5 capacity
-            recipe_items = service.build_recipe_inventory_items()
-            legacy_meal_record = next(x for x in recipe_items if x["id"] == legacy_meal.id)
-            assert legacy_meal_record["capacity"] == 5
-
-            # Deduct: order 2 legacy meals -> deducts 2 * 2 = 4 cups
-            assert service.deduct_on_order(legacy_meal.id, 2) is True
-            db.session.refresh(legacy_inv)
-            assert float(legacy_inv.stock_qty) == 6.00
+            change_stock(meal.id, {"action": "servings", "quantity": 7}, None, "legacy-count")
+            record = next(row for row in InventoryService(InventoryRepository()).build_recipe_inventory_items()
+                          if row["id"] == meal.id)
+            assert record["capacity"] == 7
+            assert raw.stock_qty == 10

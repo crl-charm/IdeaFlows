@@ -92,7 +92,7 @@ def revoke_active_session(identity):
     import logging
     import re
 
-    if not re.fullmatch(r"(?:staff|admin):[1-9][0-9]*", identity or ""):
+    if not re.fullmatch(r"(?:staff:[1-9][0-9]*|admin:[1-9][0-9]*(?::2)?)", identity or ""):
         return jsonify({"error": "Invalid session identity"}), 400
     if identity == session.get("login_lease_identity"):
         return jsonify({"error": "Use Logout to end your own session."}), 400
@@ -111,7 +111,8 @@ def revoke_active_session(identity):
         return jsonify({"error": "Session is no longer active"}), 404
     if identity.startswith("staff:"):
         _service.repo.close_staff_attendance(int(active["user_id"]), revoked_at)
-    emit_session_revoked(int(active["user_id"]))
+    if identity.startswith("staff:"):
+        emit_session_revoked(int(active["user_id"]))
     logging.getLogger("security").warning(
         "Admin %s revoked active session %s from %s",
         session.get("username"),

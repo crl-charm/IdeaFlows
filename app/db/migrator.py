@@ -91,6 +91,8 @@ class SchemaMigrator:
                 "ALTER TABLE boardroom_bookings ADD COLUMN extended_minutes INT NOT NULL DEFAULT 0",
             ),
             ("boardroom_bookings", "course", "ALTER TABLE boardroom_bookings ADD COLUMN course VARCHAR(100) NULL"),
+            ("boardroom_bookings", "booking_type", "ALTER TABLE boardroom_bookings ADD COLUMN booking_type VARCHAR(20) NOT NULL DEFAULT 'boardroom'"),
+            ("boardroom_bookings", "hourly_rate", "ALTER TABLE boardroom_bookings ADD COLUMN hourly_rate DECIMAL(10,2) NOT NULL DEFAULT 250.00"),
             (
                 "customer_sessions",
                 "payment_method",
@@ -111,6 +113,9 @@ class SchemaMigrator:
                 "amount_tendered",
                 "ALTER TABLE transactions ADD COLUMN amount_tendered DECIMAL(10,2) NULL",
             ),
+            ("transactions", "discount_type", "ALTER TABLE transactions ADD COLUMN discount_type VARCHAR(20) NULL"),
+            ("transactions", "discount_item_id", "ALTER TABLE transactions ADD COLUMN discount_item_id INT NULL"),
+            ("transactions", "discount_amount", "ALTER TABLE transactions ADD COLUMN discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00"),
             (
                 "menu_items",
                 "is_available",
@@ -148,6 +153,8 @@ class SchemaMigrator:
                 "incurred_date",
                 "ALTER TABLE receivables ADD COLUMN incurred_date DATE NULL",
             ),
+            ("receivables", "notes", "ALTER TABLE receivables ADD COLUMN notes TEXT NULL"),
+            ("receivable_payments", "payment_group_id", "ALTER TABLE receivable_payments ADD COLUMN payment_group_id VARCHAR(32) NULL"),
             (
                 "menu_item_ingredients",
                 "unit",

@@ -13,7 +13,7 @@ from app.core.idempotency import idempotent_request
 from app.repositories.sales_repository import SalesRepository
 from app.services.daily_balance_export_service import DailyBalanceExportService
 from app.services.sales_service import SalesService
-from app.utils.auth import admin_required
+from app.utils.auth import admin_required, login_required
 
 sales_bp = Blueprint("sales_admin", __name__, url_prefix="/admin/daily-balance")
 
@@ -22,7 +22,7 @@ _export = DailyBalanceExportService(db)
 
 
 @sales_bp.route("", methods=["GET"])
-@admin_required
+@login_required
 def list_reports() -> str:
     reports = _service.list_reports()
     soft_entries = _service.list_soft_balances()
@@ -30,7 +30,7 @@ def list_reports() -> str:
 
 
 @sales_bp.route("/api/reports", methods=["GET"])
-@admin_required
+@login_required
 def api_list_reports() -> tuple:
     reports = _service.list_reports()
     return api_ok(reports)
@@ -57,7 +57,7 @@ def api_generate_report() -> tuple:
 
 
 @sales_bp.route("/api/reports/export-csv", methods=["GET"])
-@admin_required
+@login_required
 def api_export_csv() -> Any:
     start_date_str = request.args.get("start_date")
     end_date_str = request.args.get("end_date")
@@ -70,7 +70,7 @@ def api_export_csv() -> Any:
 
 
 @sales_bp.route("/api/reports/export-pdf", methods=["GET"])
-@admin_required
+@login_required
 def api_export_pdf() -> Any:
     try:
         start_date_str = request.args.get("start_date")
@@ -89,7 +89,7 @@ def api_export_pdf() -> Any:
 
 
 @sales_bp.route("/api/reports/export-excel", methods=["GET"])
-@admin_required
+@login_required
 def api_export_excel() -> Any:
     try:
         start_date_str = request.args.get("start_date")
@@ -105,7 +105,7 @@ def api_export_excel() -> Any:
 
 
 @sales_bp.route("/api/soft-balances", methods=["GET"])
-@admin_required
+@login_required
 def api_list_soft_balances() -> tuple:
     entries = _service.list_soft_balances()
     return api_ok(entries)
@@ -134,26 +134,40 @@ def api_create_soft_balance() -> tuple:
 
 
 @sales_bp.route("/api/today-stats", methods=["GET"])
-@admin_required
+@login_required
 def api_today_stats() -> tuple:
-    from app.models import Transaction, CustomerSession, Receivable, Order, OrderItem
-    from datetime import datetime, date
+    from app.models import Transaction, CustomerSession, Receivable, ReceivablePayment, Expense, Order, OrderItem
+    from datetime import datetime, timedelta
     from sqlalchemy import func
     from sqlalchemy.orm import selectinload
     from decimal import Decimal
     from app.utils.dates import day_bounds
 
-    today = date.today()
-    start_at, end_at = day_bounds(today)
+    now = datetime.utcnow()
+    today = (now + timedelta(hours=8)).date()
+    local_start, local_end = day_bounds(today)
+    start_at, end_at = local_start - timedelta(hours=8), local_end - timedelta(hours=8)
 
     # 1. Cash on Hand
-    cash_on_hand = (
+    cash_checkouts = (
         db.session.query(func.coalesce(func.sum(Transaction.total_bill), 0))
-        .filter(Transaction.created_at >= start_at, Transaction.created_at < end_at)
+        .filter(Transaction.created_at >= start_at, Transaction.created_at < end_at, Transaction.payment_method == "cash")
         .scalar()
     ) or Decimal("0.00")
+    cash_collections = (
+        db.session.query(func.coalesce(func.sum(ReceivablePayment.amount), 0))
+        .filter(ReceivablePayment.received_at >= start_at, ReceivablePayment.received_at < end_at,
+                ReceivablePayment.payment_method == "cash")
+        .scalar()
+    ) or Decimal("0.00")
+    expenses_today = (
+        db.session.query(func.coalesce(func.sum(Expense.amount), 0))
+        .filter(Expense.expense_date == today)
+        .scalar()
+    ) or Decimal("0.00")
+    cash_on_hand = Decimal(str(cash_checkouts)) + Decimal(str(cash_collections)) - Decimal(str(expenses_today))
 
-    # 2. Expected Cash on Hand (Cash on Hand + Sum of pending balances of active sessions)
+    # Money still owed by active sessions and receivable customers.
     pending_balance_sum = Decimal("0.00")
     active_sessions = (
         CustomerSession.query.options(selectinload(CustomerSession.space_type))
@@ -161,6 +175,8 @@ def api_today_stats() -> tuple:
         .all()
     )
     session_ids = [active_session.id for active_session in active_sessions]
+    from app.repositories.session_repository import SessionRepository
+    bookings = SessionRepository().get_active_boardroom_bookings_by_session_ids(session_ids)
     food_totals = {}
     if session_ids:
         food_totals = dict(
@@ -173,32 +189,34 @@ def api_today_stats() -> tuple:
             .group_by(Order.customer_session_id)
             .all()
         )
-    now = datetime.utcnow()
     for sess in active_sessions:
         minutes_used = (now - sess.time_in).total_seconds() / 60
-        rate = sess.space_type.rate_per_minute if sess.space_type else Decimal("0.00")
-        time_bill = calculate_time_bill(sess.space_type, minutes_used)
+        time_bill = calculate_time_bill(sess.space_type, minutes_used, booking=bookings.get(sess.id), now_utc=now)
         
         food_total = food_totals.get(sess.id, Decimal("0.00"))
         
         pending_balance_sum += time_bill + Decimal(str(food_total))
 
-    expected_cash_on_hand = cash_on_hand + pending_balance_sum
+    unpaid_receivables = sum(
+        (r.amount_owed - r.partial_paid for r in Receivable.query.filter(Receivable.paid.is_(False)).all()
+         if r.session_id not in session_ids),
+        Decimal("0.00"),
+    )
+    expected_to_collect = pending_balance_sum + unpaid_receivables
+    expected_cash_on_hand = cash_on_hand + expected_to_collect
 
     # 3. Today's Paid Receivables
-    receivables_paid_today = Receivable.query.filter(
-        Receivable.paid == True,
-        Receivable.paid_at >= start_at,
-        Receivable.paid_at < end_at,
+    payments_today = ReceivablePayment.query.filter(
+        ReceivablePayment.received_at >= start_at,
+        ReceivablePayment.received_at < end_at,
     ).all()
-    
-    debtors_count = len(receivables_paid_today)
-    total_collected = sum(r.amount_owed - r.partial_paid for r in receivables_paid_today)
+    total_collected = sum((p.amount for p in payments_today), Decimal("0.00"))
 
     return api_ok({
         "cash_on_hand": float(cash_on_hand),
+        "expected_to_collect": float(expected_to_collect),
         "expected_cash_on_hand": float(expected_cash_on_hand),
-        "receivables_paid_today": debtors_count,
+        "receivables_paid_today": len({p.payment_group_id or f"single-{p.id}" for p in payments_today}),
         "receivables_collected_today": float(total_collected)
     })
 

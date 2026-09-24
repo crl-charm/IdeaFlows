@@ -35,26 +35,31 @@ class FakeRedis:
             self.rows.pop(key, None)
             self.expires.pop(key, None)
 
-    def eval(self, script, _key_count, key, *args):
+    def eval(self, script, key_count, *params):
+        keys, args = params[:key_count], params[key_count:]
         with self.lock:
-            self._purge(key)
             if "'issued_at'" in script:
-                if key in self.rows:
-                    return 0
                 ttl, token_hash, identity, user_id, username, role, ip, agent, now = args
-                self.rows[key] = {
-                    "token_hash": str(token_hash),
-                    "identity": str(identity),
-                    "user_id": str(user_id),
-                    "username": str(username),
-                    "role": str(role),
-                    "ip_address": str(ip),
-                    "user_agent": str(agent),
-                    "issued_at": str(now),
-                    "last_seen": str(now),
-                }
-                self.expires[key] = self.now + int(ttl)
-                return 1
+                for slot, key in enumerate(keys, start=1):
+                    self._purge(key)
+                    if key in self.rows:
+                        continue
+                    self.rows[key] = {
+                        "token_hash": str(token_hash),
+                        "identity": str(identity) if slot == 1 else f"{identity}:{slot}",
+                        "user_id": str(user_id),
+                        "username": str(username),
+                        "role": str(role),
+                        "ip_address": str(ip),
+                        "user_agent": str(agent),
+                        "issued_at": str(now),
+                        "last_seen": str(now),
+                    }
+                    self.expires[key] = self.now + int(ttl)
+                    return slot
+                return 0
+            key = keys[0]
+            self._purge(key)
             if key not in self.rows or self.rows[key]["token_hash"] != str(args[0]):
                 return 0
             if "'last_seen'" in script:
@@ -125,6 +130,20 @@ def test_only_one_concurrent_acquire_wins():
     with ThreadPoolExecutor(max_workers=8) as pool:
         tokens = list(pool.map(lambda _: _acquire(service), range(8)))
     assert sum(token is not None for token in tokens) == 1
+
+
+def test_admin_can_use_two_devices_but_not_three():
+    service = _service()
+    details = dict(user_id=1, username="admin", role="admin", ip_address="127.0.0.1", user_agent="pytest")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        leases = list(pool.map(lambda _: service.acquire("admin:1", max_sessions=2, **details), range(3)))
+    active = [lease for lease in leases if lease]
+    assert {identity for identity, _ in active} == {"admin:1", "admin:1:2"}
+    assert service.validate(*active[0]) is True
+    assert service.validate(*active[1]) is True
+    assert service.release(*active[0]) is True
+    assert service.validate(*active[1]) is True
+    assert service.acquire("admin:1", max_sessions=2, **details) is not None
 
 
 def test_owner_can_refresh_and_release_but_stale_token_cannot():
@@ -200,6 +219,24 @@ def test_second_browser_is_blocked_and_logout_releases_account(app):
 
     assert first_browser.get("/logout").status_code == 302
     assert _login(second_browser).status_code == 200
+
+
+def test_admin_account_can_sign_in_on_two_devices(app):
+    _enable_single_session(app)
+    with app.app_context():
+        admin = Admin(full_name="Owner", username="owner")
+        admin.set_password("OwnerPassword123!")
+        db.session.add(admin)
+        db.session.commit()
+    browsers = [app.test_client() for _ in range(3)]
+    responses = [browser.post("/api/login", json={"username": "owner", "password": "OwnerPassword123!"})
+                 for browser in browsers]
+    assert [response.status_code for response in responses] == [200, 200, 409]
+    assert browsers[0].get("/admin").status_code == 200
+    assert browsers[1].get("/admin").status_code == 200
+    assert browsers[0].get("/logout").status_code == 302
+    assert browsers[1].get("/admin").status_code == 200
+    assert browsers[2].post("/api/login", json={"username": "owner", "password": "OwnerPassword123!"}).status_code == 200
 
 
 def test_multiple_tabs_sharing_cookie_keep_the_same_lease(app):

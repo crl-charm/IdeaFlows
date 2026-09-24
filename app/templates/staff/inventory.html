@@ -135,16 +135,29 @@
   </div>
 
   {% if can_manage_kitchen %}
-  <section class="mb-4" aria-label="Prepared servings">
-    <h2 class="h5 fw-bold">Prepared servings</h2>
-    <p class="text-muted">Add a batch, record waste, or mark a meal sold out.</p>
-    <div id="prepared-kitchen-grid" class="kitchen-stock-grid"></div>
+  <section class="mb-4" aria-label="Meal servings">
+    <h2 class="h5 fw-bold">Meal servings</h2>
+    <p class="text-muted">Enter your serving estimate. Orders reduce servings; update raw ingredients separately.</p>
+    <button type="button" class="btn btn-outline-warning mb-3" onclick="InventoryUI.openServings()">Set available servings</button>
   </section>
   {% endif %}
   <div class="modern-card card">
     <div class="card-header">
       <h5>Ingredients &amp; Stock</h5>
       <p class="text-muted mb-0 mt-1" style="font-size: 0.85rem;">What is currently on hand</p>
+      {% if can_manage_kitchen %}
+      <form id="raw-stock-form" class="d-flex flex-wrap align-items-end gap-2 mt-3">
+        <div>
+          <label for="raw-stock-item" class="form-label">Ingredient</label>
+          <select id="raw-stock-item" class="form-select" required></select>
+        </div>
+        <div>
+          <label for="raw-stock-count" class="form-label">Amount on hand</label>
+          <input id="raw-stock-count" class="form-control" type="number" min="0" max="999999" step="0.01" required>
+        </div>
+        <button type="submit" class="btn btn-outline-warning">Save stock</button>
+      </form>
+      {% endif %}
     </div>
     <div class="px-3 pt-3 pb-0">
       <div class="d-flex flex-wrap gap-2 mb-2" id="directStockFilters">
@@ -188,7 +201,7 @@
             <tr>
               <th>Item Name</th>
               <th>Type</th>
-              <th>Stock / Capacity</th>
+              <th>Available</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -239,6 +252,23 @@ document.addEventListener('DOMContentLoaded', function() {
       renderRecipeTable();
     });
   }
+  const rawForm = document.getElementById('raw-stock-form');
+  document.getElementById('raw-stock-item')?.addEventListener('change', event => {
+    document.getElementById('raw-stock-count').value = directStockItems.find(item => String(item.id) === event.target.value)?.stock_qty ?? 0;
+  });
+  rawForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = rawForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await fetchJSON(`/inventory/api/ingredients/${document.getElementById('raw-stock-item').value}/stock`, {
+        method:'PATCH', headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},
+        body:JSON.stringify({quantity:document.getElementById('raw-stock-count').value})});
+      showToast('Ingredient stock updated.', 'success');
+      refreshInventory();
+    } catch (error) { showToast(error.message || 'Could not save ingredient stock.', 'error'); }
+    finally { button.disabled = false; }
+  });
 });
 
 function matchesInventorySearch(name) {
@@ -254,6 +284,14 @@ function loadInventory() {
       if (data.success) {
         directStockItems = data.direct_stock || [];
         recipeItems = data.data || [];
+        InventoryUI.setMeals(recipeItems);
+        const rawSelect = document.getElementById('raw-stock-item');
+        if (rawSelect) {
+          const selected = rawSelect.value;
+          rawSelect.innerHTML = directStockItems.map(item => `<option value="${Number(item.id)}">${escapeHtml(item.name)} (${escapeHtml(item.unit)})</option>`).join('');
+          if (directStockItems.some(item => String(item.id) === selected)) rawSelect.value = selected;
+          document.getElementById('raw-stock-count').value = directStockItems.find(item => String(item.id) === rawSelect.value)?.stock_qty ?? 0;
+        }
         renderDirectStockTable();
         renderRecipeTable();
       }
@@ -322,16 +360,8 @@ function renderDirectStockTable() {
 function renderRecipeTable() {
   const tbody = document.getElementById('recipe-inventory-body');
   const filtered = recipeItems.filter(item => matchesInventorySearch(item.name));
-  const kitchenGrid = document.getElementById('prepared-kitchen-grid');
-  if (kitchenGrid) {
-    kitchenGrid.innerHTML = filtered.filter(item => item.inventory_mode === 'prepared').map(item => `<article class="kitchen-stock-card">
-      <h3>${escapeHtml(item.name)}</h3>
-      <p class="inventory-count">${item.available_quantity} servings ready</p>
-      ${InventoryUI.status(item)}${InventoryUI.actions(item)}
-    </article>`).join('') || '<p class="text-muted">Prepared meals will appear here after the owner chooses “Prepared servings” in Menu.</p>';
-  }
   tbody.innerHTML = filtered.length ? filtered.map(item => `<tr>
-    <td class="fw-semibold">${escapeHtml(item.name)}${InventoryUI.actions(item)}</td>
+    <td class="fw-semibold">${escapeHtml(item.name)}</td>
     <td>${InventoryUI.labels[item.inventory_mode] || ''}</td>
     <td><strong>${item.available_quantity == null ? 'No quantity tracking' : item.available_quantity + ' ' + item.display_unit}</strong></td>
     <td>${InventoryUI.status(item)}</td>

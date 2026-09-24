@@ -43,7 +43,7 @@ def api_list_receivables() -> tuple:
 @csrf.exempt
 @idempotent_request("admin-create-receivable")
 def api_create_receivable() -> tuple:
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     user_id = session.get("user_id")
     
     if not user_id:
@@ -56,17 +56,21 @@ def api_create_receivable() -> tuple:
     if not isfinite(amount_owed) or amount_owed <= 0:
         return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
 
-    result = _service.create(
-        customer_name=data.get("customer_name"),
-        customer_contact=data.get("customer_contact"),
-        items_description=data.get("items_description"),
-        amount_owed=amount_owed,
-        due_date=data.get("due_date"),
-        created_by=user_id,
-        session_id=data.get("session_id"),
-        approved_by_staff=data.get("approved_by_staff"),
-        incurred_date=data.get("incurred_date"),
-    )
+    try:
+        result = _service.create(
+            customer_name=data.get("customer_name"),
+            customer_contact=data.get("customer_contact"),
+            items_description=data.get("items_description"),
+            amount_owed=amount_owed,
+            due_date=data.get("due_date"),
+            created_by=user_id,
+            session_id=data.get("session_id"),
+            approved_by_staff=data.get("approved_by_staff"),
+            incurred_date=data.get("incurred_date"),
+            notes=data.get("notes"),
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     if result.get("success"):
         emit_receivables_update('create', result.get("data", {}))
     return jsonify(result), 201
@@ -76,7 +80,8 @@ def api_create_receivable() -> tuple:
 @admin_required
 @idempotent_request("admin-mark-receivable-paid")
 def api_mark_paid(rec_id: int) -> tuple:
-    result = _service.mark_paid(rec_id)
+    data = request.get_json(silent=True) or {}
+    result = _service.mark_paid(rec_id, data.get("amount"), session["user_id"], data.get("payment_method", "cash"))
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
@@ -84,18 +89,43 @@ def api_mark_paid(rec_id: int) -> tuple:
     return jsonify(result), 200
 
 
-@receivables_bp.route("/api/receivables/mark-customer-paid", methods=["POST"])
+@receivables_bp.route("/api/receivables/customer-payment", methods=["POST"])
 @admin_required
-@idempotent_request("admin-mark-customer-receivables-paid")
-def api_mark_customer_paid() -> tuple:
-    data = request.get_json() or {}
-    customer_name = data.get("customer_name")
+@idempotent_request("admin-record-customer-payment")
+def api_record_customer_payment() -> tuple:
+    data = request.get_json(silent=True) or {}
+    result = _service.record_customer_payment(
+        data.get("customer_name"), data.get("amount"), session["user_id"],
+        data.get("payment_method", "cash"), data.get("customer_contact", ""),
+    )
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    if result.get("success"):
+        emit_receivables_update('mark_paid', {'customer_name': data.get("customer_name")})
+    return jsonify(result), 200
+
+
+@receivables_bp.route("/api/receivables/customer-payments", methods=["GET"])
+@admin_required
+def api_customer_payments() -> tuple:
+    customer_name = request.args.get("customer_name", "").strip()
     if not customer_name:
         return jsonify({"success": False, "error": "Customer name is required"}), 400
-    
-    result = _service.mark_customer_paid(customer_name)
-    if result.get("success"):
-        emit_receivables_update('mark_paid', {'customer_name': customer_name})
+    return jsonify({"success": True, "data": _service.list_customer_payments(customer_name, request.args.get("customer_contact", ""))}), 200
+
+
+@receivables_bp.route("/api/receivables/<int:rec_id>/notes", methods=["PATCH"])
+@admin_required
+@idempotent_request("admin-update-receivable-notes")
+def api_update_notes(rec_id: int) -> tuple:
+    data = request.get_json(silent=True) or {}
+    notes = data.get("notes")
+    if not isinstance(notes, str):
+        return jsonify({"error": "Notes must be text"}), 400
+    result = _service.update_notes(rec_id, notes)
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    emit_receivables_update('update', {'receivable_id': rec_id})
     return jsonify(result), 200
 
 

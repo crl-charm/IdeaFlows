@@ -19,12 +19,11 @@ class SessionLeaseUnavailable(RuntimeError):
 
 
 _ACQUIRE_SCRIPT = """
-if redis.call('EXISTS', KEYS[1]) == 1 then
-  return 0
-end
-redis.call('HSET', KEYS[1],
+for slot = 1, #KEYS do
+  if redis.call('EXISTS', KEYS[slot]) == 0 then
+    redis.call('HSET', KEYS[slot],
   'token_hash', ARGV[2],
-  'identity', ARGV[3],
+  'identity', slot == 1 and ARGV[3] or ARGV[3] .. ':' .. slot,
   'user_id', ARGV[4],
   'username', ARGV[5],
   'role', ARGV[6],
@@ -32,8 +31,11 @@ redis.call('HSET', KEYS[1],
   'user_agent', ARGV[8],
   'issued_at', ARGV[9],
   'last_seen', ARGV[9])
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
-return 1
+    redis.call('EXPIRE', KEYS[slot], tonumber(ARGV[1]))
+    return slot
+  end
+end
+return 0
 """
 
 _REFRESH_SCRIPT = """
@@ -108,16 +110,17 @@ class SessionLeaseService:
         role: str,
         ip_address: str,
         user_agent: str,
-    ) -> str | None:
-        """Return a new plaintext token, or ``None`` when already leased."""
+        max_sessions: int = 1,
+    ) -> str | tuple[str, str] | None:
+        """Return a token (or identity and token for multiple slots)."""
         redis_client = self._require_redis()
         token = secrets.token_urlsafe(32)
         now = _utc_iso()
         try:
             created = redis_client.eval(
                 _ACQUIRE_SCRIPT,
-                1,
-                self._key(identity),
+                max_sessions,
+                *(self._key(identity if slot == 1 else f"{identity}:{slot}") for slot in range(1, max_sessions + 1)),
                 self.ttl_seconds,
                 _token_hash(token),
                 identity[:100],
@@ -130,7 +133,8 @@ class SessionLeaseService:
             )
             if not created:
                 return None
-            return token
+            claimed_identity = identity if created == 1 else f"{identity}:{created}"
+            return (claimed_identity, token) if max_sessions > 1 else token
         except Exception as exc:
             raise SessionLeaseUnavailable("The login session registry is unavailable") from exc
 

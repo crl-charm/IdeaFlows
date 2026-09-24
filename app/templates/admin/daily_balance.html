@@ -17,9 +17,9 @@
       <button class="btn btn-info btn-sm" onclick="exportCSV()">
         <i class="bi bi-download"></i> <span class="d-none d-sm-inline">Export CSV</span>
       </button>
-      <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal">
+      {% if session.get("role") == "admin" %}<button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal">
         <i class="bi bi-plus"></i> <span class="d-none d-sm-inline">Generate Report</span>
-      </button>
+      </button>{% endif %}
     </div>
   </div>
 
@@ -47,7 +47,7 @@
 
   <div class="row g-3 mb-4">
     <!-- Receivables Highlight Card -->
-    <div class="col-12 col-md-4">
+    <div class="col-12 col-md-3">
       <div class="card h-100 border-0 shadow-sm" style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border-left: 5px solid #d97706 !important;">
         <div class="card-body d-flex flex-column justify-content-between p-4">
           <div>
@@ -57,7 +57,7 @@
           <div>
             <div class="display-6 fw-bold text-dark mb-1">₱<span id="today-receivables-collected">0.00</span></div>
             <div class="text-muted small">
-              <span class="badge bg-warning text-dark fw-semibold" id="today-receivables-count">0</span> debtor(s) paid today
+              <span class="badge bg-warning text-dark fw-semibold" id="today-receivables-count">0</span> payment(s) today
             </div>
           </div>
         </div>
@@ -65,7 +65,7 @@
     </div>
 
     <!-- Cash on Hand Card -->
-    <div class="col-12 col-md-4">
+    <div class="col-12 col-md-3">
       <div class="card h-100 border-0 text-white shadow-sm" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
         <div class="card-body d-flex flex-column justify-content-between p-4">
           <div>
@@ -74,14 +74,26 @@
           </div>
           <div>
             <div class="display-6 fw-bold mb-1">₱<span id="today-cash-on-hand">0.00</span></div>
-            <div class="small" style="opacity: 0.9;">Total checked out today</div>
+            <div class="small" style="opacity: 0.9;">Cash sales + cash debt payments − today’s expenses</div>
           </div>
         </div>
       </div>
     </div>
 
+    <!-- Money still owed, without cash already on hand -->
+    <div class="col-12 col-md-3">
+      <div class="card h-100 border-0 shadow-sm" style="background:#fff7e6;">
+        <div class="card-body d-flex flex-column justify-content-between p-4">
+          <div><span class="fw-bold text-uppercase" style="font-size:0.75rem;letter-spacing:0.05em;color:#9a6700;">Unpaid</span>
+            <h5 class="card-title mb-3">Still to Collect</h5></div>
+          <div><div class="display-6 fw-bold mb-1">₱<span id="today-expected-collections">0.00</span></div>
+            <div class="text-muted small">Active sessions + unpaid customer debts</div></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Expected Cash on Hand Card -->
-    <div class="col-12 col-md-4">
+    <div class="col-12 col-md-3">
       <div class="card h-100 border-2 border-primary shadow-sm bg-white" style="border-style: dashed !important;">
         <div class="card-body d-flex flex-column justify-content-between p-4">
           <div>
@@ -90,7 +102,7 @@
           </div>
           <div>
             <div class="display-6 fw-bold text-primary mb-1">₱<span id="today-expected-cash">0.00</span></div>
-            <div class="text-muted small">Cash on hand + active session balances</div>
+            <div class="text-muted small">Cash on hand + still to collect</div>
           </div>
         </div>
       </div>
@@ -273,6 +285,7 @@
   </div>
 </div>
 
+{% if session.get("role") == "admin" %}
 <!-- Generate Report Modal -->
 <div class="modal fade" id="generateReportModal" tabindex="-1">
   <div class="modal-dialog">
@@ -305,6 +318,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {% endblock %}
 
@@ -332,6 +346,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('today-receivables-collected').textContent = stats.receivables_collected_today.toFixed(2);
         document.getElementById('today-receivables-count').textContent = stats.receivables_paid_today;
         document.getElementById('today-cash-on-hand').textContent = stats.cash_on_hand.toFixed(2);
+        document.getElementById('today-expected-collections').textContent = stats.expected_to_collect.toFixed(2);
         document.getElementById('today-expected-cash').textContent = stats.expected_cash_on_hand.toFixed(2);
       }
     } catch (_) {}
@@ -377,6 +392,7 @@ function loadReports() {
       document.getElementById('today-receivables-collected').textContent = stats.receivables_collected_today.toFixed(2);
       document.getElementById('today-receivables-count').textContent = stats.receivables_paid_today;
       document.getElementById('today-cash-on-hand').textContent = stats.cash_on_hand.toFixed(2);
+      document.getElementById('today-expected-collections').textContent = stats.expected_to_collect.toFixed(2);
       document.getElementById('today-expected-cash').textContent = stats.expected_cash_on_hand.toFixed(2);
     }
   });

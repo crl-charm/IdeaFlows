@@ -321,17 +321,18 @@
     <p>Add your first raw ingredient to start monitoring stock</p>
   </div>
 
-  <!-- RECIPE-BASED MEALS -->
+  <!-- MEAL SERVINGS -->
   <div class="mb-2 pt-2 border-top">
     <h2 class="h5 fw-bold text-dark mb-1">Meals &amp; Availability</h2>
-    <p class="text-muted mb-3" style="font-size: 0.9rem;">See meal stock or estimated servings. For recipe-based meals, ingredient stock above affects the estimate.</p>
+    <p class="text-muted mb-3" style="font-size: 0.9rem;">Enter your own serving estimate. Orders reduce servings; update raw ingredients separately.</p>
+    <button type="button" class="btn btn-outline-warning mb-3" onclick="InventoryUI.openServings()">Set available servings</button>
     <button type="button" id="setupReviewFilter" class="filter-chip mb-3" aria-pressed="false" onclick="toggleSetupReview()">Needs setup review: <span id="setupReviewCount">0</span></button>
   </div>
   <div class="row g-4" id="recipe-inventory-grid"></div>
   <div class="empty-state" id="recipeEmpty" style="display: none;">
     <div class="empty-icon">🍽️</div>
     <h3>No sellable menu items</h3>
-    <p>Menu meals will appear here for recipe linking and capacity</p>
+    <p>Menu meals will appear here with their available servings</p>
   </div>
 </div>
 
@@ -618,6 +619,7 @@ function loadInventory() {
       if (data.success) {
         directStockItems = data.direct_stock || [];
         recipeItems = data.data || [];
+        InventoryUI.setMeals(recipeItems);
         document.getElementById('setupReviewCount').textContent = recipeItems.filter(item => item.setup_review).length;
         inventorySummary = data.summary || null;
         updateInventorySummary();

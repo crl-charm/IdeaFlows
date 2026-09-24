@@ -1,13 +1,13 @@
 """One availability calculation for ordering, kitchen and owner screens."""
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation, ROUND_UP
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import update
 
 from app import db
 from app.models import MenuItem, MenuItemIngredient, InventoryItem, InventoryLog
 from app.models.inventory import OrderInventoryAllocation
-from app.utils.inventory_helpers import is_ingredient_category, units_are_compatible
+from app.utils.inventory_helpers import is_ingredient_category
 
 MODES = {"prepared", "direct", "recipe", "untracked"}
 
@@ -49,7 +49,6 @@ class MenuAvailability:
         for mapping in MenuItemIngredient.query.filter(MenuItemIngredient.menu_item_id.in_(self.items)).order_by(MenuItemIngredient.id).all():
             self.recipes[mapping.menu_item_id].append(mapping)
         stock_ids = set(self.items)
-        stock_ids.update(m.ingredient_item_id for recipes in self.recipes.values() for m in recipes)
         stocks = InventoryItem.query.filter(InventoryItem.menu_item_id.in_(stock_ids)).order_by(InventoryItem.id)
         if lock:
             stocks = stocks.populate_existing().with_for_update()
@@ -68,25 +67,14 @@ class MenuAvailability:
             return []
         if mode not in MODES:
             raise StockError("The owner needs to review this item's stock setup.", "INVENTORY_CONFIGURATION", 400)
-        if mode in {"prepared", "direct"}:
+        if mode in {"prepared", "direct", "recipe"}:
             stock = self.stock.get(item.id)
             if stock is None:
                 raise StockError(f"{item.name} needs a starting stock count.", "INVENTORY_ROW_NOT_FOUND", 400)
+            if stock.unit != ("pieces" if mode == "direct" else "servings"):
+                raise StockError(f"Check the stock unit for {item.name}.", "INVENTORY_CONFIGURATION", 400)
             return [(stock, Decimal(1))]
-        if not self.recipes[item.id]:
-            raise StockError(f"{item.name} needs a recipe.", "INVENTORY_CONFIGURATION", 400)
-        totals = defaultdict(Decimal)
-        for mapping in self.recipes[item.id]:
-            stock = self.stock.get(mapping.ingredient_item_id)
-            if stock is None:
-                raise StockError(f"{item.name} has an ingredient without a stock count.", "INVENTORY_ROW_NOT_FOUND", 400)
-            ratio = Decimal(str(mapping.conversion_ratio or 1))
-            amount = Decimal(str(mapping.quantity_required)) * ratio
-            if not amount.is_finite() or amount <= 0 or not units_are_compatible(mapping.unit, stock.unit, float(ratio)):
-                raise StockError(f"Check the ingredient units for {item.name}.", "INVALID_UNIT_CONVERSION", 400)
-            totals[stock.menu_item_id] += amount
-        # Stock is stored to two decimals; round each serving up consistently.
-        return [(self.stock[key], value.quantize(Decimal("0.01"), rounding=ROUND_UP)) for key, value in totals.items()]
+        return []
 
     def snapshot(self, item):
         mode = self.mode(item)
@@ -99,7 +87,9 @@ class MenuAvailability:
                 quantity = min(max(0, int(row.stock_qty // per_unit)) for row, per_unit in needs)
                 low = quantity > 0 and any(row.stock_qty <= row.low_stock_threshold for row, _ in needs)
         except StockError as exc:
-            error, quantity = exc.code, 0
+            quantity = 0
+            if not (mode == "recipe" and exc.code == "INVENTORY_ROW_NOT_FOUND"):
+                error = exc.code
         disabled = not item.is_available or item.status == "deleted" or is_ingredient_category(item.category)
         state = "disabled" if disabled else "configuration_error" if error else "sold_out" if quantity == 0 else "low" if low else "available"
         unit = "servings" if mode in {"prepared", "recipe"} else "pieces" if mode == "direct" else None

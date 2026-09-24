@@ -94,7 +94,26 @@ class MenuService:
                 for item in self.repo.list_all()
             ]
 
-        return get_or_set_json("menu:all", load)
+        return self._with_availability(get_or_set_json("menu:all", load))
+
+    @staticmethod
+    def _with_availability(rows, *, for_ordering=False):
+        from app.services.menu_availability import MenuAvailability
+
+        if not rows:
+            return rows
+        availability = MenuAvailability([row["id"] for row in rows])
+        result = []
+        for row in rows:
+            item = availability.items.get(row["id"])
+            if item is None or item.status == "deleted":
+                continue
+            snapshot = availability.snapshot(item)
+            current = {**row, **snapshot}
+            if for_ordering:
+                current["is_available"] = snapshot["can_order"]
+            result.append(current)
+        return result
 
     def list_available(self) -> list[dict[str, Any]]:
         def load():
@@ -127,7 +146,7 @@ class MenuService:
                 for item in self.repo.list_for_ordering()
             ]
 
-        return get_or_set_json("menu:ordering", load)
+        return self._with_availability(get_or_set_json("menu:ordering", load), for_ordering=True)
 
     def create(self, name: str, price: float, category: str, description: Optional[str] = None, image_url: Optional[str] = None,
                inventory_mode: str = "untracked", stock_quantity=0, stock_threshold=3, actor=None,
@@ -139,10 +158,9 @@ class MenuService:
         if image_url:
             item.image_url = image_url
         if recipe_ingredients is not None:
-            if recipe_ingredients and inventory_mode not in {"untracked", "recipe"}:
-                raise StockError("Use either recipe ingredients or a prepared count, not both.", "INVALID_MODE", 400)
             self._set_recipe(item, recipe_ingredients)
-            inventory_mode = "recipe" if recipe_ingredients else inventory_mode
+            if recipe_ingredients and inventory_mode == "untracked":
+                inventory_mode = "recipe"
         change_stock(item.id, {"action": "setup", "inventory_mode": inventory_mode,
             "quantity": stock_quantity, "threshold": stock_threshold, "reason": "Menu item created"},
             actor, str(uuid4()), admin=True, commit=False)
@@ -198,16 +216,18 @@ class MenuService:
         if recipe_ingredients is not None:
             if inventory_mode is not None:
                 raise StockError("Change the recipe or stock mode, not both.", "INVALID_MODE", 400)
-            if recipe_ingredients and item.inventory_mode in {"prepared", "direct"} and not confirm_recipe_switch:
-                raise StockError("Confirm switching from counted stock to recipe ingredients.", "CONFIRM_REQUIRED", 400)
             had_recipe = bool(item.ingredients)
             self._set_recipe(item, recipe_ingredients)
-            if recipe_ingredients:
+            if recipe_ingredients and item.inventory_mode in {None, "untracked"}:
                 inventory_mode = "recipe"
-            elif item.inventory_mode == "recipe" or had_recipe:
-                inventory_mode = "untracked"
+            elif not recipe_ingredients and (item.inventory_mode == "recipe" or (had_recipe and item.inventory_mode is None)):
+                inventory_mode = "prepared"
         if inventory_mode is not None and inventory_mode != item.inventory_mode:
             from app.services.stock_management import change_stock
+            if item.inventory_mode in {None, "recipe"} and inventory_mode == "prepared":
+                stock = InventoryItem.query.filter_by(menu_item_id=item.id).first()
+                stock_quantity = stock.stock_qty if stock else 0
+                stock_threshold = stock.low_stock_threshold if stock else stock_threshold
             change_stock(item.id, {"action": "setup", "inventory_mode": inventory_mode,
                 "quantity": stock_quantity, "threshold": stock_threshold, "reason": "Menu setup changed"},
                 actor, str(uuid4()), admin=True, commit=False)

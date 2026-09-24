@@ -354,7 +354,7 @@ function viewOrder(sessionId) {
                 itemsHTML += `
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <div>
-                            ${item.item_name} x${item.quantity}
+                            ${escapeHtml(item.item_name)} x${item.quantity}
                             <br>
                             <small>₱${item.total.toFixed(2)}</small>
                         </div>
@@ -376,7 +376,7 @@ function viewOrder(sessionId) {
                     <hr>
                 </div>
 
-                <p><strong>Customer:</strong> ${data.customer_name}</p>
+                <p><strong>Customer:</strong> ${escapeHtml(data.customer_name)}</p>
                 <p><strong>Time Used:</strong> ${formatTime(Math.floor(data.minutes_used * 60))}</p>
 
                 <hr>
@@ -387,8 +387,23 @@ function viewOrder(sessionId) {
                 <p><strong>Time Bill:</strong> ₱${data.time_bill.toFixed(2)}</p>
                 <p><strong>Food Bill:</strong> ₱${data.food_bill.toFixed(2)}</p>
 
+                ${orderData.orders.length ? `<div class="mb-2">
+                    <label class="form-label" for="discountType">PWD / Senior discount</label>
+                    <select id="discountType" class="form-select mb-2">
+                      <option value="">No discount</option><option value="pwd">PWD — 20%</option>
+                      <option value="senior">Senior Citizen — 20%</option>
+                    </select>
+                    <label class="form-label" for="discountItem">Choose one meal/item</label>
+                    <select id="discountItem" class="form-select">
+                      <option value="">Select an item</option>
+                      ${orderData.orders.map(item => `<option value="${item.id}">${escapeHtml(item.item_name)} — one × ₱${item.price.toFixed(2)}</option>`).join('')}
+                    </select>
+                    <small class="text-muted">Only one unit of the selected item gets 20% off, even if the quantity is more than one.</small>
+                  </div>` : ''}
+                <p id="discount-row" class="text-success" style="display:none"><strong>Discount:</strong> −₱<span id="discount-amount">0.00</span></p>
+
                 <hr>
-                <h5>Total: ₱${data.total_bill.toFixed(2)}</h5>
+                <h5>Total: ₱<span id="checkout-total">${data.total_bill.toFixed(2)}</span></h5>
                 <p class="text-muted small mb-0" id="selected-payment-hint">Select payment method below before checkout.</p>
             `;
 
@@ -399,12 +414,28 @@ function viewOrder(sessionId) {
             document.getElementById("paymentBpi").checked = false;
             document.getElementById("paymentQueenbank").checked = false;
 
-            const totalBill = data.total_bill;
+            let totalBill = data.total_bill;
             document.getElementById("cashAmountGiven").value = "";
             document.getElementById("cashChangeDisplay").textContent = "₱0.00";
 
             const cashInput = document.getElementById("cashAmountGiven");
             const changeDisplay = document.getElementById("cashChangeDisplay");
+
+            function updateDiscount() {
+                const type = document.getElementById('discountType')?.value || '';
+                const itemId = Number(document.getElementById('discountItem')?.value || 0);
+                const item = orderData.orders.find(row => row.id === itemId);
+                const discount = type && item ? Math.round((item.price * 0.20 + Number.EPSILON) * 100) / 100 : 0;
+                totalBill = Math.round((data.total_bill - discount) * 100) / 100;
+                document.getElementById('discount-amount').textContent = discount.toFixed(2);
+                document.getElementById('discount-row').style.display = discount ? 'block' : 'none';
+                document.getElementById('checkout-total').textContent = totalBill.toFixed(2);
+                cashInput.dispatchEvent(new Event('input'));
+            }
+            if (document.getElementById('discountType')) {
+                document.getElementById('discountType').onchange = updateDiscount;
+                document.getElementById('discountItem').onchange = updateDiscount;
+            }
 
             cashInput.oninput = function () {
                 const given = parseFloat(cashInput.value);
@@ -448,6 +479,12 @@ function viewOrder(sessionId) {
             modal.show();
 
             document.getElementById("confirmCheckoutBtn").onclick = async function () {
+                const discountType = document.getElementById('discountType')?.value || '';
+                const discountItemId = document.getElementById('discountItem')?.value || '';
+                if (discountType && !discountItemId) {
+                    showToast('Choose one meal/item for the discount.', 'error');
+                    return;
+                }
                 const selected = document.querySelector('input[name="paymentMethod"]:checked');
                 const paymentMethod = selected ? selected.value : "cash";
                 const labels = { cash: "Cash", gcash: "GCash", bdo: "BDO", bpi: "BPI", queenbank: "QueenBank" };
@@ -489,6 +526,10 @@ function viewOrder(sessionId) {
 
                 const checkoutData = new FormData();
                 checkoutData.append("payment_method", paymentMethod);
+                if (discountType) {
+                    checkoutData.append('discount_type', discountType);
+                    checkoutData.append('discount_item_id', discountItemId);
+                }
                 if (amountTendered !== null) {
                     checkoutData.append("amount_tendered", amountTendered);
                 }

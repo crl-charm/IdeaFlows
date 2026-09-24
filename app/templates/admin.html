@@ -782,8 +782,14 @@
         </div>
         <div class="mb-3">
           <label class="form-label">New Password <small class="text-muted">(optional)</small></label>
-          <input type="password" class="form-control" id="edit_password"
-            placeholder="Leave blank to keep current password">
+          <div class="input-group">
+            <input type="password" class="form-control" id="edit_password"
+              placeholder="Leave blank to keep current password">
+            <button type="button" class="btn btn-outline-secondary" id="edit-password-toggle"
+              aria-label="Show password" aria-pressed="false" onclick="toggleEditPassword()">
+              <i class="bi bi-eye" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -1181,6 +1187,10 @@
     document.getElementById("edit_full_name").value = name;
     document.getElementById("edit_username").value = username;
     document.getElementById("edit_password").value = "";
+    document.getElementById("edit_password").type = "password";
+    document.getElementById("edit-password-toggle").setAttribute("aria-label", "Show password");
+    document.getElementById("edit-password-toggle").setAttribute("aria-pressed", "false");
+    document.querySelector("#edit-password-toggle i").className = "bi bi-eye";
     document.getElementById("edit_job_role").value = jobRole || "general";
 
     new bootstrap.Modal(document.getElementById("editUserModal")).show();
@@ -1407,6 +1417,16 @@
   }, 150);
   if (socket) {
     socket.on('staff_status_change', refreshStaffStatus);
+  }
+
+  function toggleEditPassword() {
+    const input = document.getElementById("edit_password");
+    const button = document.getElementById("edit-password-toggle");
+    const showing = input.type === "password";
+    input.type = showing ? "text" : "password";
+    button.setAttribute("aria-label", showing ? "Hide password" : "Show password");
+    button.setAttribute("aria-pressed", String(showing));
+    button.querySelector("i").className = showing ? "bi bi-eye-slash" : "bi bi-eye";
   }
 
 </script>

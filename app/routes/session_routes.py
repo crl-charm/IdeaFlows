@@ -24,7 +24,7 @@ _service = SessionService(
 # CHECK-IN CUSTOMER
 # -----------------------------
 @session_bp.route("/api/checkin", methods=["POST"])
-#@login_required
+@login_required
 @idempotent_request("customer-checkin")
 def checkin():
 
@@ -68,15 +68,19 @@ def checkout(session_id):
         or request.form.get("amount_tendered")
         or request.args.get("amount_tendered")
     )
-    resp = _service.checkout(session_id, payment_method=payment_method, amount_tendered=amount_tendered)
+    discount_type = data.get("discount_type") or request.form.get("discount_type")
+    discount_item_id = data.get("discount_item_id") or request.form.get("discount_item_id")
+    resp = _service.checkout(session_id, payment_method=payment_method, amount_tendered=amount_tendered,
+                             discount_type=discount_type, discount_item_id=discount_item_id)
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status
     return jsonify(resp)
 
 @session_bp.route("/api/preview-checkout/<int:session_id>")
+@login_required
 def preview_checkout(session_id):
-    resp = _service.preview_checkout(session_id)
+    resp = _service.preview_checkout(session_id, request.args.get("discount_type"), request.args.get("discount_item_id"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

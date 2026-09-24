@@ -86,8 +86,6 @@ def test_hidden_sidebar_badges_do_not_poll_unused_endpoints():
 def test_receivables_cancels_queued_socket_refresh_before_modal_reload():
     receivables = _template("admin/receivables.html")
     cancel_at = receivables.index("refreshReceivables.cancel();")
-    reload_at = receivables.index(
-        "fetch('/admin/receivables/api/receivables')", cancel_at
-    )
+    reload_at = receivables.index("await loadReceivables();", cancel_at)
 
     assert cancel_at < reload_at

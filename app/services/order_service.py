@@ -77,7 +77,8 @@ class OrderService:
                 snapshot = availability.snapshot(item)
                 shortage = (availability.shortage(item, quantities[item.id])
                     if snapshot["availability_state"] in {"sold_out", "low", "available"}
-                    and snapshot["available_quantity"] is not None else None)
+                    and snapshot["available_quantity"] is not None
+                    and snapshot["available_quantity"] > 0 else None)
                 if not snapshot["can_order"]:
                     error_code = snapshot["availability_error"] or "UNAVAILABLE"
                     error_status = 400 if error_code in {

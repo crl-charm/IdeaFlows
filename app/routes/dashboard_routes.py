@@ -7,7 +7,7 @@ bp = Blueprint("dashboard", __name__)
 @bp.route("/dashboard")
 @login_required
 def dashboard():
-    return render_template("dashboard.html", space_types=SpaceType.query.order_by(SpaceType.id).all())
+    return render_template("dashboard.html", space_types=SpaceType.query.filter(SpaceType.name != "Whole Hub").order_by(SpaceType.id).all())
 
 
 @bp.route("/checkout-records")

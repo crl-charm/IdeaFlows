@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from sqlalchemy import func
 
 from app.repositories.inventory_repository import InventoryRepository
-from app.utils.inventory_helpers import is_ingredient_category, units_are_compatible
-
-logger = logging.getLogger(__name__)
+from app.utils.inventory_helpers import is_ingredient_category
 
 DEFAULT_LOW_STOCK_THRESHOLD = 10
 DEFAULT_UNIT = "pieces"
@@ -94,238 +91,24 @@ class InventoryService:
         menu_item_id: int,
         inventory_map: dict[int, Any] | None = None,
     ) -> dict[str, Any]:
-        from app.models.menu_item import MenuItem, MenuItemIngredient
+        from app import db
+        from app.models.menu_item import MenuItem
+        from app.services.menu_availability import MenuAvailability
 
-        meal = MenuItem.query.get(menu_item_id)
+        meal = db.session.get(MenuItem, menu_item_id)
         if not meal or meal.status == "deleted":
-            return {
-                "has_recipe": False,
-                "capacity": 0,
-                "is_available": False,
-                "error": "MENU_ITEM_NOT_FOUND",
-                "message": "Menu item not found.",
-                "is_low": False,
-                "is_warning": False,
-                "is_out_of_stock": True,
-            }
+            return {"has_recipe": False, "capacity": 0, "is_available": False,
+                    "error": "MENU_ITEM_NOT_FOUND", "message": "Menu item not found.",
+                    "is_low": False, "is_warning": False, "is_out_of_stock": True}
+        availability = MenuAvailability([menu_item_id])
+        snapshot = availability.snapshot(meal)
+        count = snapshot["available_quantity"]
+        return {"has_recipe": bool(availability.recipes[menu_item_id]),
+                "capacity": count if count is not None else 0,
+                "is_available": snapshot["can_order"], "error": snapshot["availability_error"],
+                "message": snapshot["availability_message"], "is_low": snapshot["is_low_stock"],
+                "is_warning": False, "is_out_of_stock": snapshot["is_out_of_stock"]}
 
-        mappings = MenuItemIngredient.query.filter_by(menu_item_id=menu_item_id).all()
-        if not mappings:
-            snap = self.resolve_inventory_snapshot(menu_item_id, inventory_map)
-            status = self.compute_stock_status(
-                snap["stock_qty"], snap["low_stock_threshold"]
-            )
-            capacity = int(float(snap["stock_qty"]))
-            if not snap["persisted"]:
-                return {
-                    "has_recipe": False,
-                    "capacity": 0,
-                    "is_available": False,
-                    "error": "INVENTORY_ROW_NOT_FOUND",
-                    "message": f"'{meal.name}' has no inventory record.",
-                    "is_low": False,
-                    "is_warning": False,
-                    "is_out_of_stock": True,
-                }
-            return {
-                "has_recipe": False,
-                "capacity": capacity,
-                "is_available": capacity > 0,
-                "error": None,
-                "message": None,
-                **status,
-            }
-
-        if inventory_map is None:
-            ingredient_ids = [m.ingredient_item_id for m in mappings]
-            inventory_map = self._build_inventory_map(ingredient_ids)
-
-        caps: list[int] = []
-        is_low = False
-        is_warning = False
-
-        for mapping in mappings:
-            ing = mapping.ingredient
-            ing_name = ing.name if ing else "Unknown"
-            snap = self.resolve_inventory_snapshot(
-                mapping.ingredient_item_id, inventory_map
-            )
-            if not snap["persisted"]:
-                return {
-                    "has_recipe": True,
-                    "capacity": 0,
-                    "is_available": False,
-                    "error": "INVENTORY_ROW_NOT_FOUND",
-                    "message": f"Recipe ingredient '{ing_name}' has no inventory record.",
-                    "is_low": False,
-                    "is_warning": False,
-                    "is_out_of_stock": True,
-                }
-
-            if not units_are_compatible(
-                mapping.unit, snap["unit"], float(mapping.conversion_ratio or 1.0)
-            ):
-                return {
-                    "has_recipe": True,
-                    "capacity": 0,
-                    "is_available": False,
-                    "error": "INVALID_UNIT_CONVERSION",
-                    "message": (
-                        f"Invalid unit conversion for ingredient '{ing_name}' "
-                        f"(recipe: {mapping.unit or 'pieces'}, inventory: {snap['unit']})."
-                    ),
-                    "is_low": False,
-                    "is_warning": False,
-                    "is_out_of_stock": True,
-                }
-
-            ing_status = self.compute_stock_status(
-                snap["stock_qty"], snap["low_stock_threshold"]
-            )
-            if ing_status["is_low"]:
-                is_low = True
-            elif ing_status["is_warning"]:
-                is_warning = True
-
-            qty_req = float(mapping.quantity_required) * float(
-                mapping.conversion_ratio or 1.0
-            )
-            if qty_req > 0:
-                caps.append(int(float(snap["stock_qty"]) / qty_req))
-            else:
-                caps.append(0)
-
-        capacity = min(caps) if caps else 0
-        status = self.compute_stock_status(capacity, 1)
-        return {
-            "has_recipe": True,
-            "capacity": capacity,
-            "is_available": capacity > 0,
-            "error": None,
-            "message": None,
-            "is_low": is_low,
-            "is_warning": is_warning,
-            "is_out_of_stock": capacity <= 0,
-        }
-
-    def validate_order_stock(self, items: list[dict[str, Any]]) -> dict[str, Any] | None:
-        from app.models.menu_item import MenuItem, MenuItemIngredient
-        from app.models.inventory import InventoryItem
-
-        ingredient_needs: dict[int, list[float, list[str], str | None]] = {}
-
-        for item in items:
-            menu_item_id = item.get("menu_item_id")
-            qty = float(item.get("quantity", 1))
-            menu_item = MenuItem.query.get(menu_item_id)
-            if not menu_item:
-                continue
-
-            cap = self.calculate_recipe_capacity(menu_item_id)
-            logger.info(
-                "add_order capacity menu_item_id=%s name=%s capacity=%s error=%s",
-                menu_item_id,
-                menu_item.name,
-                cap.get("capacity"),
-                cap.get("error"),
-            )
-            if cap.get("error"):
-                return {
-                    "error": cap["error"],
-                    "message": cap.get("message") or cap["error"],
-                }
-            if cap["capacity"] < qty:
-                return {
-                    "error": "INSUFFICIENT_STOCK",
-                    "message": (
-                        f"Insufficient stock to prepare {qty} × {menu_item.name} "
-                        f"(capacity: {cap['capacity']})."
-                    ),
-                }
-
-            recipe = MenuItemIngredient.query.filter_by(
-                menu_item_id=menu_item_id
-            ).all()
-            logger.info(
-                "add_order recipe menu_item_id=%s mappings=%s",
-                menu_item_id,
-                len(recipe),
-            )
-            if recipe:
-                for comp in recipe:
-                    ing = MenuItem.query.get(comp.ingredient_item_id)
-                    ing_name = ing.name if ing else "Unknown"
-                    logger.info(
-                        "add_order ingredient id=%s name=%s category=%s",
-                        comp.ingredient_item_id,
-                        ing_name,
-                        ing.category if ing else None,
-                    )
-                    ratio = float(comp.conversion_ratio or 1.0)
-                    needed = qty * float(comp.quantity_required) * ratio
-                    inv = InventoryItem.query.filter_by(
-                        menu_item_id=comp.ingredient_item_id
-                    ).first()
-                    logger.info(
-                        "add_order inventory exists=%s required=%s available=%s",
-                        inv is not None,
-                        needed,
-                        float(inv.stock_qty) if inv else None,
-                    )
-                    if not inv:
-                        return {
-                            "error": "INVENTORY_ROW_NOT_FOUND",
-                            "message": f"Recipe ingredient '{ing_name}' has no inventory record.",
-                        }
-                    if not units_are_compatible(
-                        comp.unit, inv.unit, float(comp.conversion_ratio or 1.0)
-                    ):
-                        return {
-                            "error": "INVALID_UNIT_CONVERSION",
-                            "message": (
-                                f"Invalid unit conversion for ingredient '{ing_name}' "
-                                f"(recipe: {comp.unit or 'pieces'}, inventory: {inv.unit})."
-                            ),
-                        }
-                    if comp.ingredient_item_id not in ingredient_needs:
-                        ingredient_needs[comp.ingredient_item_id] = [0.0, [], None]
-                    ingredient_needs[comp.ingredient_item_id][0] += needed
-                    ingredient_needs[comp.ingredient_item_id][1].append(menu_item.name)
-            else:
-                inv = InventoryItem.query.filter_by(menu_item_id=menu_item_id).first()
-                if not inv:
-                    return {
-                        "error": "INVENTORY_ROW_NOT_FOUND",
-                        "message": f"'{menu_item.name}' has no inventory record.",
-                    }
-                if menu_item_id not in ingredient_needs:
-                    ingredient_needs[menu_item_id] = [0.0, [], None]
-                ingredient_needs[menu_item_id][0] += qty
-                ingredient_needs[menu_item_id][1].append(menu_item.name)
-
-        for ing_id, (needed_qty, meals, _) in ingredient_needs.items():
-            inv = InventoryItem.query.filter_by(menu_item_id=ing_id).first()
-            current_stock = float(inv.stock_qty) if inv else 0.0
-            if current_stock < needed_qty:
-                ing_item = MenuItem.query.get(ing_id)
-                ing_name = ing_item.name if ing_item else "Ingredient"
-                meal_list = ", ".join(set(meals))
-                logger.info(
-                    "add_order validation failure ingredient=%s need=%s have=%s meals=%s",
-                    ing_name,
-                    needed_qty,
-                    current_stock,
-                    meal_list,
-                )
-                return {
-                    "error": "INSUFFICIENT_STOCK",
-                    "message": (
-                        f"Insufficient stock for '{ing_name}' "
-                        f"(Need {needed_qty:.2f}, Have {current_stock:.2f}) "
-                        f"to prepare {meal_list}."
-                    ),
-                }
-        return None
 
     def get_inventory_summary(self) -> dict[str, int]:
         from app.models.inventory import InventoryItem
@@ -368,100 +151,6 @@ class InventoryService:
     def _build_inventory_map(self, menu_item_ids: list[int]) -> dict[int, Any]:
         return self.repo.list_by_menu_item_ids(menu_item_ids)
 
-    def _calculate_recipe_capacity_from_loaded(
-        self,
-        meal: Any,
-        mappings: list[Any],
-        inventory_map: dict[int, Any],
-        item_map: dict[int, Any],
-    ) -> dict[str, Any]:
-        """Calculate capacity without issuing queries for each menu item."""
-        if not mappings:
-            snap = self.resolve_inventory_snapshot(meal.id, inventory_map)
-            status = self.compute_stock_status(
-                snap["stock_qty"], snap["low_stock_threshold"]
-            )
-            capacity = int(float(snap["stock_qty"]))
-            if not snap["persisted"]:
-                return {
-                    "has_recipe": False,
-                    "capacity": 0,
-                    "is_available": False,
-                    "error": "INVENTORY_ROW_NOT_FOUND",
-                    "message": f"'{meal.name}' has no inventory record.",
-                    "is_low": False,
-                    "is_warning": False,
-                    "is_out_of_stock": True,
-                }
-            return {
-                "has_recipe": False,
-                "capacity": capacity,
-                "is_available": capacity > 0,
-                "error": None,
-                "message": None,
-                **status,
-            }
-
-        capacities: list[int] = []
-        is_low = False
-        is_warning = False
-        for mapping in mappings:
-            ingredient = item_map.get(mapping.ingredient_item_id)
-            ingredient_name = ingredient.name if ingredient else "Unknown"
-            snap = self.resolve_inventory_snapshot(
-                mapping.ingredient_item_id, inventory_map
-            )
-            if not snap["persisted"]:
-                return {
-                    "has_recipe": True,
-                    "capacity": 0,
-                    "is_available": False,
-                    "error": "INVENTORY_ROW_NOT_FOUND",
-                    "message": f"Recipe ingredient '{ingredient_name}' has no inventory record.",
-                    "is_low": False,
-                    "is_warning": False,
-                    "is_out_of_stock": True,
-                }
-            if not units_are_compatible(
-                mapping.unit, snap["unit"], float(mapping.conversion_ratio or 1.0)
-            ):
-                return {
-                    "has_recipe": True,
-                    "capacity": 0,
-                    "is_available": False,
-                    "error": "INVALID_UNIT_CONVERSION",
-                    "message": (
-                        f"Invalid unit conversion for ingredient '{ingredient_name}' "
-                        f"(recipe: {mapping.unit or 'pieces'}, inventory: {snap['unit']})."
-                    ),
-                    "is_low": False,
-                    "is_warning": False,
-                    "is_out_of_stock": True,
-                }
-
-            ingredient_status = self.compute_stock_status(
-                snap["stock_qty"], snap["low_stock_threshold"]
-            )
-            is_low = is_low or ingredient_status["is_low"]
-            is_warning = is_warning or ingredient_status["is_warning"]
-            required = float(mapping.quantity_required) * float(
-                mapping.conversion_ratio or 1.0
-            )
-            capacities.append(
-                int(float(snap["stock_qty"]) / required) if required > 0 else 0
-            )
-
-        capacity = min(capacities) if capacities else 0
-        return {
-            "has_recipe": True,
-            "capacity": capacity,
-            "is_available": capacity > 0,
-            "error": None,
-            "message": None,
-            "is_low": is_low,
-            "is_warning": is_warning,
-            "is_out_of_stock": capacity <= 0,
-        }
 
     def build_dashboard_snapshot(self) -> dict[str, Any]:
         """Load dashboard data in three bounded queries, independent of row count."""
@@ -763,11 +452,18 @@ class InventoryService:
     def update_stock(
         self,
         item_id: int | None,
-        new_qty: int,
+        new_qty: float | Decimal | str,
         reason: str,
         user_id: Optional[int],
         menu_item_id: int | None = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        try:
+            quantity = Decimal(str(new_qty))
+            if not quantity.is_finite() or quantity < 0 or quantity > 999999 or quantity != quantity.quantize(Decimal("0.01")):
+                raise ValueError
+        except (InvalidOperation, TypeError, ValueError):
+            return {"error": "Enter a stock quantity from 0 to 999999 with at most two decimals."}, 400
+
         if item_id:
             item = self.repo.get_item_for_update(item_id)
         elif menu_item_id is not None:
@@ -778,18 +474,15 @@ class InventoryService:
         if not item:
             return {"error": "Inventory item not found"}, 404
 
-        if new_qty < 0:
-            return {"error": "Stock quantity cannot be less than zero"}, 400
-
-        old_qty = float(item.stock_qty)
-        change = float(new_qty) - old_qty
+        old_qty = Decimal(str(item.stock_qty))
+        change = quantity - old_qty
 
         from app.models.user import User
 
         user = User.query.get(user_id) if user_id else None
         username = user.username if user else "System"
 
-        formatted_reason = f"{username} adjusted {change:+.2f} ({old_qty:.2f} → {new_qty:.2f}) - {reason}"
+        formatted_reason = f"{username} adjusted {change:+.2f} ({old_qty:.2f} → {quantity:.2f}) - {reason}"
         formatted_reason = formatted_reason[:100]
 
         if change > 0:
@@ -841,61 +534,6 @@ class InventoryService:
             return {"success": True}
         return {"error": "Failed to delete inventory item"}, 500
 
-    def deduct_on_order(
-        self, menu_item_id: int, qty: float, *, commit: bool = True
-    ) -> bool:
-        from app.models.menu_item import MenuItemIngredient
-        from app.core.socketio_handlers import emit_inventory_low_stock
-
-        ingredients = MenuItemIngredient.query.filter_by(menu_item_id=menu_item_id).all()
-
-        if ingredients:
-            success = True
-            for recipe_component in ingredients:
-                ratio = float(recipe_component.conversion_ratio or 1.0)
-                total_deduction = float(qty * recipe_component.quantity_required) * ratio
-                item = self.repo.get_by_menu_item_id_for_update(
-                    recipe_component.ingredient_item_id
-                )
-                if item:
-                    deducted = self.repo.deduct(
-                        item.id,
-                        total_deduction,
-                        f"Order deduction for {recipe_component.menu_item.name}",
-                        None,
-                    )
-                    if deducted:
-                        if float(item.stock_qty) < item.low_stock_threshold:
-                            emit_inventory_low_stock(
-                                {
-                                    "item_id": item.id,
-                                    "menu_item": item.menu_item.name,
-                                    "stock_qty": float(item.stock_qty),
-                                    "threshold": item.low_stock_threshold,
-                                }
-                            )
-                    else:
-                        success = False
-            if success and commit:
-                self.repo.save()
-            return success
-        else:
-            item = self.repo.get_by_menu_item_id_for_update(menu_item_id)
-            if not item:
-                return False
-            success = self.repo.deduct(item.id, qty, "Order deduction", None)
-            if success and commit:
-                self.repo.save()
-                if float(item.stock_qty) < item.low_stock_threshold:
-                    emit_inventory_low_stock(
-                        {
-                            "item_id": item.id,
-                            "menu_item": item.menu_item.name,
-                            "stock_qty": float(item.stock_qty),
-                            "threshold": item.low_stock_threshold,
-                        }
-                    )
-            return success
 
     def get_low_stock(self) -> list[dict[str, Any]]:
         items = self.repo.list_low_stock()

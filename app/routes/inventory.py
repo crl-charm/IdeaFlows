@@ -87,7 +87,7 @@ def api_update_stock(item_id: int) -> tuple:
     data = request.get_json()
     result = _service.update_stock(
         item_id=item_id,
-        new_qty=float(data.get("new_qty")),
+        new_qty=data.get("new_qty"),
         reason=data.get("reason", "Manual adjustment"),
         user_id=session.get("user_id"),
     )
@@ -107,7 +107,7 @@ def api_update_stock_by_menu_item(menu_item_id: int) -> tuple:
     result = _service.update_stock(
         item_id=None,
         menu_item_id=menu_item_id,
-        new_qty=float(data.get("new_qty")),
+        new_qty=data.get("new_qty"),
         reason=data.get("reason", "Manual adjustment"),
         user_id=session.get("user_id"),
     )

@@ -143,13 +143,14 @@ def login_api():
             if current_app.config.get("SINGLE_SESSION_ENABLED"):
                 lease_service = current_app.extensions["session_leases"]
                 try:
-                    acquired_token = lease_service.acquire(
+                    acquired = lease_service.acquire(
                         lease_identity,
                         user_id=session_user_id,
                         username=account.username,
                         role=login_role,
                         ip_address=request.remote_addr or "unknown",
                         user_agent=request.user_agent.string or "unknown",
+                        max_sessions=2 if account_type == "admin" else 1,
                     )
                 except SessionLeaseUnavailable:
                     security_logger.exception(
@@ -160,7 +161,7 @@ def login_api():
                         "error": "Login is temporarily unavailable. Please try again shortly."
                     }), 503
 
-                if acquired_token is None:
+                if acquired is None:
                     emit_login_attempt_blocked(session_user_id)
                     security_logger.warning(
                         "Verified duplicate login blocked for %s from %s",
@@ -174,7 +175,10 @@ def login_api():
                         ),
                         "code": "account_already_active",
                     }), 409
-                acquired_identity = lease_identity
+                if account_type == "admin":
+                    acquired_identity, acquired_token = acquired
+                else:
+                    acquired_identity, acquired_token = lease_identity, acquired
 
             # Clear existing session and start a fresh one
             session.clear()

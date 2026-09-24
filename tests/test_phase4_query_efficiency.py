@@ -72,6 +72,8 @@ def test_inventory_dashboard_queries_do_not_grow_per_menu_row(app):
                         unit="pieces",
                         low_stock_threshold=5,
                     ),
+                    InventoryItem(menu_item_id=meal.id, stock_qty=Decimal("7"),
+                                  unit="servings", low_stock_threshold=2),
                     MenuItemIngredient(
                         menu_item_id=meal.id,
                         ingredient_item_id=ingredient.id,
@@ -93,7 +95,7 @@ def test_inventory_dashboard_queries_do_not_grow_per_menu_row(app):
         assert queries.count == 3
         assert len(result["data"]) == 12
         assert len(result["direct_stock"]) == 12
-        assert all(row["capacity"] == 10 for row in result["data"])
+        assert all(row["capacity"] == 7 for row in result["data"])
 
 
 def test_admin_count_and_latest_prices_are_each_single_query(app):
