@@ -93,6 +93,7 @@ class SchemaMigrator:
             ("boardroom_bookings", "course", "ALTER TABLE boardroom_bookings ADD COLUMN course VARCHAR(100) NULL"),
             ("boardroom_bookings", "booking_type", "ALTER TABLE boardroom_bookings ADD COLUMN booking_type VARCHAR(20) NOT NULL DEFAULT 'boardroom'"),
             ("boardroom_bookings", "hourly_rate", "ALTER TABLE boardroom_bookings ADD COLUMN hourly_rate DECIMAL(10,2) NOT NULL DEFAULT 250.00"),
+            ("boardroom_bookings", "booked_by", "ALTER TABLE boardroom_bookings ADD COLUMN booked_by VARCHAR(100) NULL"),
             (
                 "customer_sessions",
                 "payment_method",
@@ -103,6 +104,7 @@ class SchemaMigrator:
                 "payment_method",
                 "ALTER TABLE transactions ADD COLUMN payment_method VARCHAR(50) NOT NULL DEFAULT 'cash'",
             ),
+            ("transactions", "collected_by", "ALTER TABLE transactions ADD COLUMN collected_by VARCHAR(100) NULL"),
             (
                 "customer_sessions",
                 "amount_tendered",

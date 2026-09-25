@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 from datetime import datetime
 from app.utils.auth import login_required
 
@@ -71,7 +71,8 @@ def checkout(session_id):
     discount_type = data.get("discount_type") or request.form.get("discount_type")
     discount_item_id = data.get("discount_item_id") or request.form.get("discount_item_id")
     resp = _service.checkout(session_id, payment_method=payment_method, amount_tendered=amount_tendered,
-                             discount_type=discount_type, discount_item_id=discount_item_id)
+                             discount_type=discount_type, discount_item_id=discount_item_id,
+                             actor_name=session.get("username"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

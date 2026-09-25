@@ -1,14 +1,16 @@
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import create_engine, inspect, text
 
 from app import create_app, db
-from app.models import BoardroomBooking, SpaceType
+from app.db.financial_actor_upgrade import upgrade as upgrade_financial_actors
+from app.models import BoardroomBooking, SpaceType, Transaction
 from app.repositories.booking_repository import BookingRepository
 from app.repositories.session_repository import SessionRepository
+from app.repositories.sales_repository import SalesRepository
 from app.services.booking_service import BookingService
 from app.services.session_service import SessionService
 from app.utils.billing import calculate_time_bill
@@ -95,6 +97,71 @@ def test_staff_booking_page_shows_walk_in_and_whole_hub(app):
     assert response.status_code == 200
     assert b"Walk in now" in response.data
     assert b"Whole Hub" in response.data
+    assert b'id="b-hourly-rate"' in response.data
+
+
+def test_staff_friend_rate_is_recorded_once_and_reconciles_with_daily_balance(app, monkeypatch):
+    from app.routes import lounge_routes, session_routes
+
+    with app.app_context():
+        db.session.add(SpaceType(name="Boardroom", rate_per_minute=Decimal("4.1667")))
+        db.session.commit()
+
+    booking_date = (datetime.utcnow() + timedelta(hours=8)).date()
+    booked_at = datetime.combine(booking_date, time(10, 0)) - timedelta(hours=8)
+    booking_service, _ = _services(booked_at)
+    monkeypatch.setattr(lounge_routes, "_service", booking_service)
+
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, username="test_user", role="staff", last_activity=datetime.now(timezone.utc).timestamp())
+    payload = _booking(date=booking_date.isoformat(), hourly_rate="150")
+    headers = {"Idempotency-Key": "friend-rate-test-20260925"}
+    created = client.post("/api/book-lounge", json=payload, headers=headers)
+    assert created.status_code == 200
+    assert client.post("/api/book-lounge", json=payload, headers=headers).status_code == 409
+
+    with app.app_context():
+        booking = BoardroomBooking.query.one()
+        assert booking.hourly_rate == Decimal("150.00")
+        assert booking.booked_by == "test_user"
+        assert booking_service.start_booking(booking.id)["session_id"]
+        session_id = booking.session_id
+
+    monkeypatch.setattr(session_routes, "_service", SessionService(
+        SessionRepository(), SimpleNamespace(now=lambda: booked_at + timedelta(hours=1)),
+        SimpleNamespace(session_checked_out=lambda _: None),
+    ))
+    checkout = client.post(f"/api/checkout/{session_id}", json={"payment_method": "cash", "amount_tendered": "150"})
+    assert checkout.status_code == 200
+    assert checkout.get_json()["total_bill"] == 150
+
+    with app.app_context():
+        transaction = Transaction.query.filter_by(session_id=booking.session_id).one()
+        assert transaction.time_bill == transaction.total_bill == Decimal("150.00")
+        assert transaction.payment_method == "cash"
+        assert transaction.collected_by == "test_user"
+        totals = SalesRepository().payment_totals_by_dates([transaction.created_at.date()])
+        assert totals[transaction.created_at.date()]["cash_total"] == 150
+        assert totals[transaction.created_at.date()]["cash_count"] == 1
+
+    records = client.get("/api/checkout-records")
+    assert records.status_code == 200
+    assert records.get_json()[0]["collected_by"] == "test_user"
+    stats = client.get("/admin/daily-balance/api/today-stats")
+    assert stats.status_code == 200
+    assert stats.get_json()["data"]["cash_on_hand"] == 150
+
+
+def test_financial_actor_upgrade_adds_only_missing_columns():
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE boardroom_bookings (id INTEGER PRIMARY KEY)"))
+        connection.execute(text("CREATE TABLE transactions (id INTEGER PRIMARY KEY)"))
+    upgrade_financial_actors(engine)
+    upgrade_financial_actors(engine)
+    assert "booked_by" in {column["name"] for column in inspect(engine).get_columns("boardroom_bookings")}
+    assert "collected_by" in {column["name"] for column in inspect(engine).get_columns("transactions")}
 
 
 def test_development_app_factory_prepares_booking_schema(app, monkeypatch):

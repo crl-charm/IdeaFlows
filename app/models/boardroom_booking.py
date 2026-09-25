@@ -17,6 +17,7 @@ class BoardroomBooking(db.Model):
     purpose = db.Column(db.String(255), nullable=True)
     booking_type = db.Column(db.String(20), nullable=False, default="boardroom")
     hourly_rate = db.Column(db.Numeric(10, 2), nullable=False, default=250)
+    booked_by = db.Column(db.String(100), nullable=True)
 
     status = db.Column(db.String(20), default="booked")
     session_id = db.Column(db.Integer, db.ForeignKey("customer_sessions.id"), nullable=True)

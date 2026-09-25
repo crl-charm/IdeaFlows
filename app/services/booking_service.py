@@ -16,7 +16,8 @@ class BookingService:
     notifier: Notifier
     clock: Clock
 
-    def create_booking(self, data: dict[str, Any], *, allow_custom_rate: bool = False):
+    def create_booking(self, data: dict[str, Any], *, allow_custom_rate: bool = False,
+                       actor_name: str | None = None):
         customer_name = data.get("customer_name")
         date_str = data.get("date")
         start_time_str = data.get("start_time")
@@ -94,6 +95,7 @@ class BookingService:
             purpose=purpose,
             booking_type=booking_type,
             hourly_rate=hourly_rate,
+            booked_by=actor_name,
             status="active" if walk_in else "booked",
             expected_end_at=datetime.combine(selected_date, end_time),
         )

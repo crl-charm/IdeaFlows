@@ -279,7 +279,10 @@ function matchesInventorySearch(name) {
 
 function loadInventory() {
   fetch('/inventory/api/dashboard-items')
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error('Inventory could not be loaded.');
+      return r.json();
+    })
     .then(data => {
       if (data.success) {
         directStockItems = data.direct_stock || [];
@@ -295,6 +298,11 @@ function loadInventory() {
         renderDirectStockTable();
         renderRecipeTable();
       }
+    })
+    .catch(error => {
+      document.getElementById('direct-stock-body').innerHTML = '<tr><td colspan="5" class="text-center text-danger py-4">Inventory could not be loaded. Refresh the page.</td></tr>';
+      document.getElementById('recipe-inventory-body').innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">Inventory could not be loaded. Refresh the page.</td></tr>';
+      console.error('Inventory load failed:', error);
     });
 }
 

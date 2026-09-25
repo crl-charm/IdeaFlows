@@ -26,7 +26,10 @@ def lounge_booking_page():
 @login_required
 @idempotent_request("book-lounge")
 def book_lounge():
-    resp = _service.create_booking(request.get_json() or {}, allow_custom_rate=session.get("role") == "admin")
+    resp = _service.create_booking(
+        request.get_json() or {}, allow_custom_rate=session.get("role") in {"admin", "staff"},
+        actor_name=session.get("username"),
+    )
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

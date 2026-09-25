@@ -168,14 +168,11 @@
           </div>
         </div>
         <small class="text-muted d-block mb-2">Booking hours: 7:00 AM to 10:00 PM</small>
-        {% if session.get('role') == 'admin' %}
         <div id="boardroom-price-field" class="mb-2">
           <label class="form-label small text-muted mb-1" for="b-hourly-rate">Boardroom price per hour (₱)</label>
           <input type="number" id="b-hourly-rate" class="form-control" min="0" max="100000" step="0.01" value="250">
-          <small class="text-muted">Default ₱250. Owner may enter a friend’s price for this booking.</small>
+          <small class="text-muted">Default ₱250. Enter the agreed price for this booking.</small>
         </div>
-        {% endif %}
-        {% if session.get('role') != 'admin' %}<small id="boardroom-default-price" class="text-muted d-block mb-2">Boardroom: ₱250 per hour. Ask the owner to set a friend’s price.</small>{% endif %}
         <small id="whole-hub-price-note" class="text-muted d-none mb-2">Whole Hub is ₱500 per hour and reserves all three spaces.</small>
         <input type="text" class="form-control mb-2" id="b-course" placeholder="Course (optional)">
         <input type="number" class="form-control mb-2" id="b-people" min="1" placeholder="Number of People">
@@ -183,8 +180,8 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-outline-primary" onclick="submitBooking(true)">Walk in now (1 hour)</button>
-        <button class="btn btn-warning fw-bold text-white" onclick="submitBooking(false)">Save Advance Booking</button>
+        <button class="btn btn-outline-primary" onclick="submitBooking(true, this)">Walk in now (1 hour)</button>
+        <button class="btn btn-warning fw-bold text-white" onclick="submitBooking(false, this)">Save Advance Booking</button>
       </div>
     </div>
   </div>
@@ -380,8 +377,6 @@ function bookingTypeChanged() {
   const wholeHub = document.getElementById('b-type').value === 'whole_hub';
   const rateField = document.getElementById('boardroom-price-field');
   if (rateField) rateField.classList.toggle('d-none', wholeHub);
-  const defaultRate = document.getElementById('boardroom-default-price');
-  if (defaultRate) defaultRate.classList.toggle('d-none', wholeHub);
   document.getElementById('whole-hub-price-note').classList.toggle('d-none', !wholeHub);
 }
 function initEditTimeSelectors() {
@@ -532,7 +527,7 @@ function renderList(bookings) {
       <tr>
         <td>${escapeBookingText(b.customer_name)}</td>
         <td>${timeCell}</td>
-        <td>${b.booking_type === 'whole_hub' ? 'Whole Hub' : 'Boardroom'}<br><small>₱${Number(b.hourly_rate).toFixed(2)}/hr</small></td>
+        <td>${b.booking_type === 'whole_hub' ? 'Whole Hub' : 'Boardroom'}<br><small>₱${Number(b.hourly_rate).toFixed(2)}/hr</small><br><small>Set by ${escapeBookingText(b.booked_by || 'Unknown')}</small></td>
         <td class="d-none d-md-table-cell">${escapeBookingText(b.course || "N/A")}</td>
         <td class="d-none d-md-table-cell">${b.number_of_people}</td>
         <td>${badgeFor(b.status)}</td>
@@ -543,7 +538,7 @@ function renderList(bookings) {
   }).join("");
 }
 
-function submitBooking(walkIn = false) {
+async function submitBooking(walkIn = false, button) {
   let startTime = to24Hour(
     document.getElementById("b-start-hour").value,
     document.getElementById("b-start-min").value,
@@ -597,17 +592,13 @@ function submitBooking(walkIn = false) {
     return;
   }
 
-  csrfFetch("/api/book-lounge", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.error) {
-      showToast(data.error, "error");
-      return;
-    }
+  try {
+    const data = await runButtonAction(button, { label: 'Saving booking...', slowLabel: 'Still saving...' }, key => fetchJSON('/api/book-lounge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+      body: JSON.stringify(payload)
+    }));
+    if (!data) return;
     showToast(walkIn ? 'Customer checked in — see the Dashboard.' : 'Booking saved.', 'success');
     bootstrap.Modal.getInstance(document.getElementById("bookingModal")).hide();
     document.getElementById("scheduleDate").value = payload.date;
@@ -617,8 +608,9 @@ function submitBooking(walkIn = false) {
     if (rateInput) rateInput.value = '250';
     bookingTypeChanged();
     loadSchedule();
-  })
-  .catch(() => showToast("Failed to create booking.", "error"));
+  } catch (error) {
+    showToast(error.message || 'Failed to create booking.', 'error');
+  }
 }
 
 function startBooking(id) {

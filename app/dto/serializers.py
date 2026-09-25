@@ -53,6 +53,7 @@ def serialize_booking(booking):
         "purpose": booking.purpose,
         "booking_type": booking.booking_type or "boardroom",
         "hourly_rate": float(booking.hourly_rate or 0),
+        "booked_by": booking.booked_by,
         "status": booking.status,
         "session_id": booking.session_id,
         "started_at": booking.started_at.isoformat() if booking.started_at else None,
@@ -85,6 +86,7 @@ def serialize_transaction(transaction):
         "transaction_id": transaction.id,
         "customer_name": session.customer_name if session else "N/A",
         "payment_method": payment_method,
+        "collected_by": transaction.collected_by,
         "payment_label": payment_method_label(payment_method),
         "space_type": session.space_type.name if session and session.space_type else "N/A",
         "time_in": (session.time_in + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p")

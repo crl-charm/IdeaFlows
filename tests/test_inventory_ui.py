@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import time
 
 import pytest
 
@@ -22,6 +23,19 @@ def test_inventory_pages_show_zero_stock_as_out_of_stock():
     assert "InventoryUI.actions(item)" not in admin
     assert "InventoryUI.actions(item)" not in staff
     assert "Set available servings" in admin and "Set available servings" in staff
+
+
+def test_staff_inventory_uses_current_script_and_loads_empty_snapshot(app):
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, username="test_user", role="staff", last_activity=time())
+    page = client.get("/inventory")
+    assert page.status_code == 200
+    assert b"/static/js/inventory-workflow.js?v=" in page.data
+    snapshot = client.get("/inventory/api/dashboard-items")
+    assert snapshot.status_code == 200
+    assert snapshot.get_json()["success"] is True
+    assert snapshot.get_json()["direct_stock"] == []
 
 
 def test_add_ingredient_form_uses_plain_language_and_keeps_fractional_stock():

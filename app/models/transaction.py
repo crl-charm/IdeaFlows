@@ -16,6 +16,7 @@ class Transaction(db.Model):
     food_bill = db.Column(db.Numeric(10,2), nullable=False)
     total_bill = db.Column(db.Numeric(10,2), nullable=False)
     payment_method = db.Column(db.String(50), nullable=False, default="cash")
+    collected_by = db.Column(db.String(100), nullable=True)
     amount_tendered = db.Column(db.Numeric(10, 2), nullable=True)
     discount_type = db.Column(db.String(20), nullable=True)
     discount_item_id = db.Column(db.Integer, nullable=True)

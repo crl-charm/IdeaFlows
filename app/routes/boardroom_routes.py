@@ -18,7 +18,10 @@ _service = BookingService(repo=BookingRepository(), notifier=get_notifier(), clo
 @login_required
 @idempotent_request("book-boardroom")
 def book_boardroom():
-    resp = _service.create_booking(request.get_json() or {}, allow_custom_rate=session.get("role") == "admin")
+    resp = _service.create_booking(
+        request.get_json() or {}, allow_custom_rate=session.get("role") in {"admin", "staff"},
+        actor_name=session.get("username"),
+    )
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

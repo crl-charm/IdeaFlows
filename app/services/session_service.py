@@ -146,6 +146,7 @@ class SessionService:
     def checkout(
         self, session_id: int, payment_method: str = "cash", amount_tendered: Any = None,
         discount_type: str | None = None, discount_item_id: Any = None,
+        actor_name: str | None = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         # Serialize checkout attempts for this session on databases that support
         # row locks (MySQL in production). This prevents two different browser
@@ -177,6 +178,7 @@ class SessionService:
             food_bill=food_total,
             total_bill=total_bill,
             payment_method=payment_method,
+            collected_by=actor_name,
             discount_type=selected_type,
             discount_item_id=selected_item_id,
             discount_amount=discount_amount,

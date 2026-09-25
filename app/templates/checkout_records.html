@@ -67,6 +67,10 @@ function formatTime(seconds) {
   return `${hrs.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
 }
 
+function escapeCheckoutText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 // Format "YYYY-MM" → "January 2026"
 function monthLabel(yearMonth) {
   const [y, m] = yearMonth.split("-").map(Number);
@@ -257,6 +261,7 @@ function loadCheckoutRecords() {
                     <th>Time Bill</th>
                     <th>Food Bill</th>
                     <th>Payment</th>
+                    <th>Collected by</th>
                     <th>Total</th>
                     <th>Tendered</th>
                     <th>Change</th>
@@ -273,6 +278,7 @@ function loadCheckoutRecords() {
                       <td>₱${record.time_bill.toFixed(2)}</td>
                       <td>₱${record.food_bill.toFixed(2)}</td>
                       <td>${paymentBadge(record.payment_method)}</td>
+                      <td>${escapeCheckoutText(record.collected_by || 'Unknown')}</td>
                       <td><strong>₱${record.total_bill.toFixed(2)}</strong></td>
                       <td>${record.payment_method === 'cash' && record.amount_tendered !== null ? '₱' + record.amount_tendered.toFixed(2) : '—'}</td>
                       <td>${record.payment_method === 'cash' && record.change_given !== null ? '₱' + record.change_given.toFixed(2) : '—'}</td>
@@ -315,6 +321,10 @@ function loadCheckoutRecords() {
                   <div class="checkout-card-row">
                     <span class="checkout-card-label">Food Bill:</span>
                     <span class="checkout-card-value">₱${record.food_bill.toFixed(2)}</span>
+                  </div>
+                  <div class="checkout-card-row">
+                    <span class="checkout-card-label">Collected by:</span>
+                    <span class="checkout-card-value">${escapeCheckoutText(record.collected_by || 'Unknown')}</span>
                   </div>
                   ${record.payment_method === 'cash' && record.amount_tendered !== null ? `
                   <div class="checkout-card-row text-success">
