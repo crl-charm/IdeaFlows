@@ -18,12 +18,18 @@ class SessionService:
     clock: Clock
     notifier: Notifier
 
-    def _discount(self, session_id: int, discount_type: str | None, discount_item_id: Any) -> tuple[Decimal, str | None, int | None]:
+    def _discount(self, session_id: int, discount_type: str | None, discount_item_id: Any,
+                  time_bill: Decimal) -> tuple[Decimal, str | None, int | None]:
         discount_type = (discount_type or "").strip().lower()
         if not discount_type and discount_item_id in (None, ""):
             return Decimal("0.00"), None, None
         if discount_type not in {"pwd", "senior"}:
             raise ValueError("Choose PWD or Senior Citizen discount.")
+        if discount_item_id in (None, ""):
+            if self.repo.get_orders_for_session(session_id):
+                raise ValueError("Choose one food item for the discount.")
+            amount = (time_bill * Decimal("0.20")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            return amount, discount_type, None
         if isinstance(discount_item_id, bool) or not str(discount_item_id).isdigit():
             raise ValueError("Choose one food item for the discount.")
         item_id = int(discount_item_id)
@@ -127,7 +133,7 @@ class SessionService:
         time_bill = calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=now)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
         try:
-            discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id)
+            discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id, time_bill)
         except ValueError as exc:
             return {"error": str(exc)}, 400
         total_bill = (time_bill + food_total - discount_amount).quantize(Decimal("0.01"))
@@ -166,7 +172,7 @@ class SessionService:
         time_bill = calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=time_out)
         food_total = Decimal(str(self.repo.sum_food_total_for_session(session_id))).quantize(Decimal("0.01"))
         try:
-            discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id)
+            discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id, time_bill)
         except ValueError as exc:
             return {"error": str(exc)}, 400
         total_bill = (time_bill + food_total - discount_amount).quantize(Decimal("0.01"))

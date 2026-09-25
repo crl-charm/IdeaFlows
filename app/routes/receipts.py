@@ -49,6 +49,7 @@ def view_receipt(session_id: int) -> str:
         time_bill=time_bill,
         food_bill=total_food,
         discount_type=tx.discount_type if tx else None,
+        discount_item_id=tx.discount_item_id if tx else None,
         discount_amount=float(tx.discount_amount or 0) if tx else 0,
         total_bill=total_bill,
         payment_method=payment_method_label(payment_method_val),

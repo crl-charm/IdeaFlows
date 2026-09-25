@@ -98,6 +98,7 @@ def test_eligible_discount_applies_to_one_unit_and_appears_in_checkout_records(a
         service = SessionService(SessionRepository(), SimpleNamespace(now=lambda: now),
                                  SimpleNamespace(session_checked_out=lambda _: None))
         assert service.preview_checkout(customer.id, discount_type, item.id)['discount_amount'] == 24
+        assert service.preview_checkout(customer.id, discount_type)[1] == 400
         assert service.preview_checkout(customer.id, discount_type, 999)[1] == 400
         assert service.preview_checkout(customer.id, discount_type, '1.5')[1] == 400
         result = service.checkout(customer.id, 'cash', '300', discount_type, item.id)
@@ -122,6 +123,48 @@ def test_eligible_discount_applies_to_one_unit_and_appears_in_checkout_records(a
         assert page.status_code == 200
         assert b'<th>Discount</th>' in page.data
         assert b'checkout-card-label">Discount:' in page.data
+
+
+@pytest.mark.parametrize('discount_type', ['pwd', 'senior'])
+def test_discount_without_food_applies_to_time_bill_and_is_recorded(app, discount_type):
+    with app.app_context():
+        now = datetime.utcnow()
+        space = SpaceType(name='Premium Lounge', rate_per_minute=Decimal('0.3333'))
+        db.session.add(space)
+        db.session.flush()
+        customer = CustomerSession(customer_name='No Food Customer', space_type_id=space.id,
+                                   time_in=now-timedelta(minutes=75), status='active')
+        db.session.add(customer)
+        db.session.commit()
+
+        service = SessionService(SessionRepository(), SimpleNamespace(now=lambda: now),
+                                 SimpleNamespace(session_checked_out=lambda _: None))
+        preview = service.preview_checkout(customer.id, discount_type)
+        assert preview['time_bill'] == 30
+        assert preview['discount_amount'] == 6
+        assert preview['total_bill'] == 24
+        result = service.checkout(customer.id, 'cash', '30', discount_type)
+        assert result['total_bill'] == 24
+        transaction = Transaction.query.filter_by(session_id=customer.id).one()
+        assert transaction.discount_type == discount_type
+        assert transaction.discount_item_id is None
+        assert transaction.discount_amount == Decimal('6.00')
+        sale_day = manila_date(transaction.created_at)
+        daily = SalesRepository().daily_ledger(sale_day, sale_day)[sale_day]
+        assert daily['total_revenue'] == 24
+        assert daily['checkout_methods']['cash'] == 24
+
+        client = app.test_client()
+        with client.session_transaction() as auth:
+            auth['user_id'] = 1
+            auth['role'] = 'staff'
+        record = client.get('/api/checkout-records').get_json()[0]
+        assert record['discount_type'] == discount_type
+        assert record['discount_item_id'] is None
+        assert record['discount_amount'] == 6
+        receipt = client.get(f'/receipt/{customer.id}')
+        assert receipt.status_code == 200
+        assert b'discount (time bill)' in receipt.data
 
 
 def test_queenbank_daily_balance_exports(app):

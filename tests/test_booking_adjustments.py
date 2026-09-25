@@ -14,6 +14,7 @@ from app.repositories.sales_repository import SalesRepository
 from app.services.booking_service import BookingService
 from app.services.session_service import SessionService
 from app.utils.billing import calculate_time_bill
+from app.utils.dates import manila_date
 
 
 @pytest.fixture
@@ -98,6 +99,8 @@ def test_staff_booking_page_shows_walk_in_and_whole_hub(app):
     assert b"Walk in now" in response.data
     assert b"Whole Hub" in response.data
     assert b'id="b-hourly-rate"' in response.data
+    assert b'Upcoming Bookings' in response.data
+    assert b'<th>Duration</th>' in response.data
 
 
 def test_staff_friend_rate_is_recorded_once_and_reconciles_with_daily_balance(app, monkeypatch):
@@ -120,6 +123,11 @@ def test_staff_friend_rate_is_recorded_once_and_reconciles_with_daily_balance(ap
     created = client.post("/api/book-lounge", json=payload, headers=headers)
     assert created.status_code == 200
     assert client.post("/api/book-lounge", json=payload, headers=headers).status_code == 409
+    upcoming = client.get('/api/lounge-bookings?status=open')
+    assert upcoming.status_code == 200
+    assert any(row['customer_name'] == 'Friend' and row['date'] == booking_date.isoformat()
+               and row['start_time'] == '10:00' and row['end_time'] == '11:00'
+               for row in upcoming.get_json())
 
     with app.app_context():
         booking = BoardroomBooking.query.one()
@@ -141,9 +149,10 @@ def test_staff_friend_rate_is_recorded_once_and_reconciles_with_daily_balance(ap
         assert transaction.time_bill == transaction.total_bill == Decimal("150.00")
         assert transaction.payment_method == "cash"
         assert transaction.collected_by == "test_user"
-        totals = SalesRepository().payment_totals_by_dates([transaction.created_at.date()])
-        assert totals[transaction.created_at.date()]["cash_total"] == 150
-        assert totals[transaction.created_at.date()]["cash_count"] == 1
+        sale_day = manila_date(transaction.created_at)
+        totals = SalesRepository().payment_totals_by_dates([sale_day])
+        assert totals[sale_day]["cash_total"] == 150
+        assert totals[sale_day]["cash_count"] == 1
 
     records = client.get("/api/checkout-records")
     assert records.status_code == 200

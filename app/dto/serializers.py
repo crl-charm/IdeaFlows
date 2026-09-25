@@ -98,6 +98,7 @@ def serialize_transaction(transaction):
         "time_bill": float(transaction.time_bill),
         "food_bill": float(transaction.food_bill),
         "discount_type": transaction.discount_type,
+        "discount_item_id": transaction.discount_item_id,
         "discount_amount": float(transaction.discount_amount or 0),
         "total_bill": float(transaction.total_bill),
         "seconds_spent": seconds_spent,

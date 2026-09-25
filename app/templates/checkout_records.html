@@ -72,9 +72,10 @@ function escapeCheckoutText(value) {
 }
 
 function discountLabel(record) {
-  if (!record.discount_amount) return '—';
+  if (!record.discount_type) return '—';
   const type = record.discount_type === 'pwd' ? 'PWD' : record.discount_type === 'senior' ? 'Senior Citizen' : 'Discount';
-  return `${type} −₱${Number(record.discount_amount).toFixed(2)}`;
+  const basis = record.discount_item_id == null ? 'time bill' : 'one food item';
+  return `${type} −₱${Number(record.discount_amount || 0).toFixed(2)} (${basis})`;
 }
 
 // Format "YYYY-MM" → "January 2026"
