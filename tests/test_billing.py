@@ -77,7 +77,8 @@ def test_queenbank_normalization():
     assert payment_method_label('queenbank') == 'QueenBank'
 
 
-def test_pwd_discount_applies_to_one_unit_of_selected_food_item(app):
+@pytest.mark.parametrize('discount_type', ['pwd', 'senior'])
+def test_eligible_discount_applies_to_one_unit_and_appears_in_checkout_records(app, discount_type):
     with app.app_context():
         now = datetime.utcnow()
         space = SpaceType(name='Premium Lounge', rate_per_minute=Decimal('0.3333'))
@@ -96,17 +97,31 @@ def test_pwd_discount_applies_to_one_unit_of_selected_food_item(app):
         db.session.commit()
         service = SessionService(SessionRepository(), SimpleNamespace(now=lambda: now),
                                  SimpleNamespace(session_checked_out=lambda _: None))
-        assert service.preview_checkout(customer.id, 'pwd', item.id)['discount_amount'] == 24
-        assert service.preview_checkout(customer.id, 'pwd', 999)[1] == 400
-        assert service.preview_checkout(customer.id, 'pwd', '1.5')[1] == 400
-        result = service.checkout(customer.id, 'cash', '300', 'pwd', item.id)
+        assert service.preview_checkout(customer.id, discount_type, item.id)['discount_amount'] == 24
+        assert service.preview_checkout(customer.id, discount_type, 999)[1] == 400
+        assert service.preview_checkout(customer.id, discount_type, '1.5')[1] == 400
+        result = service.checkout(customer.id, 'cash', '300', discount_type, item.id)
         assert result['food_bill'] == 240
         assert result['discount_amount'] == 24
         assert result['total_bill'] == 246
         tx = Transaction.query.filter_by(session_id=customer.id).one()
-        assert tx.discount_type == 'pwd'
+        assert tx.discount_type == discount_type
         assert tx.discount_item_id == item.id
         assert tx.discount_amount == Decimal('24.00')
+        client = app.test_client()
+        with client.session_transaction() as auth:
+            auth['user_id'] = 1
+            auth['role'] = 'staff'
+        records = client.get('/api/checkout-records')
+        assert records.status_code == 200
+        record = records.get_json()[0]
+        assert record['customer_name'] == 'PWD Customer'
+        assert record['discount_type'] == discount_type
+        assert record['discount_amount'] == 24
+        page = client.get('/checkout-records')
+        assert page.status_code == 200
+        assert b'<th>Discount</th>' in page.data
+        assert b'checkout-card-label">Discount:' in page.data
 
 
 def test_queenbank_daily_balance_exports(app):

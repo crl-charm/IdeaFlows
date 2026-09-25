@@ -71,6 +71,12 @@ function escapeCheckoutText(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function discountLabel(record) {
+  if (!record.discount_amount) return '—';
+  const type = record.discount_type === 'pwd' ? 'PWD' : record.discount_type === 'senior' ? 'Senior Citizen' : 'Discount';
+  return `${type} −₱${Number(record.discount_amount).toFixed(2)}`;
+}
+
 // Format "YYYY-MM" → "January 2026"
 function monthLabel(yearMonth) {
   const [y, m] = yearMonth.split("-").map(Number);
@@ -260,6 +266,7 @@ function loadCheckoutRecords() {
                     <th>Time Spent</th>
                     <th>Time Bill</th>
                     <th>Food Bill</th>
+                    <th>Discount</th>
                     <th>Payment</th>
                     <th>Collected by</th>
                     <th>Total</th>
@@ -270,13 +277,14 @@ function loadCheckoutRecords() {
                 <tbody>
                   ${records.map(record => `
                     <tr>
-                      <td>${record.customer_name}</td>
-                      <td>${record.space_type}</td>
+                      <td>${escapeCheckoutText(record.customer_name)}</td>
+                      <td>${escapeCheckoutText(record.space_type)}</td>
                       <td>${record.time_in}</td>
                       <td>${record.time_out}</td>
                       <td>${formatTime(record.seconds_spent)}</td>
                       <td>₱${record.time_bill.toFixed(2)}</td>
                       <td>₱${record.food_bill.toFixed(2)}</td>
+                      <td>${discountLabel(record)}</td>
                       <td>${paymentBadge(record.payment_method)}</td>
                       <td>${escapeCheckoutText(record.collected_by || 'Unknown')}</td>
                       <td><strong>₱${record.total_bill.toFixed(2)}</strong></td>
@@ -300,8 +308,8 @@ function loadCheckoutRecords() {
               <div class="checkout-record-card">
                 <div class="checkout-card-header">
                   <div>
-                    <div class="checkout-card-customer">${record.customer_name}</div>
-                    <div class="checkout-card-space">${record.space_type}</div>
+                    <div class="checkout-card-customer">${escapeCheckoutText(record.customer_name)}</div>
+                    <div class="checkout-card-space">${escapeCheckoutText(record.space_type)}</div>
                   </div>
                   ${paymentBadge(record.payment_method)}
                 </div>
@@ -321,6 +329,10 @@ function loadCheckoutRecords() {
                   <div class="checkout-card-row">
                     <span class="checkout-card-label">Food Bill:</span>
                     <span class="checkout-card-value">₱${record.food_bill.toFixed(2)}</span>
+                  </div>
+                  <div class="checkout-card-row">
+                    <span class="checkout-card-label">Discount:</span>
+                    <span class="checkout-card-value">${discountLabel(record)}</span>
                   </div>
                   <div class="checkout-card-row">
                     <span class="checkout-card-label">Collected by:</span>
