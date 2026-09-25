@@ -1,0 +1,35 @@
+name: Application Quality Check
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+    branches: [master, main, develop]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      FLASK_ENV: testing
+      SECRET_KEY: isolated-ci-secret-key-with-32-characters
+      DATABASE_URL: sqlite://
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Validate imports
+        run: python scripts/validate_imports.py
+
+      - name: Run tests
+        run: python -m pytest -q tests

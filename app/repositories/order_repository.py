@@ -36,7 +36,7 @@ class OrderRepository:
     def add_order_with_items(self, session_id: int, handled_by: Optional[int], items: list[dict]) -> int:
         new_order = Order(customer_session_id=session_id, status="preparing", handled_by=handled_by)
         db.session.add(new_order)
-        db.session.commit()
+        db.session.flush()
 
         for item in items:
             menu_item_id = item.get("menu_item_id")
@@ -54,7 +54,7 @@ class OrderRepository:
             )
             db.session.add(order_item)
 
-        db.session.commit()
+        db.session.flush()
         return int(new_order.id)
 
     def list_orders_for_session(self, session_id: int, include_done: bool) -> list[Order]:

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Inventory - Staff View - IdeaHub{% endblock %}
+{% block title %}Inventory - Staff View - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -124,20 +124,40 @@
 <div class="container-fluid inventory-container">
   <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom flex-wrap gap-3">
     <div>
-      <h1 class="h3 fw-bold text-dark m-0">Inventory Management</h1>
-      <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">Monitor raw ingredient stock first, then recipe meal capacity</p>
+      <h1 class="h3 fw-bold text-dark m-0">Inventory</h1>
+      <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">Check what is running low and tell the owner when supplies need replacing. Place orders from the Order page.</p>
     </div>
   </div>
 
   <div class="mb-4 position-relative inventory-search-bar">
     <i class="bi bi-search search-icon"></i>
-    <input type="text" id="inventorySearchInput" class="form-control shadow-sm" placeholder="Search raw ingredients or meal recipes..." autocomplete="off">
+    <input type="text" id="inventorySearchInput" class="form-control shadow-sm" placeholder="Search ingredients or meals..." autocomplete="off">
   </div>
 
+  {% if can_manage_kitchen %}
+  <section class="mb-4" aria-label="Meal servings">
+    <h2 class="h5 fw-bold">Meal servings</h2>
+    <p class="text-muted">Enter your serving estimate. Orders reduce servings; update raw ingredients separately.</p>
+    <button type="button" class="btn btn-outline-warning mb-3" onclick="InventoryUI.openServings()">Set available servings</button>
+  </section>
+  {% endif %}
   <div class="modern-card card">
     <div class="card-header">
-      <h5>Direct Stock — Raw Ingredients</h5>
-      <p class="text-muted mb-0 mt-1" style="font-size: 0.85rem;">All ingredients including those used in recipes</p>
+      <h5>Ingredients &amp; Stock</h5>
+      <p class="text-muted mb-0 mt-1" style="font-size: 0.85rem;">What is currently on hand</p>
+      {% if can_manage_kitchen %}
+      <form id="raw-stock-form" class="d-flex flex-wrap align-items-end gap-2 mt-3">
+        <div>
+          <label for="raw-stock-item" class="form-label">Ingredient</label>
+          <select id="raw-stock-item" class="form-select" required></select>
+        </div>
+        <div>
+          <label for="raw-stock-count" class="form-label">Amount on hand</label>
+          <input id="raw-stock-count" class="form-control" type="number" min="0" max="999999" step="0.01" required>
+        </div>
+        <button type="submit" class="btn btn-outline-warning">Save stock</button>
+      </form>
+      {% endif %}
     </div>
     <div class="px-3 pt-3 pb-0">
       <div class="d-flex flex-wrap gap-2 mb-2" id="directStockFilters">
@@ -146,8 +166,8 @@
         <button type="button" class="filter-chip" data-filter="warning">Warning</button>
         <button type="button" class="filter-chip" data-filter="normal">Normal</button>
         <button type="button" class="filter-chip" data-filter="out">Out of Stock</button>
-        <button type="button" class="filter-chip" data-filter="linked">Linked</button>
-        <button type="button" class="filter-chip" data-filter="unlinked">Unlinked</button>
+        <button type="button" class="filter-chip" data-filter="linked">Used in a recipe</button>
+        <button type="button" class="filter-chip" data-filter="unlinked">Not used in a recipe</button>
       </div>
     </div>
     <div class="card-body p-0">
@@ -157,8 +177,8 @@
             <tr>
               <th>Ingredient</th>
               <th>Stock</th>
-              <th>Threshold</th>
-              <th>Recipes</th>
+              <th>Restock reminder</th>
+              <th>Used in meals</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -172,7 +192,7 @@
 
   <div class="modern-card card">
     <div class="card-header">
-      <h5>Recipe-Based Meals</h5>
+      <h5>Meals &amp; Availability</h5>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -181,7 +201,7 @@
             <tr>
               <th>Item Name</th>
               <th>Type</th>
-              <th>Stock / Capacity</th>
+              <th>Available</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -194,6 +214,7 @@
   </div>
 </div>
 
+{% include 'inventory_controls.html' %}
 {% endblock %}
 
 {% block scripts %}
@@ -202,6 +223,10 @@ let directStockItems = [];
 let recipeItems = [];
 let directStockFilter = 'all';
 let inventorySearchQuery = '';
+const inventorySocket = window.getIdeaFlowSocket();
+const refreshInventory = window.createDebouncedRefresh(loadInventory, 150);
+if (inventorySocket) ['inventory_update', 'menu_update', 'connect'].forEach(event => inventorySocket.on(event, refreshInventory));
+window.addEventListener('inventory-changed', refreshInventory);
 
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -227,6 +252,23 @@ document.addEventListener('DOMContentLoaded', function() {
       renderRecipeTable();
     });
   }
+  const rawForm = document.getElementById('raw-stock-form');
+  document.getElementById('raw-stock-item')?.addEventListener('change', event => {
+    document.getElementById('raw-stock-count').value = directStockItems.find(item => String(item.id) === event.target.value)?.stock_qty ?? 0;
+  });
+  rawForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = rawForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await fetchJSON(`/inventory/api/ingredients/${document.getElementById('raw-stock-item').value}/stock`, {
+        method:'PATCH', headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},
+        body:JSON.stringify({quantity:document.getElementById('raw-stock-count').value})});
+      showToast('Ingredient stock updated.', 'success');
+      refreshInventory();
+    } catch (error) { showToast(error.message || 'Could not save ingredient stock.', 'error'); }
+    finally { button.disabled = false; }
+  });
 });
 
 function matchesInventorySearch(name) {
@@ -237,14 +279,30 @@ function matchesInventorySearch(name) {
 
 function loadInventory() {
   fetch('/inventory/api/dashboard-items')
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error('Inventory could not be loaded.');
+      return r.json();
+    })
     .then(data => {
       if (data.success) {
         directStockItems = data.direct_stock || [];
         recipeItems = data.data || [];
+        InventoryUI.setMeals(recipeItems);
+        const rawSelect = document.getElementById('raw-stock-item');
+        if (rawSelect) {
+          const selected = rawSelect.value;
+          rawSelect.innerHTML = directStockItems.map(item => `<option value="${Number(item.id)}">${escapeHtml(item.name)} (${escapeHtml(item.unit)})</option>`).join('');
+          if (directStockItems.some(item => String(item.id) === selected)) rawSelect.value = selected;
+          document.getElementById('raw-stock-count').value = directStockItems.find(item => String(item.id) === rawSelect.value)?.stock_qty ?? 0;
+        }
         renderDirectStockTable();
         renderRecipeTable();
       }
+    })
+    .catch(error => {
+      document.getElementById('direct-stock-body').innerHTML = '<tr><td colspan="5" class="text-center text-danger py-4">Inventory could not be loaded. Refresh the page.</td></tr>';
+      document.getElementById('recipe-inventory-body').innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">Inventory could not be loaded. Refresh the page.</td></tr>';
+      console.error('Inventory load failed:', error);
     });
 }
 
@@ -282,7 +340,10 @@ function renderDirectStockTable() {
   tbody.innerHTML = filtered.map(item => {
     let rowClass = '';
     let badgeHtml = '';
-    if (item.is_low) {
+    if (item.is_out_of_stock) {
+      rowClass = 'table-danger-custom';
+      badgeHtml = '<span class="status-badge status-low">🔴 Out of stock</span>';
+    } else if (item.is_low) {
       rowClass = 'table-danger-custom';
       badgeHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
     } else if (item.is_warning) {
@@ -295,8 +356,8 @@ function renderDirectStockTable() {
     return `
       <tr class="${rowClass}">
         <td class="fw-semibold">${escapeHtml(item.name)}</td>
-        <td><strong>${item.stock_qty}</strong> ${escapeHtml(item.unit)}</td>
-        <td>${item.low_stock_threshold}</td>
+        <td><strong>${item.stock_qty}</strong> ${escapeHtml(item.unit === 'klg' ? 'kg' : item.unit)}</td>
+        <td>${item.low_stock_threshold > 0 ? item.low_stock_threshold + ' ' + escapeHtml(item.unit === 'klg' ? 'kg' : item.unit) : 'Off'}</td>
         <td>${item.recipe_count}</td>
         <td>${badgeHtml}</td>
       </tr>
@@ -306,52 +367,13 @@ function renderDirectStockTable() {
 
 function renderRecipeTable() {
   const tbody = document.getElementById('recipe-inventory-body');
-  tbody.innerHTML = '';
   const filtered = recipeItems.filter(item => matchesInventorySearch(item.name));
-
-  if (recipeItems.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No menu meals found.</td></tr>';
-    return;
-  }
-
-  if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No meals match your search.</td></tr>';
-    return;
-  }
-
-  filtered.forEach(item => {
-    let typeBadge = '';
-    let capacityText = '';
-    let rowClass = '';
-    let badgeHtml = '';
-
-    if (item.has_recipe) {
-      typeBadge = '<span class="badge bg-light text-dark border">Recipe-based</span>';
-      capacityText = `<strong>${item.capacity} servings</strong> available`;
-    } else {
-      typeBadge = '<span class="badge bg-light text-success border">Direct stock meal</span>';
-      capacityText = `<strong>${item.stock_qty} ${escapeHtml(item.unit || '')}</strong> in stock`;
-    }
-
-    if (item.is_low) {
-      rowClass = 'table-danger-custom';
-      badgeHtml = '<span class="status-badge status-low">🔴 Low Stock</span>';
-    } else if (item.is_warning) {
-      rowClass = 'table-warning-custom';
-      badgeHtml = '<span class="status-badge status-warning">🟡 Warning</span>';
-    } else {
-      badgeHtml = '<span class="status-badge status-ok">✅ OK</span>';
-    }
-
-    tbody.innerHTML += `
-      <tr class="${rowClass}">
-        <td class="fw-semibold">${escapeHtml(item.name)}</td>
-        <td>${typeBadge}</td>
-        <td>${capacityText}</td>
-        <td>${badgeHtml}</td>
-      </tr>
-    `;
-  });
+  tbody.innerHTML = filtered.length ? filtered.map(item => `<tr>
+    <td class="fw-semibold">${escapeHtml(item.name)}</td>
+    <td>${InventoryUI.labels[item.inventory_mode] || ''}</td>
+    <td><strong>${item.available_quantity == null ? 'No quantity tracking' : item.available_quantity + ' ' + item.display_unit}</strong></td>
+    <td>${InventoryUI.status(item)}</td>
+  </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted py-4">No meals match your search.</td></tr>';
 }
 </script>
 {% endblock %}

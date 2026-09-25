@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>IdeaHub Daily Sales Balance</title>
+  <title>IdeaFlow Daily Sales Balance</title>
   <style>
-    @page { size: A4; margin: 1.5cm; }
+    @page { size: A4 landscape; margin: 1.5cm; }
     body {
       font-family: Arial, Helvetica, sans-serif;
       font-size: 11pt;
@@ -38,7 +38,7 @@
       margin-bottom: 24px;
     }
     .summary-payments .summary-box {
-      width: 25%;
+      width: 20%;
     }
     .summary-box {
       display: table-cell;
@@ -72,6 +72,7 @@
     .gcash { color: #1d4ed8; }
     .bdo { color: #b91c1c; }
     .bpi { color: #b45309; }
+    .queenbank { color: #b45309; }
     h2 {
       font-size: 13pt;
       color: #374151;
@@ -114,7 +115,7 @@
 </head>
 <body>
   <div class="header">
-    <h1>IdeaHub</h1>
+    <h1>IdeaFlow</h1>
     <p>Daily Sales Balance Report</p>
     <p>Generated on {{ generated_at }}</p>
     {% if period_label %}
@@ -158,6 +159,11 @@
       <div class="value bpi">Php {{ "%.2f"|format(total_bpi) }}</div>
       <div class="sub">{{ bpi_count }} checkout(s)</div>
     </div>
+    <div class="summary-box">
+      <div class="label">QueenBank Payments</div>
+      <div class="value queenbank">Php {{ "%.2f"|format(total_queenbank) }}</div>
+      <div class="sub">{{ queenbank_count }} checkout(s)</div>
+    </div>
   </div>
 
   <h2>Daily Reports</h2>
@@ -171,6 +177,7 @@
         <th class="amount">GCash</th>
         <th class="amount">BDO</th>
         <th class="amount">BPI</th>
+        <th class="amount">QueenBank</th>
         <th class="amount">Expenses</th>
         <th class="amount">Net</th>
         <th class="amount">Orders</th>
@@ -187,6 +194,7 @@
         <td class="amount">Php {{ "%.2f"|format(r.gcash_total) }}</td>
         <td class="amount">Php {{ "%.2f"|format(r.bdo_total) }}</td>
         <td class="amount">Php {{ "%.2f"|format(r.bpi_total) }}</td>
+        <td class="amount">Php {{ "%.2f"|format(r.queenbank_total) }}</td>
         <td class="amount">Php {{ "%.2f"|format(r.total_expenses) }}</td>
         <td class="amount">Php {{ "%.2f"|format(r.net_balance) }}</td>
         <td class="amount">{{ r.total_orders }}</td>
@@ -229,7 +237,7 @@
   {% endif %}
 
   <div class="footer">
-    This report is for audit and business review. IdeaHub POS System.
+    This report is for audit and business review. IdeaFlow POS System.
   </div>
 </body>
 </html>

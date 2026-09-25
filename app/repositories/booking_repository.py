@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from sqlalchemy import func
@@ -29,18 +29,12 @@ class BookingRepository:
         return (
             BoardroomBooking.query.filter(BoardroomBooking.status == "active")
             .filter(BoardroomBooking.expected_end_at.isnot(None))
-            .filter(BoardroomBooking.expected_end_at <= now)
+            .filter(BoardroomBooking.expected_end_at <= now - timedelta(minutes=10))
             .all()
         )
 
     def find_conflict(self, selected_date: date, start_time: time, end_time: time) -> Optional[BoardroomBooking]:
-        rows = BoardroomBooking.query.filter(
-            BoardroomBooking.date == selected_date,
-            BoardroomBooking.status.in_(["booked", "active"]),
-            BoardroomBooking.start_time < end_time,
-            BoardroomBooking.end_time > start_time,
-        ).all()
-        return rows[0] if rows else None
+        return self._find_conflict(selected_date, start_time, end_time)
 
     def find_conflict_excluding(
         self,
@@ -49,17 +43,33 @@ class BookingRepository:
         start_time: time,
         end_time: time,
     ) -> Optional[BoardroomBooking]:
-        rows = BoardroomBooking.query.filter(
-            BoardroomBooking.id != booking_id,
+        return self._find_conflict(selected_date, start_time, end_time, exclude_id=booking_id)
+
+    def _find_conflict(self, selected_date: date, start_time: time, end_time: time,
+                       exclude_id: int | None = None) -> Optional[BoardroomBooking]:
+        query = BoardroomBooking.query.filter(
             BoardroomBooking.date == selected_date,
             BoardroomBooking.status.in_(["booked", "active"]),
-            BoardroomBooking.start_time < end_time,
-            BoardroomBooking.end_time > start_time,
-        ).all()
-        return rows[0] if rows else None
+        )
+        if exclude_id is not None:
+            query = query.filter(BoardroomBooking.id != exclude_id)
+        requested_start = datetime.combine(selected_date, start_time)
+        requested_end = datetime.combine(selected_date, end_time) + timedelta(minutes=10)
+        for booking in query.all():
+            existing_start = datetime.combine(selected_date, booking.start_time)
+            existing_end = datetime.combine(selected_date, booking.end_time) + timedelta(minutes=10)
+            if existing_start < requested_end and requested_start < existing_end:
+                return booking
+        return None
 
     def get_boardroom_space(self) -> Optional[SpaceType]:
         return SpaceType.query.filter_by(name="Boardroom").first()
+
+    def get_whole_hub_space(self) -> Optional[SpaceType]:
+        return SpaceType.query.filter_by(name="Whole Hub").first()
+
+    def has_active_sessions(self) -> bool:
+        return CustomerSession.query.filter_by(status="active").first() is not None
 
     def sum_active_boardroom_occupancy(self, boardroom_space_id: int) -> int:
         occupied = (
@@ -80,7 +90,7 @@ class BookingRepository:
     ) -> CustomerSession:
         session = CustomerSession(
             customer_name=booking.customer_name,
-            school="Boardroom Booking",
+            school="Whole Hub Booking" if booking.booking_type == "whole_hub" else "Boardroom Booking",
             course=booking.course or "N/A",
             number_of_people=booking.number_of_people or 1,
             space_type_id=boardroom_space_id,

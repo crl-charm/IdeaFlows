@@ -30,10 +30,12 @@ class DailyBalanceExportService(ExportService):
             "total_gcash": sum(r.get("gcash_total", 0) for r in reports),
             "total_bdo": sum(r.get("bdo_total", 0) for r in reports),
             "total_bpi": sum(r.get("bpi_total", 0) for r in reports),
+            "total_queenbank": sum(r.get("queenbank_total", 0) for r in reports),
             "cash_count": sum(r.get("cash_count", 0) for r in reports),
             "gcash_count": sum(r.get("gcash_count", 0) for r in reports),
             "bdo_count": sum(r.get("bdo_count", 0) for r in reports),
             "bpi_count": sum(r.get("bpi_count", 0) for r in reports),
+            "queenbank_count": sum(r.get("queenbank_count", 0) for r in reports),
         }
 
     def build_pdf_context(
@@ -81,6 +83,7 @@ class DailyBalanceExportService(ExportService):
                 "GCash",
                 "BDO",
                 "BPI",
+                "QueenBank",
                 "Total Expenses",
                 "Net Balance",
                 "Total Orders",
@@ -98,6 +101,7 @@ class DailyBalanceExportService(ExportService):
                 "GCash": f"₱{report.get('gcash_total', 0):.2f}",
                 "BDO": f"₱{report.get('bdo_total', 0):.2f}",
                 "BPI": f"₱{report.get('bpi_total', 0):.2f}",
+                "QueenBank": f"₱{report.get('queenbank_total', 0):.2f}",
                 "Total Expenses": f"₱{report['total_expenses']:.2f}",
                 "Net Balance": f"₱{report['net_balance']:.2f}",
                 "Total Orders": report["total_orders"],
@@ -157,6 +161,7 @@ class DailyBalanceExportService(ExportService):
         total_gcash = sum(r.get("gcash_total", 0) for r in reports)
         total_bdo = sum(r.get("bdo_total", 0) for r in reports)
         total_bpi = sum(r.get("bpi_total", 0) for r in reports)
+        total_queenbank = sum(r.get("queenbank_total", 0) for r in reports)
 
         ws["A4"] = "Total Revenue:"
         ws["B4"] = total_revenue
@@ -193,6 +198,10 @@ class DailyBalanceExportService(ExportService):
         ws["A12"] = "Total Sessions:"
         ws["B12"] = sum(r["total_sessions"] for r in reports)
 
+        ws["A15"] = "QueenBank Payments:"
+        ws["B15"] = total_queenbank
+        ws["B15"].number_format = "₱#,##0.00"
+
         ws["A13"] = "Period:"
         if reports:
             ws["B13"] = DailyBalanceExportService._period_label(reports)
@@ -215,6 +224,7 @@ class DailyBalanceExportService(ExportService):
             "GCash",
             "BDO",
             "BPI",
+            "QueenBank",
             "Expenses",
             "Net Balance",
             "Orders",
@@ -238,6 +248,7 @@ class DailyBalanceExportService(ExportService):
                 report.get("gcash_total", 0),
                 report.get("bdo_total", 0),
                 report.get("bpi_total", 0),
+                report.get("queenbank_total", 0),
                 report["total_expenses"],
                 report["net_balance"],
                 report["total_orders"],
@@ -249,10 +260,10 @@ class DailyBalanceExportService(ExportService):
                 cell = ws.cell(row=row_idx, column=col)
                 cell.value = value
                 cell.border = border
-                if col in (2, 3, 4, 5, 6, 7, 8):
+                if col in (2, 3, 4, 5, 6, 7, 8, 9):
                     cell.number_format = "₱#,##0.00"
 
-        for col, width in zip("ABCDEFGHIJKL", [15, 15, 15, 15, 15, 15, 15, 15, 10, 10, 15, 25]):
+        for col, width in zip("ABCDEFGHIJKLM", [15, 15, 15, 15, 15, 15, 15, 15, 15, 10, 10, 15, 25]):
             ws.column_dimensions[col].width = width
 
     @staticmethod

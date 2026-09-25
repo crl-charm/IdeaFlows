@@ -8,10 +8,12 @@ from sqlalchemy import case, func
 
 from app import db
 from app.models import Transaction, DailySalesReport, Order, CustomerSession, Expense, SoftBalanceEntry
+from app.utils.dates import day_bounds, inclusive_date_bounds
 
 
 class SalesRepository:
     def summary_for_range(self, start_date: date, end_date: date):
+        start_at, end_at = inclusive_date_bounds(start_date, end_date)
         return (
             Transaction.query.with_entities(
                 func.count(Transaction.id).label("transactions"),
@@ -19,8 +21,8 @@ class SalesRepository:
                 func.coalesce(func.sum(Transaction.time_bill), 0).label("space_revenue"),
                 func.coalesce(func.sum(Transaction.food_bill), 0).label("food_revenue"),
             )
-            .filter(func.date(Transaction.created_at) >= start_date)
-            .filter(func.date(Transaction.created_at) <= end_date)
+            .filter(Transaction.created_at >= start_at)
+            .filter(Transaction.created_at < end_at)
             .first()
         )
 
@@ -61,14 +63,16 @@ class SalesRepository:
     def payment_totals_by_dates(self, dates: list[date]) -> dict[date, dict[str, float | int]]:
         if not dates:
             return {}
+        start_at, end_at = inclusive_date_bounds(min(dates), max(dates))
         is_gcash = Transaction.payment_method == "gcash"
         is_bdo = Transaction.payment_method == "bdo"
         is_bpi = Transaction.payment_method == "bpi"
+        is_queenbank = Transaction.payment_method == "queenbank"
         rows = (
             Transaction.query.with_entities(
                 func.date(Transaction.created_at).label("tx_date"),
                 func.coalesce(
-                    func.sum(case((is_gcash | is_bdo | is_bpi, 0), else_=Transaction.total_bill)),
+                    func.sum(case((is_gcash | is_bdo | is_bpi | is_queenbank, 0), else_=Transaction.total_bill)),
                     0,
                 ).label("cash_total"),
                 func.coalesce(
@@ -83,59 +87,71 @@ class SalesRepository:
                     func.sum(case((is_bpi, Transaction.total_bill), else_=0)),
                     0,
                 ).label("bpi_total"),
-                func.coalesce(func.sum(case((is_gcash | is_bdo | is_bpi, 0), else_=1)), 0).label("cash_count"),
+                func.coalesce(func.sum(case((is_queenbank, Transaction.total_bill), else_=0)), 0).label("queenbank_total"),
+                func.coalesce(func.sum(case((is_gcash | is_bdo | is_bpi | is_queenbank, 0), else_=1)), 0).label("cash_count"),
                 func.coalesce(func.sum(case((is_gcash, 1), else_=0)), 0).label("gcash_count"),
                 func.coalesce(func.sum(case((is_bdo, 1), else_=0)), 0).label("bdo_count"),
                 func.coalesce(func.sum(case((is_bpi, 1), else_=0)), 0).label("bpi_count"),
+                func.coalesce(func.sum(case((is_queenbank, 1), else_=0)), 0).label("queenbank_count"),
             )
+            .filter(Transaction.created_at >= start_at, Transaction.created_at < end_at)
             .filter(func.date(Transaction.created_at).in_(dates))
             .group_by(func.date(Transaction.created_at))
             .all()
         )
         result: dict[date, dict[str, float | int]] = {}
         for row in rows:
-            result[row.tx_date] = {
+            result[date.fromisoformat(row.tx_date) if isinstance(row.tx_date, str) else row.tx_date] = {
                 "cash_total": float(row.cash_total or 0),
                 "gcash_total": float(row.gcash_total or 0),
                 "bdo_total": float(row.bdo_total or 0),
                 "bpi_total": float(row.bpi_total or 0),
+                "queenbank_total": float(row.queenbank_total or 0),
                 "cash_count": int(row.cash_count or 0),
                 "gcash_count": int(row.gcash_count or 0),
                 "bdo_count": int(row.bdo_count or 0),
                 "bpi_count": int(row.bpi_count or 0),
+                "queenbank_count": int(row.queenbank_count or 0),
             }
         empty = {
             "cash_total": 0.0,
             "gcash_total": 0.0,
             "bdo_total": 0.0,
             "bpi_total": 0.0,
+            "queenbank_total": 0.0,
             "cash_count": 0,
             "gcash_count": 0,
             "bdo_count": 0,
             "bpi_count": 0,
+            "queenbank_count": 0,
         }
         return {d: result.get(d, empty) for d in dates}
 
     def get_daily_transactions(self, report_date: date) -> list[Transaction]:
+        start_at, end_at = day_bounds(report_date)
         return (
             Transaction.query.filter(
-                func.date(Transaction.created_at) == report_date
+                Transaction.created_at >= start_at,
+                Transaction.created_at < end_at,
             )
             .order_by(Transaction.created_at)
             .all()
         )
 
     def get_daily_orders(self, report_date: date) -> list[Order]:
+        start_at, end_at = day_bounds(report_date)
         return (
             Order.query.join(CustomerSession)
-            .filter(func.date(CustomerSession.time_in) == report_date)
+            .filter(CustomerSession.time_in >= start_at, CustomerSession.time_in < end_at)
             .all()
         )
 
     def get_daily_sessions(self, report_date: date) -> list[CustomerSession]:
+        start_at, end_at = day_bounds(report_date)
         return (
             CustomerSession.query.filter(
-                func.date(CustomerSession.time_in) == report_date
+                CustomerSession.time_in >= start_at,
+                CustomerSession.time_in < end_at,
             )
             .all()
         )

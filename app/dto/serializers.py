@@ -51,6 +51,9 @@ def serialize_booking(booking):
         "number_of_people": booking.number_of_people,
         "course": booking.course,
         "purpose": booking.purpose,
+        "booking_type": booking.booking_type or "boardroom",
+        "hourly_rate": float(booking.hourly_rate or 0),
+        "booked_by": booking.booked_by,
         "status": booking.status,
         "session_id": booking.session_id,
         "started_at": booking.started_at.isoformat() if booking.started_at else None,
@@ -71,10 +74,19 @@ def serialize_transaction(transaction):
         getattr(transaction, "payment_method", None)
         or (getattr(session, "payment_method", None) if session else None)
     )
+    
+    amount_tendered_db = getattr(transaction, "amount_tendered", None)
+    if amount_tendered_db is None and session:
+        amount_tendered_db = getattr(session, "amount_tendered", None)
+    
+    amount_tendered = float(amount_tendered_db) if amount_tendered_db is not None else None
+    change_given = round(amount_tendered - float(transaction.total_bill), 2) if amount_tendered is not None else None
+
     return {
         "transaction_id": transaction.id,
         "customer_name": session.customer_name if session else "N/A",
         "payment_method": payment_method,
+        "collected_by": transaction.collected_by,
         "payment_label": payment_method_label(payment_method),
         "space_type": session.space_type.name if session and session.space_type else "N/A",
         "time_in": (session.time_in + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p")
@@ -85,10 +97,14 @@ def serialize_transaction(transaction):
         else "N/A",
         "time_bill": float(transaction.time_bill),
         "food_bill": float(transaction.food_bill),
+        "discount_type": transaction.discount_type,
+        "discount_amount": float(transaction.discount_amount or 0),
         "total_bill": float(transaction.total_bill),
         "seconds_spent": seconds_spent,
         "minutes_spent": round(seconds_spent / 60, 2) if seconds_spent is not None else None,
         "created_date": (transaction.created_at + timedelta(hours=8)).strftime("%Y-%m-%d") if transaction.created_at else None,
+        "amount_tendered": amount_tendered,
+        "change_given": change_given,
     }
 
 def serialize_user(user):

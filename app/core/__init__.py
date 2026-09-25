@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import os
-
 from app import socketio
-from app.core.notifiers import NoopNotifier, SocketIONotifier
+from app.core.notifiers import SocketIONotifier
 
 
 def get_notifier():
-    """Return serverless-safe notifier on Vercel, socket notifier otherwise."""
-    if os.environ.get("VERCEL"):
-        return NoopNotifier()
+    """Return the Socket.IO notifier used by the VPS deployment."""
     return SocketIONotifier(socketio=socketio)

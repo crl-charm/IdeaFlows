@@ -1,10 +1,11 @@
-from flask import Blueprint, request, jsonify, render_template
+from flask import Blueprint, request, jsonify, render_template, session
 
 from app.core import get_notifier
 from app.core.clock import SystemClock
 from app.repositories.booking_repository import BookingRepository
 from app.services.booking_service import BookingService
 from app.utils.auth import login_required
+from app.core.idempotency import idempotent_request
 
 boardroom_bp = Blueprint("boardroom_routes", __name__)
 _service = BookingService(repo=BookingRepository(), notifier=get_notifier(), clock=SystemClock())
@@ -15,8 +16,12 @@ _service = BookingService(repo=BookingRepository(), notifier=get_notifier(), clo
 # -----------------------------
 @boardroom_bp.route("/api/book-boardroom", methods=["POST"])
 @login_required
+@idempotent_request("book-boardroom")
 def book_boardroom():
-    resp = _service.create_booking(request.get_json() or {})
+    resp = _service.create_booking(
+        request.get_json() or {}, allow_custom_rate=session.get("role") in {"admin", "staff"},
+        actor_name=session.get("username"),
+    )
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

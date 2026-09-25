@@ -1,0 +1,11 @@
+<link rel="manifest" href="{{ url_for('webmanifest') }}">
+<meta name="theme-color" content="#2a4f43">
+<meta name="application-name" content="IdeaFlow">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="IdeaFlow">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pwa-install.css') }}">
+<script defer src="{{ url_for('static', filename='js/pwa-install.js') }}"></script>
+<script defer src="{{ url_for('pwa_register') }}"></script>

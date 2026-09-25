@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Menu Items - Staff View - IdeaHub{% endblock %}
+{% block title %}Menu Items - Staff View - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -20,7 +20,6 @@
             <th>Item Name</th>
             <th>Category</th>
             <th>Price</th>
-            <th>Status</th>
             <th>Availability</th>
           </tr>
         </thead>
@@ -30,12 +29,11 @@
             <td>{{ item.name }}</td>
             <td>{{ item.category or "-" }}</td>
             <td>₱{{ "%.2f"|format(item.price or 0) }}</td>
-            <td>{{ item.status }}</td>
             <td>
               {% if item.is_available %}
-              <span class="badge bg-success">Available</span>
+              <span class="badge bg-success">{{ item.availability_message }}</span>
               {% else %}
-              <span class="badge bg-danger">Unavailable</span>
+              <span class="badge bg-danger">{{ item.availability_message }}</span>
               {% endif %}
             </td>
           </tr>
@@ -63,6 +61,8 @@
 document.addEventListener('DOMContentLoaded', function() {
   loadMenu();
 });
+const menuSocket = window.getIdeaFlowSocket();
+if (menuSocket) ['inventory_update', 'menu_update'].forEach(event => menuSocket.on(event, loadMenu));
 
 function loadMenu() {
   fetch('/menu-view/api/items').then(r => r.json()).then(data => {
@@ -74,16 +74,21 @@ function loadMenu() {
         const rowClass = isUnavailable ? 'unavailable' : '';
         tbody.innerHTML += `
           <tr class="${rowClass}">
-            <td>${item.name}</td>
-            <td>${item.category || '-'}</td>
+            <td>${escapeHtml(item.name)}</td>
+            <td>${escapeHtml(item.category || '-')}</td>
             <td>₱${(item.price || 0).toFixed(2)}</td>
-            <td>${item.status}</td>
-            <td>${isUnavailable ? '<span class="badge bg-danger">Unavailable</span>' : '<span class="badge bg-success">Available</span>'}</td>
+            <td><span class="badge ${isUnavailable ? 'bg-danger' : 'bg-success'}">${escapeHtml(item.availability_message || 'Unavailable')}</span></td>
           </tr>
         `;
       });
     }
   });
+}
+
+function escapeHtml(value) {
+  const node = document.createElement('span');
+  node.textContent = String(value ?? '');
+  return node.innerHTML;
 }
 </script>
 {% endblock %}

@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from flask import current_app
+
 from app.dto.serializers import serialize_user
-from app.models import User
+from app.models import Admin, User
 from app.repositories.admin_repository import AdminRepository
 
 
@@ -31,18 +33,18 @@ class AdminService:
         if len(full_name) < 2:
             return {"error": "Full name must be at least 2 characters."}, 400
 
-        # Password strength validation is now handled in User model
+        if job_role not in valid_job_roles:
+            return {"error": "Invalid job role."}, 400
+
+        if User.query.filter_by(username=username).first() or Admin.query.filter_by(username=username).first():
+            return {"error": "Username already exists."}, 409
+
+        # Password strength validation is handled in User model
         try:
             user = User(full_name=full_name, username=username, role=role, job_role=job_role)
             user.set_password(password)
         except ValueError as e:
             return {"error": str(e)}, 400
-
-        if job_role not in valid_job_roles:
-            return {"error": "Invalid job role."}, 400
-
-        if User.query.filter_by(username=username).first():
-            return {"error": "Username already exists."}, 409
 
         self.repo.add(user)
         self.repo.save()
@@ -50,11 +52,22 @@ class AdminService:
 
     def list_users(self, page: int, per_page: int):
         pagination = self.repo.list_staff_paginated(page, per_page)
-        online_user_ids = self.repo.list_online_staff_ids()
+        online_user_ids = self.active_staff_ids()
         return [
             {**serialize_user(u), "is_online": u.id in online_user_ids}
             for u in pagination.items
         ]
+
+    def active_staff_ids(self, leases=None) -> set[int]:
+        lifetime = current_app.config["PERMANENT_SESSION_LIFETIME"]
+        idle_seconds = lifetime.total_seconds() if hasattr(lifetime, "total_seconds") else float(lifetime)
+        if current_app.config.get("SINGLE_SESSION_ENABLED"):
+            active = leases if leases is not None else current_app.extensions["session_leases"].list_active()
+            online_ids = {int(row["user_id"]) for row in active if row.get("identity", "").startswith("staff:")}
+        else:
+            online_ids = self.repo.list_online_staff_ids(idle_seconds)
+        self.repo.close_inactive_staff_attendance(online_ids, idle_seconds)
+        return online_ids
 
     def edit_user(self, user_id: int, data: dict[str, Any]):
         user = self.repo.get_staff_user(user_id)
@@ -108,7 +121,27 @@ class AdminService:
             )
         return records
 
+    def customer_count(self) -> int:
+        return self.repo.count_customer_sessions()
+
+    def space_prices(self) -> list[dict[str, Any]]:
+        data = []
+        for space, last_changed in self.repo.list_spaces_with_latest_price_change():
+            rate_per_minute = float(space.rate_per_minute or 0)
+            data.append(
+                {
+                    "id": space.id,
+                    "name": space.name,
+                    "rate_per_minute": rate_per_minute,
+                    "hourly_rate": rate_per_minute * 60,
+                    "last_changed": last_changed.isoformat() if last_changed else "Never",
+                    "description": space.description or "",
+                }
+            )
+        return data
+
     def staff_attendance(self):
+        self.active_staff_ids()
         logs = self.repo.list_staff_attendance()
         return [
             {

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Browse Menu - IdeaHub{% endblock %}
+{% block title %}Browse Menu - IdeaFlow{% endblock %}
 
 {% block content %}
 <style>
@@ -423,13 +423,21 @@ let detailItemId = null;
 let detailItemQuantity = 1;
 let detailItemAvailable = true;
 
-const socket = io();
+const socket = window.getIdeaFlowSocket();
+const refreshMenu = window.createDebouncedRefresh(function () {
+  loadCategories(loadMenuItems);
+}, 150);
 
-socket.on('menu_update', function() {
-  loadCategories(function() {
-    loadMenuItems();
+if (socket) socket.on('menu_update', refreshMenu);
+if (socket) socket.on('inventory_update', data => {
+  if (!data?.availability) return refreshMenu();
+  menuItems.forEach(item => {
+    const snapshot = data.availability[item.id];
+    if (snapshot) Object.assign(item, snapshot, {is_available:snapshot.can_order});
   });
+  renderMenuItems();
 });
+if (socket) socket.on('connect', refreshMenu);
 
 document.addEventListener('DOMContentLoaded', function() {
   loadCategories(function() {
@@ -523,11 +531,12 @@ function renderMenuItems() {
   grid.innerHTML = filtered.map(item => `
     <div class="menu-item-card">
       <div class="menu-item-image">
-        ${item.image_url ? `<img src="${item.image_url}" alt="${item.name}">` : '<div class="menu-item-placeholder">🖼️</div>'}
+        ${item.image_url ? `<img loading="lazy" decoding="async" src="${item.image_url}" alt="${item.name}">` : '<div class="menu-item-placeholder">🖼️</div>'}
         <span class="menu-item-badge">${item.category}</span>
       </div>
       <div class="menu-item-content">
         <h3 class="menu-item-name">${item.name}</h3>
+        <p class="small text-muted">${item.availability_message || ''}</p>
         ${item.description ? `<p class="menu-item-description">${item.description}</p>` : ''}
         <div class="menu-item-price">₱${parseFloat(item.price).toFixed(2)}</div>
       </div>

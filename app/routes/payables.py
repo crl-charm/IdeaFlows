@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from math import isfinite
+
 from flask import Blueprint, jsonify, request, render_template, session
 import logging
 
+from app import csrf
+from app.core.idempotency import idempotent_request
 from app.repositories.payable_repository import PayableRepository
 from app.services.payable_service import PayableService
 from app.utils.auth import admin_required
@@ -28,10 +32,18 @@ def api_list_payables() -> tuple:
 
 @payables_bp.route("/api/payables", methods=["POST"])
 @admin_required
+@csrf.exempt
+@idempotent_request("admin-create-payable")
 def api_create_payable() -> tuple:
     data = request.get_json() or {}
     amount_owed = float(data.get("amount_owed") or 0)
     creditor_name = data.get("creditor_name")
+    user_id = session.get("user_id")
+    
+    if not user_id:
+        return jsonify({"success": False, "error": "User session not found"}), 400
+    if not isfinite(amount_owed) or amount_owed <= 0:
+        return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
     
     result = _service.create(
         creditor_name=creditor_name,
@@ -39,7 +51,7 @@ def api_create_payable() -> tuple:
         amount_owed=amount_owed,
         due_date=data.get("due_date"),
         incurred_date=data.get("incurred_date"),
-        created_by=session.get("user_id"),
+        created_by=user_id,
     )
     if result.get("success"):
         security_logger.info(
@@ -50,6 +62,7 @@ def api_create_payable() -> tuple:
 
 @payables_bp.route("/api/payables/<int:p_id>/mark-paid", methods=["PATCH"])
 @admin_required
+@idempotent_request("admin-mark-payable-paid")
 def api_mark_paid(p_id: int) -> tuple:
     data = request.get_json() or {}
     amount_val = data.get("amount")
@@ -58,8 +71,10 @@ def api_mark_paid(p_id: int) -> tuple:
     if amount_val is not None:
         try:
             amount = float(amount_val)
-        except ValueError:
+        except (TypeError, ValueError):
             return jsonify({"success": False, "error": "Invalid payment amount"}), 400
+        if not isfinite(amount) or amount <= 0:
+            return jsonify({"success": False, "error": "Payment amount must be greater than zero"}), 400
             
     result = _service.mark_paid(p_id, amount)
     if isinstance(result, tuple):

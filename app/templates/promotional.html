@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Idea Hub Iloilo is a coworking space and café with regular and premium lounges, a boardroom, Wi-Fi, food, and drinks in Iloilo City.">
+  <link rel="canonical" href="https://idea-flows.online/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Idea Hub Coworking Space + Cafe in Iloilo City">
+  <meta property="og:description" content="Work, study, meet, and enjoy food and drinks at Idea Hub Iloilo.">
+  <meta property="og:url" content="https://idea-flows.online/">
+  <meta property="og:image" content="https://idea-flows.online/static/promotional/premium.jpg">
+  {% include "partials/pwa_metadata.html" %}
+  <title>Idea Hub Coworking Space + Cafe in Iloilo City | Official Website</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    "name": "Idea Hub Coworking Space + Cafe",
+    "alternateName": "IdeaHub Iloilo",
+    "url": "https://idea-flows.online/",
+    "logo": "https://idea-flows.online/static/promotional/logo.png",
+    "image": "https://idea-flows.online/static/promotional/premium.jpg",
+    "telephone": "+639177070701",
+    "email": "ideahub.inc7722@gmail.com",
+    "priceRange": "₱",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "2/F Sta. Cruz Bldg., corner Fuentes-Ledesma Sts.",
+      "addressLocality": "Iloilo City",
+      "addressRegion": "Iloilo",
+      "postalCode": "5000",
+      "addressCountry": "PH"
+    },
+    "openingHoursSpecification": {
+      "@type": "OpeningHoursSpecification",
+      "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+      "opens": "09:00",
+      "closes": "20:00"
+    },
+    "sameAs": ["https://www.facebook.com/profile.php?id=100083293749959"]
+  }
+  </script>
+  <link rel="icon" href="{{ url_for('static', filename='promotional/logo.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/promotional.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="nav-wrap">
+      <a class="brand" href="{{ url_for('portal_intro') }}" aria-label="Open IdeaHub login showcase">
+        <img src="{{ url_for('static', filename='promotional/logo.png') }}" alt="IdeaHub">
+      </a>
+      <nav class="desktop-nav" aria-label="Main navigation">
+        <a class="active" href="#about">About</a><a href="#offers">What We Offer</a><a href="#spaces">Spaces</a><a href="#process">How It Works</a><a href="#contact">Contact Us</a>
+      </nav>
+      <details class="mobile-menu">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile navigation">
+          <a class="active" href="#about">About</a><a href="#offers">What We Offer</a><a href="#spaces">Spaces</a><a href="#process">How It Works</a><a href="#contact">Contact Us</a>
+        </nav>
+      </details>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero section-wrap">
+      <div class="hero-copy">
+        <p class="eyebrow">Idea Hub Iloilo · Coworking space + café</p>
+        <h1>Your space to<br>work, study, and<br>create.</h1>
+        <p class="lead">Work, study, collaborate, or meet while enjoying good food and drinks in one place.</p>
+        <a class="button" href="#spaces">Explore our Spaces</a>
+        <div class="space-pills" aria-label="Available spaces"><a href="#regular">Regular Lounge</a><a href="#premium">Premium Lounge</a><a href="#boardroom">Boardroom</a></div>
+      </div>
+      <figure class="polaroid hero-photo">
+        <img src="{{ url_for('static', filename='promotional/premium.jpg') }}" alt="IdeaHub coworking lounge">
+        <figcaption>just another day at ideahub</figcaption>
+      </figure>
+    </section>
+
+    <section class="section-wrap section" id="about">
+      <span class="section-label">About Us</span><h2>A Space for Work, Study, and More</h2>
+      <div class="about-grid">
+        <p>At IdeaHub, you can spend your day working, studying, meeting with others, or simply enjoying some food and drinks. Choose from different spaces depending on what you need.</p>
+        <ul class="check-list"><li>Work or study in a shared space</li><li>Enjoy food and drinks at the café</li><li>Choose a space that fits your needs</li></ul>
+      </div>
+    </section>
+
+    <section class="section-wrap section" id="offers">
+      <span class="section-label">What We Offer</span><h2>Everything you need in one visit.</h2>
+      <p class="section-intro">From choosing your space to enjoying the café, here's what you can expect at IdeaHub.</p>
+      <div class="offer-grid">
+        <article><h3>Regular Lounge 🪑</h3><p>Open seating for everyday studying and working.</p></article>
+        <article><h3>Premium Lounge 🛋️</h3><p>A quieter, more private area with extra comfort.</p></article>
+        <article><h3>Boardroom 🖥️</h3><p>A dedicated room for meetings and group work.</p></article>
+        <article><h3>Food &amp; Drinks 🥤</h3><p>Beverages, snacks, meals, and more — served right to your table.</p></article>
+        <article><h3>Wi-fi Access 📶</h3><p>Reliable internet across every space in the building.</p></article>
+        <article><h3>Flexible Hours 🕘</h3><p>Stay for an hour, or spend the whole afternoon.</p></article>
+      </div>
+    </section>
+
+    <section class="section-wrap section" id="spaces">
+      <span class="section-label">Explore Our Spaces</span><h2>Choose the space that works for you.</h2>
+      <div class="space-row" id="regular"><figure class="polaroid"><img src="{{ url_for('static', filename='promotional/regular.jpg') }}" alt="Regular Lounge"></figure><div><h3>Regular Lounge</h3><p>A comfortable, open space for studying, working, or getting things done alongside other people.</p><strong>Price: ₱15 / hour</strong></div></div>
+      <div class="space-row reverse" id="premium"><figure class="polaroid"><img src="{{ url_for('static', filename='promotional/premium.jpg') }}" alt="Premium Lounge"></figure><div><h3>Premium Lounge</h3><p>A more private, more comfortable workspace for when you need fewer distractions.</p><strong>Price: ₱20 / hour</strong></div></div>
+      <div class="space-row" id="boardroom"><figure class="polaroid"><img src="{{ url_for('static', filename='promotional/boardroom.jpg') }}" alt="IdeaHub Boardroom"></figure><div><h3>Boardroom</h3><p>A dedicated room for meetings, presentations, and group discussions.</p><strong>Price: ₱250 / hour<br>Capacity: Up to 12 people</strong></div></div>
+    </section>
+
+    <section class="section-wrap section" id="process">
+      <span class="section-label">How It Works</span><h2>Your Visit to IdeaHub</h2>
+      <p class="section-intro">From arriving at IdeaHub to checking out, your visit follows a simple process.</p>
+      <ol class="steps">
+        <li><span>1</span><h3>Check In</h3><p>Check in when you arrive and choose the space you want to use.</p></li>
+        <li><span>2</span><h3>Use Your Space</h3><p>Work, study, collaborate, or meet in your chosen space.</p></li>
+        <li><span>3</span><h3>Order Food &amp; Drinks</h3><p>Enjoy food and drinks from the café while spending time in the space.</p></li>
+        <li><span>4</span><h3>Check Out</h3><p>When you're ready to leave, your space usage and orders are included in your bill.</p></li>
+      </ol>
+      <div class="process-cta"><strong>Ready to get started?</strong><em>Get in touch with us to book your preferred space.</em><a class="button rounded" href="#contact">Contact Us</a></div>
+    </section>
+
+    <section class="section-wrap section" id="faq">
+      <span class="section-label">FAQ</span><h2>Frequently Asked Questions</h2>
+      <p class="section-intro">Have questions before visiting IdeaHub? Find quick answers about our spaces, reservations, pricing, and what you can expect.</p>
+      <div class="faq-list">
+        <details><summary>How can I book a space?</summary><p>You can contact IdeaHub directly to ask about space availability and booking arrangements.</p></details>
+        <details><summary>What payment methods are accepted?</summary><p>We accept Cash, GCash, BPI, and BDO payments for your space and food orders.</p></details>
+        <details><summary>What makes the spaces different from each other?</summary><p>The Regular Lounge and Premium Lounge are suited for work or study, while the Boardroom is designed for meetings and group activities.</p></details>
+        <details><summary>How long can I use a space?</summary><p>You can use a space based on the length of time you need. Space charges are calculated according to how long you use the space.</p></details>
+        <details><summary>Can I study or work while enjoying food and drinks?</summary><p>Yes. You can work or study in the space while enjoying food and drinks from the café.</p></details>
+        <details><summary>How much does it cost to use a space?</summary><p>Space rates vary depending on the space you choose. Check the listed rate for the Regular Lounge, Premium Lounge, or Boardroom.</p></details>
+      </div>
+    </section>
+
+    <section class="section-wrap section contact" id="contact">
+      <div>
+        <span class="section-label">Contact Us</span><h2>Come see the space.</h2>
+        <address><p><b>Address:</b> 2/F Sta. Cruz Bldg., corner Fuentes-Ledesma Sts., Iloilo City</p><p><b>Contact Number:</b> <a href="tel:+639177070701">+63 917 707 0701</a></p><p><b>Email:</b> <a href="mailto:ideahub.inc7722@gmail.com">ideahub.inc7722@gmail.com</a></p><p><b>Hours:</b> Mon–Sun, 9:00 AM – 8:00 PM</p><p><b>Social Media:</b> <a href="https://www.facebook.com/profile.php?id=100083293749959" target="_blank" rel="noopener">Idea Hub Coworking Space + Cafe</a></p></address>
+      </div>
+      <form id="contact-form" action="{{ url_for('home') }}" method="post">
+        <label><span>Your Name</span><input name="name" autocomplete="name" placeholder="Your Name" required></label>
+        <label><span>Your Email</span><input type="email" name="email" autocomplete="email" placeholder="Your Email" required></label>
+        <label><span>Your Message</span><textarea name="message" placeholder="What would you like to ask?" required></textarea></label>
+        <button class="button" type="submit">Open Email Draft</button>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-wrap"><div><a class="footer-brand" href="{{ url_for('portal_intro') }}"><span>Idea</span>Hub</a><p>Your space to work, study, and create —<br>a coworking space and café under one roof.</p></div><div><h3>Quick Links</h3><a href="#about">About</a><a href="#offers">What We Offer</a><a href="#spaces">Spaces</a><a href="#process">How It Works</a><a href="#contact">Contact Us</a></div></div>
+    <p class="copyright">© 2026 IdeaHub. All rights reserved.</p>
+  </footer>
+  <script>
+    document.getElementById("contact-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const { name, email, message } = Object.fromEntries(new FormData(event.currentTarget));
+      const body = `Name: ${name}\nEmail: ${email}\n\n${message}`;
+      location.href = `mailto:ideahub.inc7722@gmail.com?subject=${encodeURIComponent("IdeaHub inquiry")}&body=${encodeURIComponent(body)}`;
+    });
+
+    const sections = [...document.querySelectorAll("main section[id]")];
+    const links = [...document.querySelectorAll(".site-header nav a")];
+    const reveal = document.querySelectorAll(".section > *, .space-row > *, .offer-grid article, .steps li, .hero > *");
+
+    document.querySelectorAll(".mobile-menu a").forEach(link => link.addEventListener("click", () => link.closest("details").removeAttribute("open")));
+
+    reveal.forEach((element, index) => {
+      element.classList.add("reveal");
+      element.style.setProperty("--delay", `${index % 6 * 55}ms`);
+    });
+
+    const revealObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("shown");
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: .12 });
+    reveal.forEach(element => revealObserver.observe(element));
+
+    const navObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        links.forEach(link => link.classList.toggle("active", link.hash === `#${entry.target.id}`));
+      });
+    }, { rootMargin: "-35% 0px -55%", threshold: 0 });
+    sections.forEach(section => navObserver.observe(section));
+  </script>
+</body>
+</html>

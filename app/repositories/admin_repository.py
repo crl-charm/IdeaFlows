@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models import CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, User, StaffPerformanceLog
+from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, User, StaffPerformanceLog
+from app.models.space_price_history import SpacePriceHistory
 
 
 class AdminRepository:
@@ -15,18 +18,45 @@ class AdminRepository:
             .paginate(page=page, per_page=per_page, error_out=False)
         )
 
-    def list_online_staff_ids(self) -> set[int]:
+    def list_online_staff_ids(self, idle_seconds: float) -> set[int]:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=idle_seconds)
         rows = StaffAttendance.query.with_entities(StaffAttendance.user_id).filter(
-            StaffAttendance.time_out.is_(None)
+            StaffAttendance.time_out.is_(None),
+            func.coalesce(StaffAttendance.last_activity_at, StaffAttendance.time_in) > cutoff,
         )
         return {row.user_id for row in rows.all()}
+
+    def close_inactive_staff_attendance(self, online_ids: set[int], idle_seconds: float) -> None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        changed = False
+        for row in StaffAttendance.query.filter(StaffAttendance.time_out.is_(None)).all():
+            if row.user_id in online_ids:
+                continue
+            row.time_out = min(now, row.last_activity_at + timedelta(seconds=idle_seconds)) if row.last_activity_at else now
+            changed = True
+        if changed:
+            db.session.commit()
+
+    def close_staff_attendance(self, user_id: int, ended_at: datetime) -> None:
+        rows = StaffAttendance.query.filter(
+            StaffAttendance.user_id == user_id,
+            StaffAttendance.time_out.is_(None),
+            StaffAttendance.time_in <= ended_at,
+        ).all()
+        for row in rows:
+            row.time_out = ended_at
+        if rows:
+            db.session.commit()
 
     def get_staff_user(self, user_id: int):
         return User.query.filter_by(id=user_id, role="staff").first()
 
     def username_exists_for_other(self, username: str, user_id: int) -> bool:
-        existing = User.query.filter_by(username=username).first()
-        return bool(existing and existing.id != user_id)
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user and existing_user.id != user_id:
+            return True
+        existing_admin = Admin.query.filter_by(username=username).first()
+        return bool(existing_admin)
 
     def delete_staff_attendance(self, user_id: int) -> None:
         StaffAttendance.query.filter_by(user_id=user_id).delete(synchronize_session=False)
@@ -46,6 +76,28 @@ class AdminRepository:
                 selectinload(CustomerSession.space_type),
             )
             .order_by(CustomerSession.time_in.desc())
+            .all()
+        )
+
+    def count_customer_sessions(self) -> int:
+        return CustomerSession.query.count()
+
+    def list_spaces_with_latest_price_change(self):
+        latest_history = (
+            db.session.query(
+                SpacePriceHistory.space_type_id.label("space_type_id"),
+                func.max(SpacePriceHistory.changed_at).label("last_changed"),
+            )
+            .group_by(SpacePriceHistory.space_type_id)
+            .subquery()
+        )
+        return (
+            db.session.query(SpaceType, latest_history.c.last_changed)
+            .outerjoin(
+                latest_history,
+                latest_history.c.space_type_id == SpaceType.id,
+            )
+            .order_by(SpaceType.name.asc())
             .all()
         )
 

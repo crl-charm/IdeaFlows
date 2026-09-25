@@ -115,7 +115,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-        <button type="button" class="btn btn-warning" onclick="createExpense()">Log</button>
+        <button type="button" class="btn btn-warning" id="logExpenseBtn" onclick="createExpense()">Log Expense</button>
       </div>
     </div>
   </div>
@@ -126,23 +126,16 @@
 {% block scripts %}
 <script>
 // Socket.IO for real-time updates
-const socket = io();
+const socket = window.getIdeaFlowSocket();
+const refreshExpenses = window.createDebouncedRefresh(loadExpenses, 150);
 
-socket.on('expenses_update', function(data) {
-  console.log('Expenses update:', data);
-  loadExpenses();
-  if (data.event === 'create') {
-    showToast('✓ New expense logged!', 'success');
-  } else if (data.event === 'delete') {
-    showToast('✓ Expense deleted!', 'success');
-  }
-});
+if (socket) socket.on('expenses_update', refreshExpenses);
 
-socket.on('connect', function() {
+if (socket) socket.on('connect', function() {
   console.log('Connected to server for real-time updates');
 });
 
-socket.on('disconnect', function() {
+if (socket) socket.on('disconnect', function() {
   console.log('Disconnected from server');
 });
 
@@ -228,7 +221,7 @@ function renderFilteredExpenses() {
         <td>${exp.description}</td>
         <td>₱${exp.amount.toFixed(2)}</td>
         <td>${exp.logged_by}</td>
-        <td><button class="btn btn-sm btn-danger" onclick="deleteExpense(${exp.id})">Delete</button></td>
+        <td><button class="btn btn-sm btn-danger" onclick="deleteExpense(${exp.id}, this)">Delete</button></td>
       </tr>
     `;
   });
@@ -240,7 +233,7 @@ function renderFilteredExpenses() {
   document.getElementById('total-expenses').textContent = totalExp.toFixed(2);
 }
 
-function createExpense() {
+async function createExpense() {
   const payload = {
     category: document.getElementById('category').value,
     description: document.getElementById('description').value,
@@ -248,11 +241,29 @@ function createExpense() {
     expense_date: document.getElementById('expenseDate').value,
   };
 
-  csrfFetch('/admin/expenses/api/expenses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).then(r => r.json()).then(data => {
+  if (!payload.category || !payload.description.trim() || !payload.amount || !payload.expense_date) {
+    showToast('Please fill in all required fields.', 'warning');
+    return;
+  }
+  if (!Number.isFinite(Number(payload.amount)) || Number(payload.amount) <= 0) {
+    showToast('Please enter a valid amount greater than 0.', 'warning');
+    return;
+  }
+
+  const button = document.getElementById('logExpenseBtn');
+  try {
+    const data = await runButtonAction(button, {
+      label: 'Logging expense...',
+      slowLabel: 'Still logging...'
+    }, requestKey => fetchJSON('/admin/expenses/api/expenses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': requestKey
+      },
+      body: JSON.stringify(payload)
+    }));
+    if (!data) return;
     if (data.success) {
       showToast('Expense logged', 'success');
       bootstrap.Modal.getInstance(document.getElementById('addExpenseModal')).hide();
@@ -260,24 +271,45 @@ function createExpense() {
       document.getElementById('description').value = '';
       document.getElementById('amount').value = '';
       document.getElementById('expenseDate').value = '';
-      loadExpenses();
+      refreshExpenses();
     } else {
-      showToast('Error logging expense', 'error');
+      showToast(data.error || 'Error logging expense', 'error');
     }
-  });
+  } catch (err) {
+    if (err.data && err.data.duplicate) {
+      showToast('This expense is already being processed. The list will refresh.', 'info');
+      refreshExpenses();
+    } else {
+      showToast(err.message || 'Error logging expense', 'error');
+    }
+  }
 }
 
-function deleteExpense(expId) {
-  if (!confirm('Delete this expense?')) return;
-  csrfFetch(`/admin/expenses/api/expenses/${expId}`, { method: 'DELETE' })
-    .then(r => r.json()).then(data => {
+async function deleteExpense(expId, button) {
+  const confirmed = await showConfirmDialog({
+    title: "Delete Expense",
+    message: "Are you sure you want to delete this expense log?",
+    confirmText: "Delete Expense",
+    confirmClass: "btn-danger",
+    iconType: "delete",
+    icon: '<i class="bi bi-trash3 fs-1 text-danger"></i>'
+  });
+  if (!confirmed) return;
+
+  try {
+    const data = await runButtonAction(button, { label: 'Deleting...' }, () =>
+      fetchJSON(`/admin/expenses/api/expenses/${expId}`, { method: 'DELETE' })
+    );
+    if (!data) return;
       if (data.success) {
         showToast('Expense deleted', 'success');
-        loadExpenses();
+        refreshExpenses();
       } else {
-        showToast('Error deleting expense', 'error');
+        showToast(data.error || 'Error deleting expense', 'error');
       }
-    });
+  } catch (err) {
+    showToast(err.message || 'Error deleting expense', 'error');
+  }
 }
 </script>
 {% endblock %}

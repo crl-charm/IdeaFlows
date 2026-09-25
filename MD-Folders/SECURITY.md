@@ -89,15 +89,15 @@ RATELIMIT_STORAGE_URL=redis://localhost:6379
 - [ ] Configure HTTPS
 - [ ] Set up proper CORS origins
 - [ ] Enable security headers
-- [ ] Configure rate limiting with Redis
+- [ ] Review Flask-Limiter and Nginx rate limits
 - [ ] Set up proper logging
 - [ ] Regular security updates
 
 ### Database Migration
-Run the security migration script:
-```bash
-python add_security_fields.py
-```
+Security schema changes are handled by `app.db.migrator.SchemaMigrator`, which
+runs automatically from both `app.py` and `wsgi.py` during application startup.
+Back up the database before deploying schema changes, then restart the
+`ideahub` systemd service.
 
 ## Monitoring & Maintenance
 

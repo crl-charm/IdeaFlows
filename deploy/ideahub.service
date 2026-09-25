@@ -1,0 +1,69 @@
+# ============================================================
+# IdeaHub — systemd service unit
+# Manages the gunicorn process: auto-start on boot, auto-restart on crash.
+#
+# Usage:
+#   sudo cp deploy/ideahub.service /etc/systemd/system/ideahub.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ideahub
+#   sudo systemctl start ideahub
+#   sudo systemctl status ideahub
+# ============================================================
+
+[Unit]
+Description=IdeaHub POS — Gunicorn + Flask-SocketIO
+# Wait for network and MySQL to be ready before starting
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+# Run as a dedicated non-root user (created during setup)
+User=ideahub
+Group=www-data
+WorkingDirectory=/var/www/ideahub
+
+# Load all environment variables from .env file
+EnvironmentFile=/var/www/ideahub/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AUTO_MIGRATE_ON_STARTUP=false
+
+# Apply idempotent schema changes once, before the serving process starts.
+ExecStartPre=/var/www/ideahub/.venv/bin/python -m app.db.run_migrations
+
+# The gunicorn command:
+#   --worker-class gthread   = threaded worker supported by simple-websocket
+#   --threads 50             = HTTP/WebSocket concurrency within the process
+#   -w 1                     = avoids sticky-session requirements on one host
+#   --timeout 120            = kills hung workers after 2 minutes
+#   wsgi:application         = uses the socketio-wrapped WSGI callable
+ExecStart=/var/www/ideahub/.venv/bin/gunicorn \
+    --worker-class gthread \
+    --threads 50 \
+    -w 1 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --backlog 2048 \
+    --max-requests 10000 \
+    --max-requests-jitter 1000 \
+    --bind 127.0.0.1:5000 \
+    --access-logfile /var/log/ideahub/access.log \
+    --error-logfile  /var/log/ideahub/error.log \
+    wsgi:application
+
+# Restart policy: always restart on crash, wait 5s between attempts
+Restart=always
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=45
+KillSignal=SIGQUIT
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/www/ideahub/static/uploads /var/log/ideahub
+
+[Install]
+WantedBy=multi-user.target

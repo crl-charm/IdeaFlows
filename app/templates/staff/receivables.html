@@ -1,0 +1,364 @@
+{% extends "layout.html" %}
+
+{% block title %}Staff Receivables - IdeaFlow{% endblock %}
+
+{% block content %}
+
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h1>Staff Receivables</h1>
+      <small class="text-muted">View and log customer receivables when the owner is unavailable.</small>
+    </div>
+    <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#addReceivableModal">
+      + Add Receivable
+    </button>
+  </div>
+
+  <div class="row mb-4 g-2">
+    <div class="col-md-4">
+      <div class="card bg-secondary text-white">
+        <div class="card-body">
+          <small>Total Receivables</small>
+          <div class="h5 mb-0">₱<span id="total-receivables">0.00</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card bg-info text-white">
+        <div class="card-body">
+          <small>Open Customer Tabs</small>
+          <div class="h5 mb-0" id="unpaid-count">0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header"><h5 class="mb-0">Customer tabs</h5></div>
+    <div class="card-body table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr><th>Customer</th><th>Contact</th><th>Orders total</th><th>Paid so far</th><th>Still owed</th><th></th></tr></thead>
+        <tbody id="customer-tabs-body"><tr><td colspan="6" class="text-muted">Loading customer tabs…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h5>Receivable Records</h5>
+    </div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Contact</th>
+              <th>Items</th>
+              <th>Borrowed utensils / notes</th>
+              <th>Order amount</th>
+              <th>Date Taken</th>
+              <th>Due Date</th>
+              <th>Approved By</th>
+            </tr>
+          </thead>
+          <tbody id="receivables-table-body">
+            <tr><td colspan="8" class="text-center text-muted py-3">Loading receivables…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="staffTabModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Customer tab: <span id="staffTabCustomer"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3 mb-3">
+          <div class="col-4"><small class="text-muted d-block">Orders total</small><strong id="staffTabOrders">₱0.00</strong></div>
+          <div class="col-4"><small class="text-muted d-block">Paid so far</small><strong id="staffTabPaid">₱0.00</strong></div>
+          <div class="col-4"><small class="text-muted d-block">Still owed</small><strong id="staffTabBalance" class="text-danger">₱0.00</strong></div>
+        </div>
+        <h6>Orders on this tab</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead><tr><th>Items</th><th>Notes</th><th>Date taken</th><th>Amount</th><th>Due date</th><th>Approved by</th></tr></thead>
+            <tbody id="staffTabOrdersBody"></tbody>
+          </table>
+        </div>
+        <div id="staffTabPaymentControls" class="border rounded p-3 mt-3">
+          <h6 class="mb-1">Record a payment</h6>
+          <p class="text-muted small mb-3">The rest stays on the customer's tab.</p>
+          <div class="row g-2 align-items-end">
+            <div class="col-sm-5"><label class="form-label" for="staffPaymentAmount">Amount paid today (₱)</label><input id="staffPaymentAmount" type="number" class="form-control" min="0.01" step="0.01" placeholder="e.g. 50.00"></div>
+            <div class="col-sm-3"><label class="form-label" for="staffPaymentMethod">Payment method</label><select id="staffPaymentMethod" class="form-select"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bdo">BDO</option><option value="bpi">BPI</option><option value="queenbank">QueenBank</option></select></div>
+            <div class="col-sm-4 d-flex gap-2"><button type="button" class="btn btn-outline-success" onclick="fillFullStaffPayment()">Use full balance</button><button type="button" class="btn btn-success" id="staffRecordPaymentBtn" onclick="recordStaffPayment()">Record payment</button></div>
+          </div>
+        </div>
+        <h6 class="mt-4">Payment history</h6>
+        <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date / time</th><th>Amount</th><th>Method</th><th>Recorded by</th></tr></thead><tbody id="staffPaymentHistory"></tbody></table></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Receivable Modal -->
+<div class="modal fade" id="addReceivableModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Log Receivable</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Customer Name *</label>
+          <input type="text" id="customerName" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Contact <small class="text-muted">(helps distinguish same-name customers)</small></label>
+          <input type="text" id="customerContact" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Items Description *</label>
+          <textarea id="itemsDesc" class="form-control" rows="3" required></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="receivableNotes">Borrowed utensils / notes</label>
+          <textarea id="receivableNotes" class="form-control" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount Owed (₱) *</label>
+          <input type="number" id="amountOwed" class="form-control" step="0.01" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Approved By Staff</label>
+          <input type="text" id="approvedByStaff" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date Taken *</label>
+          <input type="date" id="incurredDate" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Due Date *</label>
+          <input type="date" id="dueDate" class="form-control" required>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-warning" onclick="createReceivable()">Add</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let receivablesCache = [];
+const escapeReceivableText = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+document.addEventListener('DOMContentLoaded', function() {
+  loadReceivables();
+  document.getElementById('incurredDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('dueDate').value = new Date().toISOString().split('T')[0];
+});
+
+function loadReceivables() {
+  return fetch('/receivables-view/api/receivables', { credentials: 'include' })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.success) throw new Error(data.error || 'Could not refresh receivables');
+      receivablesCache = data.data;
+      renderReceivables();
+    });
+}
+
+function renderReceivables() {
+  const tbody = document.getElementById('receivables-table-body');
+  tbody.innerHTML = '';
+
+  let total = 0;
+  let unpaidCount = 0;
+  const groups = {};
+
+  receivablesCache.forEach(r => {
+    const contact = (r.customer_contact || '').trim();
+    const key = JSON.stringify([r.customer_name.trim().toLowerCase(), contact]);
+    if (!groups[key]) groups[key] = { name: r.customer_name.trim(), contact, orders: 0, paid: 0, balance: 0 };
+    groups[key].orders += r.amount_owed;
+    groups[key].paid += r.paid ? r.amount_owed : r.partial_paid;
+    if (!r.paid) {
+      const balance = r.amount_owed - r.partial_paid;
+      total += balance;
+      groups[key].balance += balance;
+    }
+    tbody.innerHTML += `
+      <tr>
+        <td>${escapeReceivableText(r.customer_name)}</td>
+        <td>${escapeReceivableText(r.customer_contact) || '-'}</td>
+        <td>${escapeReceivableText(r.items)}</td>
+        <td>${escapeReceivableText(r.notes) || '-'}<br><button class="btn btn-link btn-sm p-0" onclick="editReceivableNotes(${r.id})">Edit notes</button></td>
+        <td>₱${r.amount_owed.toFixed(2)}</td>
+        <td>${r.incurred_date || '-'}</td>
+        <td>${r.due_date}</td>
+        <td>${escapeReceivableText(r.approved_by_staff) || '-'}</td>
+      </tr>
+    `;
+  });
+
+  if (receivablesCache.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No receivables found.</td></tr>';
+  }
+
+  window.staffReceivableGroups = Object.values(groups);
+  unpaidCount = window.staffReceivableGroups.filter(group => group.balance > 0).length;
+  document.getElementById('customer-tabs-body').innerHTML = window.staffReceivableGroups.length
+    ? window.staffReceivableGroups.map((group, index) => `<tr>
+        <td>${escapeReceivableText(group.name)}</td>
+        <td>${escapeReceivableText(group.contact) || '-'}</td>
+        <td>₱${group.orders.toFixed(2)}</td>
+        <td>₱${group.paid.toFixed(2)}</td>
+        <td class="fw-semibold">₱${group.balance.toFixed(2)}</td>
+        <td><button type="button" class="btn btn-sm btn-outline-success" onclick="openStaffTab(window.staffReceivableGroups[${index}].name, window.staffReceivableGroups[${index}].contact)">View tab</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="text-muted">No customer tabs yet.</td></tr>';
+
+  document.getElementById('total-receivables').textContent = total.toFixed(2);
+  document.getElementById('unpaid-count').textContent = unpaidCount;
+}
+
+function staffTabRecords(customerName, customerContact) {
+  return receivablesCache.filter(r => r.customer_name.trim().toLowerCase() === customerName.trim().toLowerCase() && (r.customer_contact || '').trim() === customerContact);
+}
+
+function openStaffTab(customerName, customerContact) {
+  const records = staffTabRecords(customerName, customerContact);
+  if (!records.length) return;
+  const orders = records.reduce((sum, r) => sum + r.amount_owed, 0);
+  const paid = records.reduce((sum, r) => sum + (r.paid ? r.amount_owed : r.partial_paid), 0);
+  const balance = orders - paid;
+  document.getElementById('staffTabModal').dataset.customerContact = customerContact;
+  document.getElementById('staffTabCustomer').textContent = customerName;
+  document.getElementById('staffTabOrders').textContent = `₱${orders.toFixed(2)}`;
+  document.getElementById('staffTabPaid').textContent = `₱${paid.toFixed(2)}`;
+  document.getElementById('staffTabBalance').textContent = `₱${balance.toFixed(2)}`;
+  document.getElementById('staffPaymentAmount').value = '';
+  document.getElementById('staffPaymentMethod').value = 'cash';
+  document.getElementById('staffTabPaymentControls').classList.toggle('d-none', balance <= 0);
+  document.getElementById('staffTabOrdersBody').innerHTML = records.map(r => `<tr>
+    <td>${escapeReceivableText(r.items)}</td><td>${escapeReceivableText(r.notes) || '-'}</td>
+    <td>${r.incurred_date || '-'}</td><td>₱${r.amount_owed.toFixed(2)}</td>
+    <td>${r.due_date}</td><td>${escapeReceivableText(r.approved_by_staff) || '-'}</td>
+  </tr>`).join('');
+
+  const history = document.getElementById('staffPaymentHistory');
+  history.innerHTML = '<tr><td colspan="4" class="text-muted">Loading payments…</td></tr>';
+  fetch(`/receivables-view/api/receivables/customer-payments?customer_name=${encodeURIComponent(customerName)}&customer_contact=${encodeURIComponent(customerContact)}`)
+    .then(r => {
+      if (!r.headers.get('content-type')?.includes('application/json')) throw new Error('Payment history is unavailable');
+      return r.json();
+    }).then(data => {
+      if (document.getElementById('staffTabCustomer').textContent !== customerName || document.getElementById('staffTabModal').dataset.customerContact !== customerContact) return;
+      if (!data.success) throw new Error(data.error || 'Could not load payments');
+      history.innerHTML = data.data.length ? data.data.map(payment => `<tr>
+        <td>${new Date(payment.received_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</td>
+        <td>₱${Number(payment.amount).toFixed(2)}</td>
+        <td>${escapeReceivableText(payment.payment_method.toUpperCase())}</td>
+        <td>${escapeReceivableText(payment.received_by)}</td>
+      </tr>`).join('') : '<tr><td colspan="4" class="text-muted">No payments recorded yet.</td></tr>';
+    }).catch(() => { history.innerHTML = '<tr><td colspan="4" class="text-danger">Could not load payment history.</td></tr>'; });
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('staffTabModal')).show();
+}
+
+function fillFullStaffPayment() {
+  const records = staffTabRecords(document.getElementById('staffTabCustomer').textContent, document.getElementById('staffTabModal').dataset.customerContact);
+  const balance = records.reduce((sum, r) => sum + (r.paid ? 0 : r.amount_owed - r.partial_paid), 0);
+  document.getElementById('staffPaymentAmount').value = balance.toFixed(2);
+}
+
+async function recordStaffPayment() {
+  const customerName = document.getElementById('staffTabCustomer').textContent;
+  const customerContact = document.getElementById('staffTabModal').dataset.customerContact;
+  const amountText = document.getElementById('staffPaymentAmount').value.trim();
+  const balance = staffTabRecords(customerName, customerContact).reduce((sum, r) => sum + (r.paid ? 0 : r.amount_owed - r.partial_paid), 0);
+  const amount = Number(amountText);
+  if (!/^\d+(\.\d{1,2})?$/.test(amountText) || amount <= 0 || amount > balance + 0.001) {
+    showToast('Enter an amount up to the remaining balance.', 'error');
+    return;
+  }
+  const button = document.getElementById('staffRecordPaymentBtn');
+  if (button.disabled) return;
+  button.disabled = true;
+  let recorded = false;
+  try {
+    const response = await csrfFetch('/receivables-view/api/receivables/customer-payment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_name: customerName, customer_contact: customerContact, amount: amountText, payment_method: document.getElementById('staffPaymentMethod').value })
+    });
+    const data = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;
+    if (!response.ok || !data?.success) throw new Error(data?.error || 'Server error. Check payment history before retrying.');
+    recorded = true;
+    await loadReceivables();
+    openStaffTab(customerName, customerContact);
+    showToast(`Payment recorded. ₱${data.remaining.toFixed(2)} still owed.`, 'success');
+  } catch (error) {
+    showToast(recorded ? 'Payment saved, but the page could not refresh. Please reload to see the new balance.' : (error.message || 'Could not confirm payment. Check payment history before retrying.'), 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function createReceivable() {
+  const payload = {
+    customer_name: document.getElementById('customerName').value,
+    customer_contact: document.getElementById('customerContact').value,
+    items_description: document.getElementById('itemsDesc').value,
+    notes: document.getElementById('receivableNotes').value,
+    amount_owed: parseFloat(document.getElementById('amountOwed').value),
+    due_date: document.getElementById('dueDate').value,
+    approved_by_staff: document.getElementById('approvedByStaff').value,
+    incurred_date: document.getElementById('incurredDate').value,
+  };
+
+  csrfFetch('/receivables-view/api/receivables', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast('Receivable logged', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('addReceivableModal')).hide();
+        loadReceivables();
+      } else {
+        showToast(data.error || 'Failed to save receivable', 'error');
+      }
+    });
+}
+
+function editReceivableNotes(recId) {
+  const rec = receivablesCache.find(r => r.id === recId);
+  if (!rec) return;
+  const notes = window.prompt('Borrowed utensils / notes', rec.notes || '');
+  if (notes === null) return;
+  csrfFetch(`/receivables-view/api/receivables/${recId}/notes`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes })
+  }).then(r => r.json()).then(data => {
+    if (!data.success) throw new Error(data.error || 'Could not save notes');
+    showToast('Notes updated', 'success');
+    loadReceivables();
+  }).catch(error => showToast(error.message, 'error'));
+}
+</script>
+{% endblock %}

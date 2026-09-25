@@ -1,4 +1,5 @@
 from .user import User
+from .admin import Admin
 from .space_type import SpaceType
 from .space_price_history import SpacePriceHistory
 from .customer_session import CustomerSession
@@ -9,8 +10,8 @@ from .transaction import Transaction
 from .boardroom_booking import BoardroomBooking
 from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
-from .inventory import InventoryItem, InventoryLog
-from .receivable import Receivable
+from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
+from .receivable import Receivable, ReceivablePayment
 from .payable import Payable
 from .expense import Expense
 from .staff_performance import StaffPerformanceLog
@@ -24,6 +25,7 @@ from .finance import FinanceBudget, FinanceTransaction
 # This prevents importing incorrect model names
 __all__ = [
     'User',
+    'Admin',
     'SpaceType',
     'SpacePriceHistory',
     'CustomerSession',
@@ -38,6 +40,7 @@ __all__ = [
     'InventoryItem',
     'InventoryLog',
     'Receivable',
+    'ReceivablePayment',
     'Payable',
     'Expense',
     'StaffPerformanceLog',  # Note: NOT 'StaffPerformance'

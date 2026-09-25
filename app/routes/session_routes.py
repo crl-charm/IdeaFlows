@@ -1,9 +1,10 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 from datetime import datetime
 from app.utils.auth import login_required
 
 from app.core import get_notifier
 from app.core.clock import SystemClock
+from app.core.idempotency import idempotent_request
 from app.dto.serializers import serialize_transaction
 from app.repositories.session_repository import SessionRepository
 from app.services.session_service import SessionService
@@ -23,7 +24,8 @@ _service = SessionService(
 # CHECK-IN CUSTOMER
 # -----------------------------
 @session_bp.route("/api/checkin", methods=["POST"])
-#@login_required
+@login_required
+@idempotent_request("customer-checkin")
 def checkin():
 
     data = request.get_json()
@@ -52,6 +54,7 @@ def get_active_sessions():
 # -----------------------------
 @session_bp.route("/api/checkout/<int:session_id>", methods=["POST"])
 @login_required
+@idempotent_request("customer-checkout")
 def checkout(session_id):
     data = request.get_json(silent=True) or {}
     payment_method = (
@@ -60,15 +63,25 @@ def checkout(session_id):
         or request.args.get("payment_method")
         or "cash"
     )
-    resp = _service.checkout(session_id, payment_method=payment_method)
+    amount_tendered = (
+        data.get("amount_tendered")
+        or request.form.get("amount_tendered")
+        or request.args.get("amount_tendered")
+    )
+    discount_type = data.get("discount_type") or request.form.get("discount_type")
+    discount_item_id = data.get("discount_item_id") or request.form.get("discount_item_id")
+    resp = _service.checkout(session_id, payment_method=payment_method, amount_tendered=amount_tendered,
+                             discount_type=discount_type, discount_item_id=discount_item_id,
+                             actor_name=session.get("username"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status
     return jsonify(resp)
 
 @session_bp.route("/api/preview-checkout/<int:session_id>")
+@login_required
 def preview_checkout(session_id):
-    resp = _service.preview_checkout(session_id)
+    resp = _service.preview_checkout(session_id, request.args.get("discount_type"), request.args.get("discount_item_id"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status
@@ -78,10 +91,9 @@ def preview_checkout(session_id):
 @session_bp.route("/api/checkout-records")
 @login_required
 def checkout_records():
-    page = request.args.get("page", type=int)
-    per_page = request.args.get("per_page", type=int)
-    if per_page is not None:
-        per_page = min(per_page, 100)
+    page = request.args.get("page", 1, type=int) or 1
+    per_page = request.args.get("per_page", 50, type=int) or 50
+    per_page = min(per_page, 100)
     transactions = _service.checkout_records(page=page, per_page=per_page)
     tx_items = transactions.items if hasattr(transactions, "items") else transactions
 

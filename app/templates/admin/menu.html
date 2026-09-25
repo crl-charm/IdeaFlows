@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Menu Management - IdeaHub{% endblock %}
+{% block title %}Menu Management - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -432,6 +432,12 @@
             <input type="number" id="price" class="form-control" placeholder="0.00" step="0.01" min="0" required>
           </div>
           <div class="mb-3">
+            <label class="form-label fw-semibold">Ingredients for one order</label>
+            <p class="form-text mb-2">Optional reference list. Update raw stock and available servings separately in Inventory.</p>
+            <div id="newRecipeRows"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="addRecipeRow('newRecipeRows')">+ Add Ingredient</button>
+          </div>
+          <div class="mb-3">
             <label class="form-label">Description</label>
             <textarea id="description" class="form-control" placeholder="Brief description of the item"
               rows="3"></textarea>
@@ -549,6 +555,12 @@
             <input type="number" id="editPrice" class="form-control" step="0.01" min="0" required>
           </div>
           <div class="mb-3">
+            <label class="form-label fw-semibold">Ingredients for one order</label>
+            <p class="form-text mb-2">Optional reference list. Servings and raw stock are updated separately in Inventory.</p>
+            <div id="editRecipeRows"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="addRecipeRow('editRecipeRows')">+ Add Ingredient</button>
+          </div>
+          <div class="mb-3">
             <label class="form-label">Description</label>
             <textarea id="editDescription" class="form-control" placeholder="Brief description of the item"
               rows="3"></textarea>
@@ -563,7 +575,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn-add-menu" onclick="saveItem()">Save Changes</button>
+          <button type="button" id="saveItemButton" class="btn-add-menu" onclick="saveItem()">Save Changes</button>
         </div>
       </form>
     </div>
@@ -575,16 +587,19 @@
 {% block scripts %}
 <script>
   let currentItemId = null;
+  let originalRecipeHadRows = false;
   let allItems = [];
   let currentFilter = 'All';
   let CATEGORIES = [];
+  const refreshMenu = window.createDebouncedRefresh(function () {
+    loadCategories(loadItems);
+  }, 150);
 
   // Socket.IO for real-time updates
-  const socket = io();
+  const socket = window.getIdeaFlowSocket();
 
-  socket.on('menu_update', function (data) {
-    console.log('Menu update:', data);
-    loadCategories(loadItems);
+  if (socket) socket.on('menu_update', function (data) {
+    refreshMenu();
     if (data.event === 'create') {
       showToast('✓ New menu item added!', 'success');
     } else if (data.event === 'update') {
@@ -597,12 +612,13 @@
       showToast('✓ New category added!', 'success');
     }
   });
+  if (socket) socket.on('inventory_update', refreshMenu);
 
-  socket.on('connect', function () {
+  if (socket) socket.on('connect', function () {
     console.log('Connected to server for real-time updates');
   });
 
-  socket.on('disconnect', function () {
+  if (socket) socket.on('disconnect', function () {
     console.log('Disconnected from server');
   });
 
@@ -675,7 +691,7 @@
       showToast('✓ Category created successfully!', 'success');
       bootstrap.Modal.getInstance(document.getElementById('addCategoryModal')).hide();
       document.getElementById('addCategoryForm').reset();
-      loadCategories(loadItems);
+      refreshMenu();
     })
     .catch(err => showToast('✗ ' + err.message, 'error'));
   }
@@ -804,7 +820,7 @@
     grid.innerHTML = filtered.map(item => `
     <div class="menu-card">
       <div class="menu-card-image">
-        ${item.image_url ? `<img src="${item.image_url}" alt="${item.name}">` : '<div class="menu-card-image-placeholder">🖼️</div>'}
+        ${item.image_url ? `<img loading="lazy" decoding="async" src="${item.image_url}" alt="${item.name}">` : '<div class="menu-card-image-placeholder">🖼️</div>'}
         <span class="menu-card-badge">${item.category}</span>
       </div>
       <div class="menu-card-body">
@@ -812,8 +828,8 @@
         <p class="menu-card-category">${item.category}</p>
         ${item.description ? `<p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">${item.description}</p>` : ''}
         <div class="menu-card-price">₱${parseFloat(item.price).toFixed(2)}</div>
-        <div class="status-badge ${item.is_available ? 'status-available' : 'status-unavailable'}">
-          ${item.is_available ? '<i class="bi bi-check-circle me-1"></i> Available' : '<i class="bi bi-x-circle me-1"></i> Unavailable'}
+        <div class="status-badge ${item.can_order ? 'status-available' : 'status-unavailable'}">
+          ${item.availability_message || 'Unavailable'}
         </div>
       </div>
       <div class="menu-card-actions">
@@ -831,12 +847,38 @@
   `).join('');
   }
 
+  function addRecipeRow(containerId, ingredient = {}) {
+    const row = document.createElement('div');
+    row.className = 'recipe-entry row g-2 align-items-end mb-2';
+    row.innerHTML = `<div class="col-12 col-sm-5"><label class="form-label mb-1">Ingredient name</label><input class="form-control recipe-name" type="text" maxlength="100" placeholder="e.g., Rice" required></div>
+      <div class="col-6 col-sm-3"><label class="form-label mb-1">Per meal</label><input class="form-control recipe-amount" type="number" min="0.01" max="999999" step="0.01" required></div>
+      <div class="col-6 col-sm-3"><label class="form-label mb-1">Unit</label><select class="form-select recipe-unit"><option value="pieces">pieces</option><option value="grams">grams</option><option value="klg">kilograms</option><option value="ml">mL</option><option value="liters">liters</option><option value="packs">packs</option><option value="trays">trays</option></select></div>
+      <div class="col-12 col-sm-1"><button type="button" class="btn btn-outline-danger btn-sm" aria-label="Remove ingredient" onclick="this.closest('.recipe-entry').remove()">×</button></div>`;
+    row.querySelector('.recipe-name').value = ingredient.name || '';
+    row.querySelector('.recipe-amount').value = ingredient.quantity_required ?? '';
+    row.querySelector('.recipe-unit').value = ingredient.unit || ingredient.ingredient_unit || 'pieces';
+    document.getElementById(containerId).appendChild(row);
+  }
+
+  function recipeRows(containerId) {
+    return [...document.querySelectorAll(`#${containerId} .recipe-entry`)].map(row => {
+      const name = row.querySelector('.recipe-name');
+      const amount = row.querySelector('.recipe-amount');
+      if (!name.reportValidity() || !amount.reportValidity()) throw new Error('Complete every ingredient name and amount.');
+      return {name: name.value.trim(), quantity: amount.value, unit: row.querySelector('.recipe-unit').value};
+    });
+  }
+
   function createItem() {
+    let ingredients;
+    try { ingredients = recipeRows('newRecipeRows'); }
+    catch (error) { return showToast('✗ ' + error.message, 'error'); }
     const formData = new FormData();
     formData.append('name', document.getElementById('itemName').value);
     formData.append('category', document.getElementById('category').value);
     formData.append('price', document.getElementById('price').value);
     formData.append('description', document.getElementById('description').value);
+    if (ingredients.length) formData.append('recipe_ingredients', JSON.stringify(ingredients));
 
     const imageFile = document.getElementById('image').files[0];
     if (imageFile) {
@@ -850,11 +892,14 @@
     })
       .then(parseMenuResponse)
       .then(() => {
-        showToast('✓ Menu item created successfully!', 'success');
+        showToast(document.getElementById('category').value === 'Beverages'
+          ? '✓ Menu item created successfully!'
+          : '✓ Meal saved. Set its available servings in Inventory.', 'success');
         bootstrap.Modal.getInstance(document.getElementById('addItemModal')).hide();
         document.getElementById('addItemForm').reset();
+        document.getElementById('newRecipeRows').replaceChildren();
         document.getElementById('imagePreview1').classList.remove('show');
-        loadItems();
+        refreshMenu();
       })
       .catch(err => showToast('✗ ' + err.message, 'error'));
   }
@@ -898,7 +943,7 @@
         document.getElementById('variantForm').reset();
         const preview = document.getElementById('variantImagePreview');
         if (preview) preview.classList.remove('show');
-        loadItems();
+        refreshMenu();
       })
       .catch(err => showToast('✗ ' + err.message, 'error'));
   }
@@ -909,15 +954,20 @@
     document.getElementById('editPrice').value = price;
     document.getElementById('editCategory').value = category;
 
-    // Fetch full item data to get description
-    fetch(`/admin/menu/api/items/all`)
-      .then(r => r.json())
-      .then(data => {
-        const item = data.data.find(i => i.id === itemId);
-        if (item) {
-          document.getElementById('editDescription').value = item.description || '';
-        }
-      });
+    document.getElementById('saveItemButton').disabled = true;
+    originalRecipeHadRows = false;
+    document.getElementById('editRecipeRows').replaceChildren();
+    Promise.all([
+      fetch('/admin/menu/api/items/all').then(parseMenuResponse),
+      fetch(`/admin/inventory/api/recipes/${itemId}`).then(parseMenuResponse)
+    ]).then(([menu, recipe]) => {
+      if (currentItemId !== itemId) return;
+      const item = menu.data.find(i => i.id === itemId);
+      originalRecipeHadRows = recipe.data.length > 0;
+      document.getElementById('editDescription').value = item?.description || '';
+      if (originalRecipeHadRows) recipe.data.forEach(ingredient => addRecipeRow('editRecipeRows', {name: ingredient.ingredient_name, ...ingredient}));
+      document.getElementById('saveItemButton').disabled = false;
+    }).catch(error => showToast('✗ Could not load this recipe: ' + error.message, 'error'));
 
     const currentImg = document.getElementById('currentImage');
     if (imageUrl) {
@@ -933,12 +983,24 @@
     new bootstrap.Modal(document.getElementById('editItemModal')).show();
   }
 
-  function saveItem() {
+  async function saveItem() {
+    let ingredients;
+    try { ingredients = recipeRows('editRecipeRows'); }
+    catch (error) { return showToast('✗ ' + error.message, 'error'); }
+    if (!ingredients.length && originalRecipeHadRows) {
+      const confirmed = await showConfirmDialog({title: 'Remove this recipe?',
+        message: 'This removes the ingredient reference only. Available servings and raw stock will not change.',
+        confirmText: 'Remove recipe', confirmClass: 'btn-warning'});
+      if (!confirmed) return;
+    }
     const formData = new FormData();
     formData.append('name', document.getElementById('editItemName').value);
     formData.append('category', document.getElementById('editCategory').value);
     formData.append('price', document.getElementById('editPrice').value);
     formData.append('description', document.getElementById('editDescription').value);
+    if (ingredients.length || originalRecipeHadRows) {
+      formData.append('recipe_ingredients', JSON.stringify(ingredients));
+    }
 
     const imageFile = document.getElementById('editImage').files[0];
     if (imageFile) {
@@ -952,9 +1014,9 @@
     })
       .then(parseMenuResponse)
       .then(() => {
-        showToast('✓ Menu item updated successfully!', 'success');
+        showToast(ingredients.length ? '✓ Recipe saved. Check ingredient stock in Inventory.' : '✓ Menu item updated successfully!', 'success');
         bootstrap.Modal.getInstance(document.getElementById('editItemModal')).hide();
-        loadItems();
+        refreshMenu();
       })
       .catch(err => showToast('✗ ' + err.message, 'error'));
   }
@@ -967,7 +1029,7 @@
       .then(parseMenuResponse)
       .then(data => {
         showToast(`✓ Item ${data.is_available ? 'enabled' : 'disabled'} successfully!`, 'success');
-        loadItems();
+        refreshMenu();
       })
       .catch(err => {
         console.error('Toggle error:', err);
@@ -993,7 +1055,7 @@
       .then(parseMenuResponse)
       .then(data => {
         showToast('✓ ' + (data.message || 'Menu item deleted successfully!'), 'success');
-        loadItems();
+        refreshMenu();
       })
       .catch(err => {
         console.error('Delete error:', err);

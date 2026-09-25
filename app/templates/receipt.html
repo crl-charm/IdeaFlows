@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Receipt - IdeaHub{% endblock %}
+{% block title %}Receipt - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -10,7 +10,7 @@
       <div class="card">
         <div class="card-body">
           <div class="text-center mb-4">
-            <h2 class="text-warning">IdeaHub</h2>
+            <h2 class="text-warning">IdeaFlow</h2>
             <p class="text-muted">Receipt</p>
             <hr>
           </div>
@@ -42,6 +42,12 @@
               <span>Food/Items:</span>
               <span>₱{{ "%.2f"|format(food_bill) }}</span>
             </div>
+            {% if discount_amount %}
+            <div class="d-flex justify-content-between mb-2 text-success">
+              <span>{{ "PWD" if discount_type == "pwd" else "Senior Citizen" }} discount (one item):</span>
+              <span>−₱{{ "%.2f"|format(discount_amount) }}</span>
+            </div>
+            {% endif %}
             <hr>
             <div class="d-flex justify-content-between">
               <strong>Total:</strong>

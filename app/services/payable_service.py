@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any, Optional
 
 from app.repositories.payable_repository import PayableRepository
@@ -40,10 +41,11 @@ class PayableService:
     ) -> dict[str, Any]:
         due = date.fromisoformat(due_date)
         incurred = date.fromisoformat(incurred_date) if incurred_date else date.today()
+        amount_decimal = Decimal(str(amount_owed))
         payable = self.repo.create(
             creditor_name=creditor_name,
             items_description=items_description,
-            amount_owed=amount_owed,
+            amount_owed=amount_decimal,
             due_date=due,
             incurred_date=incurred,
             created_by=created_by,
