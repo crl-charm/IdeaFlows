@@ -8,6 +8,7 @@ from flask_limiter.util import get_remote_address
 from flask_cors import CORS
 import logging
 import os
+from hashlib import sha256
 from logging.handlers import RotatingFileHandler
 
 # Create database object
@@ -31,6 +32,9 @@ def create_app():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from config import Config
     app.config.from_object(Config)
+
+    with open(os.path.join(static_folder, 'js', 'inventory-workflow.js'), 'rb') as script:
+        app.config['INVENTORY_JS_VERSION'] = sha256(script.read()).hexdigest()[:12]
 
     # Initialize extensions
     db.init_app(app)
@@ -351,11 +355,11 @@ def register_security_middleware(app):
             response.headers[header] = value
 
         # Uploaded media uses unique names and is safe to cache immutably. App
-        # CSS/JS keeps a shorter cache so deployments are not stuck for a year.
+        # assets must revalidate because their content changes between deploys.
         if request.path.startswith('/static/uploads/'):
             response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         elif request.path.startswith('/static/'):
-            response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+            response.headers['Cache-Control'] = 'public, no-cache, must-revalidate'
 
         return response
 

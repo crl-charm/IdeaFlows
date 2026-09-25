@@ -91,7 +91,7 @@ def test_static_cache_policy_distinguishes_deployable_and_uploaded_assets(client
         assert css_response.status_code == 200
         assert (
             css_response.headers["Cache-Control"]
-            == "public, max-age=3600, must-revalidate"
+            == "public, no-cache, must-revalidate"
         )
         assert upload_response.status_code == 200
         assert (

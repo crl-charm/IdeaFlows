@@ -1,3 +1,4 @@
+from hashlib import sha256
 from pathlib import Path
 from time import time
 
@@ -31,7 +32,15 @@ def test_staff_inventory_uses_current_script_and_loads_empty_snapshot(app):
         auth.update(user_id=1, username="test_user", role="staff", last_activity=time())
     page = client.get("/inventory")
     assert page.status_code == 200
-    assert b"/static/js/inventory-workflow.js?v=" in page.data
+    script = (Path(app.static_folder) / "js" / "inventory-workflow.js").read_bytes()
+    version = sha256(script).hexdigest()[:12]
+    assert f"/static/js/inventory-workflow.js?v={version}".encode() in page.data
+    deployed_script = client.get(
+        f"/static/js/inventory-workflow.js?v={version}"
+    )
+    assert b"function setMeals(rows)" in deployed_script.data
+    assert b"return {actions,status,open,openServings,setMeals" in deployed_script.data
+    assert deployed_script.headers["Cache-Control"] == "public, no-cache, must-revalidate"
     snapshot = client.get("/inventory/api/dashboard-items")
     assert snapshot.status_code == 200
     assert snapshot.get_json()["success"] is True
