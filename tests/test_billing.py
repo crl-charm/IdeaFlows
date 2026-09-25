@@ -11,6 +11,7 @@ from app import create_app, db
 from app.models import CustomerSession, SpaceType, Transaction, MenuItem, Order, OrderItem
 from app.utils.billing import calculate_time_bill
 from app.utils.payment import normalize_payment_method, payment_method_label
+from app.utils.dates import manila_date
 from app.repositories.sales_repository import SalesRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.session_service import SessionService
@@ -52,7 +53,7 @@ def test_queenbank_checkout_reporting_and_saved_receipt(app):
         assert result['total_bill'] == 30
         assert result['payment_label'] == 'QueenBank'
         assert result['amount_tendered'] is None
-        report_date = Transaction.query.filter_by(session_id=session.id).one().created_at.date()
+        report_date = manila_date(Transaction.query.filter_by(session_id=session.id).one().created_at)
         totals = SalesRepository().payment_totals_by_dates([report_date])[report_date]
         assert totals['queenbank_total'] == 30
         assert totals['queenbank_count'] == 1
@@ -123,6 +124,14 @@ def test_queenbank_daily_balance_exports(app):
         'bpi_count': 0,
         'queenbank_count': 1,
         'total_expenses': 0.0,
+        'total_collections': 0.0,
+        'total_payables_paid': 0.0,
+        'total_other_income': 0.0,
+        'total_budget_spend': 0.0,
+        'checkout_methods': {'queenbank': 30.0},
+        'collection_methods': {},
+        'expense_methods': {},
+        'payable_methods': {},
         'net_balance': 30.0,
         'total_orders': 0,
         'total_sessions': 1,
@@ -143,8 +152,8 @@ def test_queenbank_daily_balance_exports(app):
         workbook = load_workbook(BytesIO(excel_response.get_data()))
         assert workbook['Summary']['A15'].value == 'QueenBank Payments:'
         assert workbook['Summary']['B15'].value == 30
-        assert workbook['Daily Reports']['G1'].value == 'QueenBank'
-        assert workbook['Daily Reports']['G2'].value == 30
+        assert workbook['Daily Reports']['H1'].value == 'QueenBank'
+        assert workbook['Daily Reports']['H2'].value == 30
 
         pdf_context = service.build_pdf_context([report], [])
         pdf_html = render_template(service.PDF_TEMPLATE, **pdf_context)

@@ -32,6 +32,7 @@ RESET_TABLES = {
     "order_items",
     "orders",
     "payables",
+    "payable_payments",
     "receivables",
     "receivable_payments",
     "soft_balance_entries",

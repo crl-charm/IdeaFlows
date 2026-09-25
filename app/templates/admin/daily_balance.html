@@ -31,9 +31,9 @@
           <span class="fw-semibold text-secondary small"><i class="bi bi-funnel me-1"></i> Filter Reports & Summaries:</span>
         </div>
         <div class="col-12 col-sm-auto d-flex align-items-center gap-2">
-          <input type="date" id="filterStartDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="renderFilteredReports()">
+          <input type="date" id="filterStartDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="loadReports()">
           <span class="text-muted small">to</span>
-          <input type="date" id="filterEndDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="renderFilteredReports()">
+          <input type="date" id="filterEndDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="loadReports()">
         </div>
         <div class="col-12 col-md-auto ms-md-auto d-flex flex-wrap gap-1">
           <button class="btn btn-sm btn-outline-secondary" onclick="setDateFilterPreset('today')">Today</button>
@@ -74,7 +74,7 @@
           </div>
           <div>
             <div class="display-6 fw-bold mb-1">₱<span id="today-cash-on-hand">0.00</span></div>
-            <div class="small" style="opacity: 0.9;">Cash sales + cash debt payments − today’s expenses</div>
+            <div class="small" style="opacity: 0.9;">Today's recorded cash inflows − cash outflows; excludes opening cash</div>
           </div>
         </div>
       </div>
@@ -98,7 +98,7 @@
         <div class="card-body d-flex flex-column justify-content-between p-4">
           <div>
             <span class="text-primary fw-bold text-uppercase tracking-wider" style="font-size: 0.75rem; letter-spacing: 0.05em;">Projected Cash Flow</span>
-            <h5 class="card-title text-primary mb-3">Expected Cash on Hand</h5>
+            <h5 class="card-title text-primary mb-3">Projected Cash Movement</h5>
           </div>
           <div>
             <div class="display-6 fw-bold text-primary mb-1">₱<span id="today-expected-cash">0.00</span></div>
@@ -109,7 +109,7 @@
     </div>
   </div>
 
-  <h5 class="mb-3 text-muted">Summary of All Reports</h5>
+  <h5 class="mb-3 text-muted">Live Summary (Asia/Manila)</h5>
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-4">
       <div class="card bg-light border-0 shadow-sm">
@@ -130,12 +130,22 @@
     <div class="col-12 col-md-4">
       <div class="card bg-light border-0 shadow-sm">
         <div class="card-body p-3">
-          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Net Balance</small>
+          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Net Cash Movement</small>
           <div class="fs-5 fw-bold text-success mt-1">₱<span id="net-balance">0.00</span></div>
         </div>
       </div>
     </div>
   </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-6"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Customer Debt Collected</small><div class="fs-5 fw-bold">₱<span id="total-collections">0.00</span></div></div></div></div>
+    <div class="col-md-6"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Supplier Payments</small><div class="fs-5 fw-bold">₱<span id="total-payables-paid">0.00</span></div></div></div></div>
+  </div>
+  <div class="row g-3 mb-4">
+    <div class="col-md-6"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Other Income / Adjustments</small><div class="fs-5 fw-bold">₱<span id="total-other-income">0.00</span></div></div></div></div>
+    <div class="col-md-6"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Budget Spending</small><div class="fs-5 fw-bold">₱<span id="total-budget-spend">0.00</span></div></div></div></div>
+  </div>
+  <p class="text-muted small">Net movement = checkout sales + customer debt collected + other income − expenses − supplier payments − budget spending. Debt collection and other income are separate from sales revenue.</p>
 
   <h6 class="mb-2 text-muted fw-semibold">Payment Breakdown</h6>
   <div class="row g-2 mb-4">
@@ -186,6 +196,8 @@
     </div>
   </div>
 
+  <div class="card mb-4"><div class="card-header"><strong>Payment method reconciliation</strong></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Method</th><th>Checkout sales</th><th>Debt collected</th><th>Other income</th><th>Expenses</th><th>Supplier paid</th><th>Budget spent</th><th>Net movement</th></tr></thead><tbody id="method-reconciliation-body"></tbody></table></div></div>
+
   <div class="card">
     <div class="card-header">
       <h5>Daily Reports</h5>
@@ -198,12 +210,16 @@
             <tr>
               <th>Report Date</th>
               <th>Revenue</th>
+              <th>Debt Collected</th>
+              <th>Other Income</th>
               <th>Cash</th>
               <th>GCash</th>
               <th>BDO</th>
               <th>BPI</th>
               <th>QueenBank</th>
               <th>Expenses</th>
+              <th>Supplier Paid</th>
+              <th>Budget Spent</th>
               <th>Net</th>
               <th>Orders</th>
               <th>Sessions</th>
@@ -211,25 +227,7 @@
               <th>Notes</th>
             </tr>
           </thead>
-          <tbody id="reports-table-body">
-            {% for report in reports %}
-            <tr>
-              <td>{{ report.report_date }}</td>
-              <td>₱{{ "%.2f"|format(report.total_revenue) }}</td>
-              <td>₱{{ "%.2f"|format(report.cash_total or 0.0) }}</td>
-              <td>₱{{ "%.2f"|format(report.gcash_total or 0.0) }}</td>
-              <td>₱{{ "%.2f"|format(report.bdo_total or 0.0) }}</td>
-              <td>₱{{ "%.2f"|format(report.bpi_total or 0.0) }}</td>
-              <td>₱{{ "%.2f"|format(report.queenbank_total or 0.0) }}</td>
-              <td>₱{{ "%.2f"|format(report.total_expenses) }}</td>
-              <td>₱{{ "%.2f"|format(report.net_balance) }}</td>
-              <td>{{ report.total_orders }}</td>
-              <td>{{ report.total_sessions }}</td>
-              <td>{{ report.generated_by }}</td>
-              <td>{{ report.notes or "-" }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
+          <tbody id="reports-table-body"></tbody>
         </table>
       </div>
       
@@ -254,26 +252,17 @@
               <th>Period</th>
               <th>Revenue</th>
               <th>Expenses</th>
+              <th>Debt Collected</th>
+              <th>Other Income</th>
+              <th>Supplier Paid</th>
+              <th>Budget Spent</th>
               <th>Net</th>
               <th>Generated By</th>
               <th>Created At</th>
               <th>Notes</th>
             </tr>
           </thead>
-          <tbody id="soft-balance-body">
-            {% for row in soft_entries %}
-            <tr>
-              <td>{{ row.balance_date }}</td>
-              <td>{{ row.period }}</td>
-              <td>₱{{ "%.2f"|format(row.total_revenue) }}</td>
-              <td>₱{{ "%.2f"|format(row.total_expenses) }}</td>
-              <td>₱{{ "%.2f"|format(row.net_balance) }}</td>
-              <td>{{ row.generated_by }}</td>
-              <td>{{ row.generated_at }}</td>
-              <td>{{ row.notes or "-" }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
+          <tbody id="soft-balance-body"></tbody>
         </table>
       </div>
       
@@ -326,64 +315,78 @@
 <script>
 let reportsCache = [];
 let softBalancesCache = [];
+let reportsRequest = 0;
+let lastManilaToday = '';
 
 document.addEventListener('DOMContentLoaded', function() {
   // Set default filter date range to today's local date
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = manilaToday();
+  lastManilaToday = todayStr;
   document.getElementById('filterStartDate').value = todayStr;
   document.getElementById('filterEndDate').value = todayStr;
 
   loadReports();
+  loadSoftBalances();
+  const socket = window.getIdeaFlowSocket();
+  if (socket) {
+    const refresh = window.createDebouncedRefresh(loadReports, 250);
+    socket.on('daily_balance_update', refresh);
+    socket.on('session_checked_out', refresh);
+  }
   
-  // Poll today's live stats every 15 seconds
+  // Refresh when a network event was missed.
   window.createSmartPoller(async function() {
-    try {
-      const r = await fetch('/admin/daily-balance/api/today-stats', { credentials: 'include' });
-      if (!r.ok) return;
-      const res = await r.json();
-      if (res.success) {
-        const stats = res.data;
-        document.getElementById('today-receivables-collected').textContent = stats.receivables_collected_today.toFixed(2);
-        document.getElementById('today-receivables-count').textContent = stats.receivables_paid_today;
-        document.getElementById('today-cash-on-hand').textContent = stats.cash_on_hand.toFixed(2);
-        document.getElementById('today-expected-collections').textContent = stats.expected_to_collect.toFixed(2);
-        document.getElementById('today-expected-cash').textContent = stats.expected_cash_on_hand.toFixed(2);
+    const currentToday = manilaToday();
+    if (currentToday !== lastManilaToday) {
+      if (document.getElementById('filterStartDate').value === lastManilaToday && document.getElementById('filterEndDate').value === lastManilaToday) {
+        document.getElementById('filterStartDate').value = currentToday;
+        document.getElementById('filterEndDate').value = currentToday;
       }
-    } catch (_) {}
+      lastManilaToday = currentToday;
+    }
+    loadReports();
   }, 15000);
 });
 
+function manilaToday() {
+  return new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
+}
+
 function setDateFilterPreset(preset) {
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = manilaToday();
   
   if (preset === 'today') {
     document.getElementById('filterStartDate').value = todayStr;
     document.getElementById('filterEndDate').value = todayStr;
   } else if (preset === 'week') {
-    const day = today.getDay();
-    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(today.setDate(diff));
+    const monday = new Date(`${todayStr}T12:00:00Z`);
+    monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
     document.getElementById('filterStartDate').value = monday.toISOString().split('T')[0];
-    document.getElementById('filterEndDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('filterEndDate').value = todayStr;
   } else if (preset === 'month') {
-    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-    document.getElementById('filterStartDate').value = firstDay.toISOString().split('T')[0];
-    document.getElementById('filterEndDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('filterStartDate').value = `${todayStr.slice(0, 7)}-01`;
+    document.getElementById('filterEndDate').value = todayStr;
   } else if (preset === 'all') {
     document.getElementById('filterStartDate').value = '';
     document.getElementById('filterEndDate').value = '';
   }
-  renderFilteredReports();
+  loadReports();
 }
 
 function loadReports() {
-  fetch('/admin/daily-balance/api/reports', { credentials: 'include' }).then(r => r.json()).then(data => {
+  const requestNumber = ++reportsRequest;
+  const params = new URLSearchParams();
+  const start = document.getElementById('filterStartDate').value;
+  const end = document.getElementById('filterEndDate').value;
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  fetch(`/admin/daily-balance/api/reports?${params}`, { credentials: 'include' }).then(r => r.json()).then(data => {
+    if (requestNumber !== reportsRequest) return;
     if (data.success) {
       reportsCache = data.data;
       renderFilteredReports();
     }
-  });
+  }).catch(() => showToast('Could not refresh Daily Balance', 'error'));
 
   // Load today's live stats immediately
   fetch('/admin/daily-balance/api/today-stats', { credentials: 'include' }).then(r => r.json()).then(res => {
@@ -397,23 +400,16 @@ function loadReports() {
     }
   });
 
-  loadSoftBalances();
 }
 
 function renderFilteredReports() {
   const startDateVal = document.getElementById('filterStartDate').value;
   const endDateVal = document.getElementById('filterEndDate').value;
   
-  const startDate = startDateVal ? new Date(startDateVal) : null;
-  const endDate = endDateVal ? new Date(endDateVal) : null;
-  if (startDate) startDate.setHours(0,0,0,0);
-  if (endDate) endDate.setHours(23,59,59,999);
-
   // Filter reports
   const filteredReports = reportsCache.filter(report => {
-    const reportDate = new Date(report.report_date);
-    if (startDate && reportDate < startDate) return false;
-    if (endDate && reportDate > endDate) return false;
+    if (startDateVal && report.report_date < startDateVal) return false;
+    if (endDateVal && report.report_date > endDateVal) return false;
     return true;
   });
 
@@ -422,12 +418,19 @@ function renderFilteredReports() {
   tbody.innerHTML = '';
   mobileCards.innerHTML = '';
 
-  let sumRevenue = 0, sumExpenses = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
+  let sumRevenue = 0, sumCollections = 0, sumOtherIncome = 0, sumExpenses = 0, sumPayables = 0, sumBudgetSpend = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
   let cashCount = 0, gcashCount = 0, bdoCount = 0, bpiCount = 0, queenbankCount = 0;
+  const methods = ['cash', 'gcash', 'bdo', 'bpi', 'queenbank', 'unclassified'];
+  const flows = ['checkout', 'collection', 'adjustment_income', 'expense', 'payable', 'adjustment_expense'];
+  const methodTotals = Object.fromEntries(methods.map(m => [m, Object.fromEntries(flows.map(flow => [flow, 0]))]));
 
   filteredReports.forEach(report => {
     sumRevenue += report.total_revenue;
+    sumCollections += report.total_collections;
+    sumOtherIncome += report.total_other_income;
     sumExpenses += report.total_expenses;
+    sumPayables += report.total_payables_paid;
+    sumBudgetSpend += report.total_budget_spend;
     sumNet += report.net_balance;
     sumCash += report.cash_total || 0;
     sumGcash += report.gcash_total || 0;
@@ -439,23 +442,32 @@ function renderFilteredReports() {
     bdoCount += report.bdo_count || 0;
     bpiCount += report.bpi_count || 0;
     queenbankCount += report.queenbank_count || 0;
+    methods.forEach(m => {
+      flows.forEach(bucket => {
+        methodTotals[m][bucket] += (report[`${bucket}_methods`] || {})[m] || 0;
+      });
+    });
     
     // Desktop table row
     tbody.innerHTML += `
       <tr>
         <td>${report.report_date}</td>
         <td>₱${report.total_revenue.toFixed(2)}</td>
+        <td>₱${report.total_collections.toFixed(2)}</td>
+        <td>₱${report.total_other_income.toFixed(2)}</td>
         <td>₱${(report.cash_total || 0).toFixed(2)}</td>
         <td>₱${(report.gcash_total || 0).toFixed(2)}</td>
         <td>₱${(report.bdo_total || 0).toFixed(2)}</td>
         <td>₱${(report.bpi_total || 0).toFixed(2)}</td>
         <td>₱${(report.queenbank_total || 0).toFixed(2)}</td>
         <td>₱${report.total_expenses.toFixed(2)}</td>
+        <td>₱${report.total_payables_paid.toFixed(2)}</td>
+        <td>₱${report.total_budget_spend.toFixed(2)}</td>
         <td>₱${report.net_balance.toFixed(2)}</td>
         <td>${report.total_orders}</td>
         <td>${report.total_sessions}</td>
-        <td>${report.generated_by}</td>
-        <td>${report.notes || '-'}</td>
+        <td>${window.escapeHTML(report.generated_by)}${report.generated_at ? `<br><small>${window.escapeHTML(report.generated_at)}</small>` : ''}</td>
+        <td>${window.escapeHTML(report.notes || '-')}</td>
       </tr>
     `;
     
@@ -464,7 +476,7 @@ function renderFilteredReports() {
       <div class="daily-report-card mb-3">
         <div class="card-header-mobile">
           <strong>${report.report_date}</strong>
-          <small class="text-muted">${report.generated_by}</small>
+          <small class="text-muted">${window.escapeHTML(report.generated_by)}</small>
         </div>
         <div class="card-body-mobile">
           <div class="row g-2">
@@ -480,6 +492,10 @@ function renderFilteredReports() {
                 <span class="metric-value">₱${report.total_expenses.toFixed(2)}</span>
               </div>
             </div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Debt collected</span><span class="metric-value">₱${report.total_collections.toFixed(2)}</span></div></div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Supplier paid</span><span class="metric-value">₱${report.total_payables_paid.toFixed(2)}</span></div></div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Other income</span><span class="metric-value">₱${report.total_other_income.toFixed(2)}</span></div></div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Budget spent</span><span class="metric-value">₱${report.total_budget_spend.toFixed(2)}</span></div></div>
             <div class="col-6">
               <div class="metric-item">
                 <span class="metric-label">Cash</span>
@@ -523,19 +539,23 @@ function renderFilteredReports() {
               </div>
             </div>
           </div>
-          ${report.notes ? `<div class="notes-section mt-2"><small class="text-muted">Note: ${report.notes}</small></div>` : ''}
+          ${report.notes ? `<div class="notes-section mt-2"><small class="text-muted">Note: ${window.escapeHTML(report.notes)}</small></div>` : ''}
         </div>
       </div>
     `;
   });
 
   if (filteredReports.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted py-3">No reports found for this range.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="17" class="text-center text-muted py-3">No activity found for this range.</td></tr>';
     mobileCards.innerHTML = '<p class="text-center text-muted py-4">No reports found for this range.</p>';
   }
 
   document.getElementById('total-revenue').textContent = sumRevenue.toFixed(2);
+  document.getElementById('total-collections').textContent = sumCollections.toFixed(2);
+  document.getElementById('total-other-income').textContent = sumOtherIncome.toFixed(2);
   document.getElementById('total-expenses').textContent = sumExpenses.toFixed(2);
+  document.getElementById('total-payables-paid').textContent = sumPayables.toFixed(2);
+  document.getElementById('total-budget-spend').textContent = sumBudgetSpend.toFixed(2);
   document.getElementById('net-balance').textContent = sumNet.toFixed(2);
   document.getElementById('total-cash').textContent = sumCash.toFixed(2);
   document.getElementById('total-gcash').textContent = sumGcash.toFixed(2);
@@ -548,7 +568,13 @@ function renderFilteredReports() {
   document.getElementById('bpi-count').textContent = bpiCount;
   document.getElementById('queenbank-count').textContent = queenbankCount;
 
-  renderFilteredSoftBalances(startDate, endDate);
+  document.getElementById('method-reconciliation-body').innerHTML = methods.map(m => {
+    const v = methodTotals[m];
+    const net = v.checkout + v.collection + v.adjustment_income - v.expense - v.payable - v.adjustment_expense;
+    return `<tr><th>${m === 'unclassified' ? 'Unclassified (legacy)' : m.toUpperCase()}</th><td>₱${v.checkout.toFixed(2)}</td><td>₱${v.collection.toFixed(2)}</td><td>₱${v.adjustment_income.toFixed(2)}</td><td>₱${v.expense.toFixed(2)}</td><td>₱${v.payable.toFixed(2)}</td><td>₱${v.adjustment_expense.toFixed(2)}</td><td>₱${net.toFixed(2)}</td></tr>`;
+  }).join('');
+
+  renderFilteredSoftBalances(startDateVal, endDateVal);
 }
 
 function loadSoftBalances() {
@@ -558,20 +584,15 @@ function loadSoftBalances() {
       // Trigger soft balances filter rendering
       const startDateVal = document.getElementById('filterStartDate').value;
       const endDateVal = document.getElementById('filterEndDate').value;
-      const startDate = startDateVal ? new Date(startDateVal) : null;
-      const endDate = endDateVal ? new Date(endDateVal) : null;
-      if (startDate) startDate.setHours(0,0,0,0);
-      if (endDate) endDate.setHours(23,59,59,999);
-      renderFilteredSoftBalances(startDate, endDate);
+      renderFilteredSoftBalances(startDateVal, endDateVal);
     }
   });
 }
 
 function renderFilteredSoftBalances(startDate, endDate) {
   const filteredSoft = softBalancesCache.filter(row => {
-    const balanceDate = new Date(row.balance_date);
-    if (startDate && balanceDate < startDate) return false;
-    if (endDate && balanceDate > endDate) return false;
+    if (startDate && row.balance_date < startDate) return false;
+    if (endDate && row.balance_date > endDate) return false;
     return true;
   });
 
@@ -584,21 +605,25 @@ function renderFilteredSoftBalances(startDate, endDate) {
     tbody.innerHTML += `
     <tr>
       <td>${row.balance_date}</td>
-      <td>${row.period}</td>
+      <td>${window.escapeHTML(row.period)}</td>
       <td>₱${row.total_revenue.toFixed(2)}</td>
       <td>₱${row.total_expenses.toFixed(2)}</td>
+      <td>₱${row.total_collections.toFixed(2)}</td>
+      <td>₱${row.total_other_income.toFixed(2)}</td>
+      <td>₱${row.total_payables_paid.toFixed(2)}</td>
+      <td>₱${row.total_budget_spend.toFixed(2)}</td>
       <td>₱${row.net_balance.toFixed(2)}</td>
-      <td>${row.generated_by}</td>
-      <td>${row.generated_at}</td>
-      <td>${row.notes || '-'}</td>
+      <td>${window.escapeHTML(row.generated_by)}</td>
+      <td>${window.escapeHTML(row.generated_at)}</td>
+      <td>${window.escapeHTML(row.notes || '-')}</td>
     </tr>`;
     
     mobileCards.innerHTML += `
       <div class="soft-balance-card mb-3">
         <div class="card-header-mobile">
           <strong>${row.balance_date}</strong>
-          <span class="badge bg-secondary">${row.period}</span>
-          <small class="text-muted">${row.generated_by}</small>
+          <span class="badge bg-secondary">${window.escapeHTML(row.period)}</span>
+          <small class="text-muted">${window.escapeHTML(row.generated_by)}</small>
         </div>
         <div class="card-body-mobile">
           <div class="row g-2">
@@ -614,6 +639,10 @@ function renderFilteredSoftBalances(startDate, endDate) {
                 <span class="metric-value">₱${row.total_expenses.toFixed(2)}</span>
               </div>
             </div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Debt collected</span><span class="metric-value">₱${row.total_collections.toFixed(2)}</span></div></div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Other income</span><span class="metric-value">₱${row.total_other_income.toFixed(2)}</span></div></div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Supplier paid</span><span class="metric-value">₱${row.total_payables_paid.toFixed(2)}</span></div></div>
+            <div class="col-6"><div class="metric-item"><span class="metric-label">Budget spent</span><span class="metric-value">₱${row.total_budget_spend.toFixed(2)}</span></div></div>
             <div class="col-6">
               <div class="metric-item">
                 <span class="metric-label">Net</span>
@@ -623,18 +652,18 @@ function renderFilteredSoftBalances(startDate, endDate) {
             <div class="col-6">
               <div class="metric-item">
                 <span class="metric-label">Time</span>
-                <span class="metric-value" style="font-size: 0.875rem;">${row.generated_at}</span>
+                <span class="metric-value" style="font-size: 0.875rem;">${window.escapeHTML(row.generated_at)}</span>
               </div>
             </div>
           </div>
-          ${row.notes ? `<div class="notes-section mt-2"><small class="text-muted">Note: ${row.notes}</small></div>` : ''}
+          ${row.notes ? `<div class="notes-section mt-2"><small class="text-muted">Note: ${window.escapeHTML(row.notes)}</small></div>` : ''}
         </div>
       </div>
     `;
   });
 
   if (filteredSoft.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No soft balances found for this range.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No soft balances found for this range.</td></tr>';
     mobileCards.innerHTML = '<p class="text-center text-muted py-4">No soft balances found for this range.</p>';
   }
 }

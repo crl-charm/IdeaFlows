@@ -159,6 +159,16 @@
           </div>
         </div>
 
+        <div class="mb-4 text-start">
+          <label class="form-label fw-semibold" for="payablePaymentMethod">Paid using *</label>
+          <select id="payablePaymentMethod" class="form-select" required>
+            <option value="">Select method...</option>
+            <option value="cash">Cash</option><option value="gcash">GCash</option>
+            <option value="bdo">BDO</option><option value="bpi">BPI</option>
+            <option value="queenbank">QueenBank</option>
+          </select>
+        </div>
+
         <div class="d-flex gap-2 justify-content-center">
           <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-success px-4" id="confirmPayableMarkPaidBtn">
@@ -168,6 +178,13 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="modal fade" id="payableHistoryModal" tabindex="-1" aria-labelledby="payableHistoryTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title" id="payableHistoryTitle">Payment history</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <div class="modal-body" id="payableHistoryBody"></div>
+  </div></div>
 </div>
 
 {% endblock %}
@@ -257,6 +274,7 @@ function renderPayables() {
     const actionButton = p.status !== 'Paid' 
       ? `<button class="btn btn-sm btn-success" onclick="openMarkPayablePaidModal(${p.id})">Mark Paid</button>` 
       : '';
+    const historyButton = `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="showPayableHistory(${p.id})">History</button>`;
 
     // Desktop
     tbody.innerHTML += `
@@ -268,7 +286,7 @@ function renderPayables() {
         <td>${p.incurred_date}</td>
         <td>${p.due_date}</td>
         <td>${statusBadge}</td>
-        <td>${actionButton}</td>
+        <td>${actionButton}${historyButton}</td>
       </tr>
     `;
 
@@ -301,7 +319,7 @@ function renderPayables() {
           </div>
         </div>
         <div class="record-card-footer">
-          ${actionButton}
+          ${actionButton}${historyButton}
         </div>
       </div>
     `;
@@ -360,6 +378,7 @@ function openMarkPayablePaidModal(pId) {
 
   // Reset payment inputs
   document.getElementById('paymentTypeFull').checked = true;
+  document.getElementById('payablePaymentMethod').value = '';
   const payInput = document.getElementById('payAmountInput');
   payInput.value = '';
   payInput.max = remaining;
@@ -403,7 +422,11 @@ function confirmMarkPayablePaid() {
   if (!pendingPayableId) return;
 
   const isPartial = document.getElementById('paymentTypePartial').checked;
-  let payload = {};
+  let payload = { payment_method: document.getElementById('payablePaymentMethod').value };
+  if (!payload.payment_method) {
+    showToast('Select a payment method.', 'error');
+    return;
+  }
 
   if (isPartial) {
     const payVal = parseFloat(document.getElementById('payAmountInput').value);
@@ -451,6 +474,21 @@ function confirmMarkPayablePaid() {
     togglePaymentTypeFields(); // restore original text
     showToast('Error saving payment', 'error');
   });
+}
+
+function showPayableHistory(pId) {
+  const p = payablesCache.find(x => x.id === pId);
+  if (!p) return;
+  document.getElementById('payableHistoryTitle').textContent = `Payment history: ${p.creditor_name}`;
+  const payments = p.payments || [];
+  const history = payments.length ? payments.map(payment => `
+    <tr><td>${new Date(payment.paid_at).toLocaleString('en-PH', {timeZone: 'Asia/Manila'})}</td>
+    <td>₱${payment.amount.toFixed(2)}</td><td>${window.escapeHTML(payment.payment_method)}</td>
+    <td>${window.escapeHTML(payment.paid_by)}</td><td>₱${payment.balance_before.toFixed(2)} → ₱${payment.balance_after.toFixed(2)}</td></tr>
+  `).join('') : '<tr><td colspan="5">No dated payments recorded.</td></tr>';
+  const legacy = p.legacy_paid_unattributed > 0 ? `<p class="text-warning">₱${p.legacy_paid_unattributed.toFixed(2)} was paid before payment history existed; its date and method are unknown.</p>` : '';
+  document.getElementById('payableHistoryBody').innerHTML = `${legacy}<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Manila time</th><th>Amount</th><th>Method</th><th>Recorded by</th><th>Balance before → after</th></tr></thead><tbody>${history}</tbody></table></div>`;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('payableHistoryModal')).show();
 }
 </script>
 {% endblock %}

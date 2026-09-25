@@ -47,6 +47,8 @@
               <th>Date</th>
               <th>Type</th>
               <th>Amount</th>
+              <th>Method</th>
+              <th>Recorded By</th>
               <th>Description</th>
             </tr>
           </thead>
@@ -56,11 +58,13 @@
               <td>{{ txn.created_at }}</td>
               <td>{{ txn.type }}</td>
               <td>{{ txn.amount }}</td>
+              <td>{{ txn.payment_method }}</td>
+              <td>{{ txn.actor }}</td>
               <td>{{ txn.description or "-" }}</td>
             </tr>
             {% else %}
             <tr>
-              <td colspan="4" class="text-center text-muted py-3">No transactions yet.</td>
+              <td colspan="6" class="text-center text-muted py-3">No transactions yet.</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -88,16 +92,7 @@ function loadTransactionsForMobile() {
   if (!container) return;
 
   // Get transactions from the page
-  const transactions = [
-    {% for txn in transactions %}
-    {
-      created_at: "{{ txn.created_at }}",
-      type: "{{ txn.type }}",
-      amount: "{{ txn.amount }}",
-      description: "{{ txn.description or '-' }}"
-    }{{ "," if not loop.last }}
-    {% endfor %}
-  ];
+  const transactions = {{ transactions|tojson }};
 
   if (!transactions.length || !transactions[0].created_at) {
     container.innerHTML = `<p class="text-center text-muted py-4">No transactions yet.</p>`;
@@ -110,15 +105,17 @@ function loadTransactionsForMobile() {
       <div class="record-card">
         <div class="record-card-header">
           <div>
-            <div class="record-card-title">${txn.type}</div>
-            <div class="record-card-subtitle">${txn.created_at}</div>
+            <div class="record-card-title">${window.escapeHTML(txn.type)}</div>
+            <div class="record-card-subtitle">${window.escapeHTML(txn.created_at)}</div>
           </div>
         </div>
         <div class="record-card-body">
           <div class="record-card-row">
             <span class="record-card-label">Description:</span>
-            <span class="record-card-value">${txn.description}</span>
+            <span class="record-card-value">${window.escapeHTML(txn.description || '-')}</span>
           </div>
+          <div class="record-card-row"><span class="record-card-label">Method:</span><span class="record-card-value">${window.escapeHTML(txn.payment_method)}</span></div>
+          <div class="record-card-row"><span class="record-card-label">Recorded by:</span><span class="record-card-value">${window.escapeHTML(txn.actor)}</span></div>
         </div>
         <div class="record-card-footer">
           <span class="record-card-total">${txn.amount}</span>

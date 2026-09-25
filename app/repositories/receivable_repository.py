@@ -92,10 +92,12 @@ class ReceivableRepository:
         db.session.flush()
         return receivable
 
-    def record_payment(self, receivable_id: int, amount: Decimal | None, received_by: int, payment_method: str) -> bool:
+    def record_payment(self, receivable_id: int, amount: Decimal | None, received_by: int, payment_method: str, request_key: str | None = None) -> bool:
         receivable = self.get_for_update(receivable_id)
         if not receivable:
             return False
+        if request_key and ReceivablePayment.query.filter_by(request_key=request_key).first():
+            raise ValueError("This payment was already recorded.")
         remaining = receivable.amount_owed - receivable.partial_paid
         if receivable.paid or remaining <= 0:
             raise ValueError("This debt has already been paid.")
@@ -109,10 +111,12 @@ class ReceivableRepository:
         db.session.add(ReceivablePayment(
             receivable_id=receivable.id, amount=collected,
             payment_method=payment_method, received_by=received_by,
+            balance_before=remaining, balance_after=remaining - collected,
+            request_key=request_key,
         ))
         return True
 
-    def record_customer_payment(self, customer_name: str, amount: Decimal, received_by: int, payment_method: str, customer_contact: str = "") -> Decimal:
+    def record_customer_payment(self, customer_name: str, amount: Decimal, received_by: int, payment_method: str, customer_contact: str = "", request_key: str | None = None) -> Decimal:
         # Lock the customer's open orders, then apply one tab payment in a
         # stable order. The allocation is bookkeeping; the customer pays one total.
         unpaid = Receivable.query.filter(
@@ -120,6 +124,8 @@ class ReceivableRepository:
             func.lower(func.trim(Receivable.customer_name)) == customer_name.strip().lower(),
             func.trim(func.coalesce(Receivable.customer_contact, "")) == customer_contact.strip(),
         ).with_for_update().all()
+        if request_key and ReceivablePayment.query.filter_by(request_key=request_key).first():
+            raise ValueError("This payment was already recorded.")
         unpaid.sort(key=lambda r: (r.incurred_date or (r.created_at.date() if r.created_at else date.min), r.id))
         total_remaining = sum((max(r.amount_owed - r.partial_paid, Decimal("0")) for r in unpaid), Decimal("0"))
         if total_remaining <= 0:
@@ -136,6 +142,7 @@ class ReceivableRepository:
             applied = min(unallocated, receivable.amount_owed - receivable.partial_paid)
             if applied <= 0:
                 continue
+            balance_before = receivable.amount_owed - receivable.partial_paid
             receivable.partial_paid += applied
             receivable.paid = receivable.partial_paid >= receivable.amount_owed
             if receivable.paid:
@@ -144,6 +151,8 @@ class ReceivableRepository:
                 receivable_id=receivable.id, amount=applied,
                 payment_method=payment_method, received_by=received_by,
                 received_at=now, payment_group_id=payment_group_id,
+                balance_before=balance_before, balance_after=balance_before - applied,
+                request_key=request_key,
             ))
             unallocated -= applied
         return total_remaining - amount

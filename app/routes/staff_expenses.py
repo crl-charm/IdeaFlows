@@ -56,7 +56,11 @@ def api_create_expense() -> tuple:
         amount=amount,
         expense_date=data.get("expense_date"),
         logged_by=user_id,
+        payment_method=data.get("payment_method"),
+        request_key=request.headers.get("Idempotency-Key"),
     )
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
     if result.get("success"):
         emit_expenses_update('create', result.get("data", {}))
     return jsonify(result), 201

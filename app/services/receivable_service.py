@@ -94,8 +94,8 @@ class ReceivableService:
         self.repo.save()
         return {"success": True, "data": {"id": receivable.id}}
 
-    def mark_paid(self, receivable_id: int, amount: Any, received_by: int, payment_method: str) -> dict[str, Any] | tuple[dict[str, Any], int]:
-        if payment_method not in VALID_PAYMENT_METHODS:
+    def mark_paid(self, receivable_id: int, amount: Any, received_by: int, payment_method: str, request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Invalid payment method"}, 400
         try:
             payment = None if amount is None else Decimal(str(amount))
@@ -104,7 +104,7 @@ class ReceivableService:
         except (InvalidOperation, ValueError, TypeError):
             return {"error": "Enter a valid payment amount with up to two decimal places."}, 400
         try:
-            success = self.repo.record_payment(receivable_id, payment, received_by, payment_method)
+            success = self.repo.record_payment(receivable_id, payment, received_by, payment_method, request_key)
         except ValueError as exc:
             return {"error": str(exc)}, 400
         if not success:
@@ -115,8 +115,8 @@ class ReceivableService:
         emit_receivable_marked_paid(receivable_id)
         return {"success": True}
 
-    def record_customer_payment(self, customer_name: str, amount: Any, received_by: int, payment_method: str, customer_contact: str = "") -> dict[str, Any] | tuple[dict[str, Any], int]:
-        if payment_method not in VALID_PAYMENT_METHODS:
+    def record_customer_payment(self, customer_name: str, amount: Any, received_by: int, payment_method: str, customer_contact: str = "", request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Invalid payment method"}, 400
         if not isinstance(customer_name, str) or not customer_name.strip():
             return {"error": "Customer name is required"}, 400
@@ -129,7 +129,7 @@ class ReceivableService:
         except (InvalidOperation, ValueError, TypeError):
             return {"error": "Enter a valid payment amount with up to two decimal places."}, 400
         try:
-            remaining = self.repo.record_customer_payment(customer_name, payment, received_by, payment_method, customer_contact)
+            remaining = self.repo.record_customer_payment(customer_name, payment, received_by, payment_method, customer_contact, request_key)
         except ValueError as exc:
             return {"error": str(exc)}, 400
         self.repo.save()
@@ -147,8 +147,15 @@ class ReceivableService:
                     "received_at": payment.received_at.isoformat() + "Z",
                     "payment_method": payment.payment_method,
                     "received_by": (actor.full_name or actor.username) if actor else "Unknown",
+                    "allocations": [],
                 }
             grouped[key]["amount"] += payment.amount
+            grouped[key]["allocations"].append({
+                "receivable_id": payment.receivable_id,
+                "item": payment.receivable.items_description if payment.receivable else "Unknown",
+                "balance_before": float(payment.balance_before) if payment.balance_before is not None else None,
+                "balance_after": float(payment.balance_after) if payment.balance_after is not None else None,
+            })
         return [{**entry, "amount": float(entry["amount"])} for entry in grouped.values()]
 
     def update_notes(self, receivable_id: int, notes: str) -> dict[str, Any] | tuple[dict[str, Any], int]:

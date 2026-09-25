@@ -4,8 +4,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy.orm import selectinload
+
 from app import db
-from app.models.payable import Payable
+from app.models.payable import Payable, PayablePayment
 
 
 class PayableRepository:
@@ -16,7 +18,11 @@ class PayableRepository:
         return Payable.query.filter_by(id=payable_id).with_for_update().first()
 
     def list_all(self) -> list[Payable]:
-        return Payable.query.order_by(Payable.incurred_date.desc(), Payable.id.desc()).all()
+        return (
+            Payable.query.options(selectinload(Payable.payments).selectinload(PayablePayment.paid_by_user))
+            .order_by(Payable.incurred_date.desc(), Payable.id.desc())
+            .all()
+        )
 
     def create(
         self,
@@ -41,29 +47,25 @@ class PayableRepository:
         db.session.flush()
         return payable
 
-    def mark_paid(self, payable_id: int, amount: Optional[float] = None) -> bool:
+    def mark_paid(self, payable_id: int, amount: Decimal | None, payment_method: str, paid_by: int, request_key: str | None = None) -> PayablePayment | None:
         payable = self.get_for_update(payable_id)
         if not payable:
-            return False
-        
-        from decimal import Decimal
-        if amount is None:
-            payable.partial_paid = payable.amount_owed
-            payable.status = "Paid"
-        else:
-            payment_decimal = Decimal(str(amount))
-            new_partial = payable.partial_paid + payment_decimal
-            
-            if new_partial >= payable.amount_owed:
-                payable.partial_paid = payable.amount_owed
-                payable.status = "Paid"
-            else:
-                payable.partial_paid = new_partial
-                if new_partial > 0:
-                    payable.status = "Partially Paid"
-                else:
-                    payable.status = "Unpaid"
-        return True
+            return None
+        if request_key and PayablePayment.query.filter_by(request_key=request_key).first():
+            raise ValueError("This payment was already recorded.")
+        before = payable.amount_owed - payable.partial_paid
+        paid = before if amount is None else amount
+        if before <= 0 or paid <= 0 or paid > before:
+            raise ValueError(f"Payment must be between ₱0.01 and ₱{before:.2f}.")
+        payable.partial_paid += paid
+        payable.status = "Paid" if payable.partial_paid == payable.amount_owed else "Partially Paid"
+        payment = PayablePayment(
+            payable_id=payable.id, amount=paid, payment_method=payment_method,
+            paid_by=paid_by, balance_before=before, balance_after=before - paid,
+            request_key=request_key,
+        )
+        db.session.add(payment)
+        return payment
 
     def save(self) -> None:
         db.session.commit()

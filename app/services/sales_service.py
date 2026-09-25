@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
 from app.core.interfaces import Clock
 from app.repositories.sales_repository import SalesRepository
+from app.utils.dates import manila_date
 
 
 @dataclass(frozen=True)
@@ -24,11 +25,11 @@ class SalesService:
         }
 
     def daily_sales(self) -> dict[str, Any]:
-        today = self.clock.now().date()
+        today = manila_date(self.clock.now())
         return {"date": str(today), **self._shape(self.repo.summary_for_day(today))}
 
     def sales_summary(self, period: str) -> dict[str, Any]:
-        today = self.clock.now().date()
+        today = manila_date(self.clock.now())
         if period == "yesterday":
             start_date = today - timedelta(days=1)
             end_date = start_date
@@ -50,7 +51,7 @@ class SalesService:
         }
 
     def sales_compare(self) -> dict[str, Any]:
-        today = self.clock.now().date()
+        today = manila_date(self.clock.now())
         yesterday = today - timedelta(days=1)
         return {
             "today": self._shape(self.repo.summary_for_day(today)),
@@ -59,37 +60,25 @@ class SalesService:
             "last_30_days": self._shape(self.repo.summary_for_range(today - timedelta(days=29), today)),
         }
 
-    def list_reports(self) -> list[dict[str, Any]]:
-        reports = self.repo.list_reports()
-        report_dates = [r.report_date for r in reports]
-        payments = self.repo.payment_totals_by_dates(report_dates)
-        shaped: list[dict[str, Any]] = []
-        for r in reports:
-            pay = payments.get(r.report_date, {})
-            shaped.append(
-                {
-                    "id": r.id,
-                    "report_date": r.report_date.strftime("%Y-%m-%d"),
-                    "total_revenue": float(r.total_revenue),
-                    "total_expenses": float(r.total_expenses),
-                    "net_balance": float(r.net_balance),
-                    "total_orders": r.total_orders,
-                    "total_sessions": r.total_sessions,
-                    "generated_by": r.generated_by_user.username if r.generated_by_user else "Unknown",
-                    "notes": r.notes,
-                    "cash_total": float(pay.get("cash_total", 0)),
-                    "gcash_total": float(pay.get("gcash_total", 0)),
-                    "bdo_total": float(pay.get("bdo_total", 0)),
-                    "bpi_total": float(pay.get("bpi_total", 0)),
-                    "queenbank_total": float(pay.get("queenbank_total", 0)),
-                    "cash_count": int(pay.get("cash_count", 0)),
-                    "gcash_count": int(pay.get("gcash_count", 0)),
-                    "bdo_count": int(pay.get("bdo_count", 0)),
-                    "bpi_count": int(pay.get("bpi_count", 0)),
-                    "queenbank_count": int(pay.get("queenbank_count", 0)),
-                }
-            )
-        return shaped
+    def list_reports(self, start_date: date | None = None, end_date: date | None = None) -> list[dict[str, Any]]:
+        live = self.repo.daily_ledger(start_date, end_date)
+        saved = {r.report_date: r for r in self.repo.list_reports()
+                 if (not start_date or r.report_date >= start_date) and (not end_date or r.report_date <= end_date)}
+        days = set(live) | set(saved)
+        if start_date and start_date == end_date:
+            days.add(start_date)
+        result = []
+        for day in sorted(days, reverse=True):
+            row = live.get(day) or self.repo.daily_ledger_empty(day)
+            snapshot = saved.get(day)
+            result.append({
+                **row,
+                "id": snapshot.id if snapshot else None,
+                "generated_by": snapshot.generated_by_user.username if snapshot and snapshot.generated_by_user else "Not generated",
+                "generated_at": snapshot.generated_at.isoformat() + "Z" if snapshot else None,
+                "notes": snapshot.notes if snapshot else None,
+            })
+        return result
 
     def list_soft_balances(self) -> list[dict[str, Any]]:
         entries = self.repo.list_soft_balances()
@@ -100,6 +89,10 @@ class SalesService:
                 "period": row.period,
                 "total_revenue": float(row.total_revenue or 0),
                 "total_expenses": float(row.total_expenses or 0),
+                "total_collections": float(row.total_collections or 0),
+                "total_payables_paid": float(row.total_payables_paid or 0),
+                "total_other_income": float(row.total_other_income or 0),
+                "total_budget_spend": float(row.total_budget_spend or 0),
                 "net_balance": float(row.net_balance or 0),
                 "generated_by": row.generated_by_user.username if row.generated_by_user else "Unknown",
                 "notes": row.notes,
@@ -114,27 +107,28 @@ class SalesService:
         generated_by: int,
         notes: Optional[str],
     ) -> dict[str, Any]:
-        transactions = self.repo.get_daily_transactions(report_date)
-        orders = self.repo.get_daily_orders(report_date)
-        sessions = self.repo.get_daily_sessions(report_date)
-
-        total_revenue = Decimal("0")
-        for tx in transactions:
-            if tx.total_bill:
-                total_revenue += Decimal(str(tx.total_bill))
-
-        total_expenses = self.repo.sum_expenses_for_day(report_date)
-
-        net_balance = total_revenue - total_expenses
+        live = self.repo.daily_ledger(report_date, report_date).get(report_date) or self.repo.daily_ledger_empty(report_date)
+        total_revenue = Decimal(str(live["total_revenue"]))
+        total_expenses = Decimal(str(live["total_expenses"]))
+        total_collections = Decimal(str(live["total_collections"]))
+        total_payables_paid = Decimal(str(live["total_payables_paid"]))
+        total_other_income = Decimal(str(live["total_other_income"]))
+        total_budget_spend = Decimal(str(live["total_budget_spend"]))
+        net_balance = Decimal(str(live["net_balance"]))
 
         existing = self.repo.get_daily_report(report_date)
         if existing:
             existing.total_revenue = total_revenue
             existing.total_expenses = total_expenses
+            existing.total_collections = total_collections
+            existing.total_payables_paid = total_payables_paid
+            existing.total_other_income = total_other_income
+            existing.total_budget_spend = total_budget_spend
             existing.net_balance = net_balance
-            existing.total_orders = len(orders)
-            existing.total_sessions = len(sessions)
+            existing.total_orders = live["total_orders"]
+            existing.total_sessions = live["total_sessions"]
             existing.generated_by = generated_by
+            existing.generated_at = datetime.utcnow()
             existing.notes = notes
             report = existing
         else:
@@ -142,9 +136,13 @@ class SalesService:
                 report_date=report_date,
                 total_revenue=total_revenue,
                 total_expenses=total_expenses,
+                total_collections=total_collections,
+                total_payables_paid=total_payables_paid,
+                total_other_income=total_other_income,
+                total_budget_spend=total_budget_spend,
                 net_balance=net_balance,
-                total_orders=len(orders),
-                total_sessions=len(sessions),
+                total_orders=live["total_orders"],
+                total_sessions=live["total_sessions"],
                 generated_by=generated_by,
                 notes=notes,
             )
@@ -165,6 +163,10 @@ class SalesService:
                 "report_date": report_date.strftime("%Y-%m-%d"),
                 "total_revenue": float(total_revenue),
                 "total_expenses": float(total_expenses),
+                "total_collections": float(total_collections),
+                "total_payables_paid": float(total_payables_paid),
+                "total_other_income": float(total_other_income),
+                "total_budget_spend": float(total_budget_spend),
                 "net_balance": float(net_balance),
             },
         }
@@ -176,16 +178,24 @@ class SalesService:
         generated_by: int,
         notes: Optional[str],
     ) -> dict[str, Any]:
-        transactions = self.repo.get_daily_transactions(balance_date)
-        total_revenue = sum(Decimal(str(tx.total_bill or 0)) for tx in transactions)
-        total_expenses = self.repo.sum_expenses_for_day(balance_date)
-        net_balance = total_revenue - total_expenses
+        live = self.repo.daily_ledger(balance_date, balance_date).get(balance_date) or self.repo.daily_ledger_empty(balance_date)
+        total_revenue = Decimal(str(live["total_revenue"]))
+        total_expenses = Decimal(str(live["total_expenses"]))
+        total_collections = Decimal(str(live["total_collections"]))
+        total_payables_paid = Decimal(str(live["total_payables_paid"]))
+        total_other_income = Decimal(str(live["total_other_income"]))
+        total_budget_spend = Decimal(str(live["total_budget_spend"]))
+        net_balance = Decimal(str(live["net_balance"]))
 
         entry = self.repo.create_soft_balance(
             balance_date=balance_date,
             period=(period or "AM").upper(),
             total_revenue=total_revenue,
             total_expenses=total_expenses,
+            total_collections=total_collections,
+            total_payables_paid=total_payables_paid,
+            total_other_income=total_other_income,
+            total_budget_spend=total_budget_spend,
             net_balance=net_balance,
             generated_by=generated_by,
             notes=notes,

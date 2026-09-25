@@ -24,15 +24,22 @@ _export = DailyBalanceExportService(db)
 @sales_bp.route("", methods=["GET"])
 @login_required
 def list_reports() -> str:
-    reports = _service.list_reports()
-    soft_entries = _service.list_soft_balances()
-    return render_template("admin/daily_balance.html", reports=reports, soft_entries=soft_entries)
+    return render_template("admin/daily_balance.html")
 
 
 @sales_bp.route("/api/reports", methods=["GET"])
 @login_required
 def api_list_reports() -> tuple:
-    reports = _service.list_reports()
+    start = request.args.get("start_date")
+    end = request.args.get("end_date")
+    try:
+        start_date = date.fromisoformat(start) if start else None
+        end_date = date.fromisoformat(end) if end else None
+    except ValueError:
+        return api_error("Invalid date filter", status=400)
+    if start_date and end_date and start_date > end_date:
+        return api_error("Start date must be on or before end date", status=400)
+    reports = _service.list_reports(start_date, end_date)
     return api_ok(reports)
 
 
@@ -136,36 +143,17 @@ def api_create_soft_balance() -> tuple:
 @sales_bp.route("/api/today-stats", methods=["GET"])
 @login_required
 def api_today_stats() -> tuple:
-    from app.models import Transaction, CustomerSession, Receivable, ReceivablePayment, Expense, Order, OrderItem
-    from datetime import datetime, timedelta
+    from app.models import CustomerSession, Receivable, Order, OrderItem
+    from datetime import datetime
     from sqlalchemy import func
     from sqlalchemy.orm import selectinload
     from decimal import Decimal
-    from app.utils.dates import day_bounds
+    from app.utils.dates import manila_date
 
     now = datetime.utcnow()
-    today = (now + timedelta(hours=8)).date()
-    local_start, local_end = day_bounds(today)
-    start_at, end_at = local_start - timedelta(hours=8), local_end - timedelta(hours=8)
-
-    # 1. Cash on Hand
-    cash_checkouts = (
-        db.session.query(func.coalesce(func.sum(Transaction.total_bill), 0))
-        .filter(Transaction.created_at >= start_at, Transaction.created_at < end_at, Transaction.payment_method == "cash")
-        .scalar()
-    ) or Decimal("0.00")
-    cash_collections = (
-        db.session.query(func.coalesce(func.sum(ReceivablePayment.amount), 0))
-        .filter(ReceivablePayment.received_at >= start_at, ReceivablePayment.received_at < end_at,
-                ReceivablePayment.payment_method == "cash")
-        .scalar()
-    ) or Decimal("0.00")
-    expenses_today = (
-        db.session.query(func.coalesce(func.sum(Expense.amount), 0))
-        .filter(Expense.expense_date == today)
-        .scalar()
-    ) or Decimal("0.00")
-    cash_on_hand = Decimal(str(cash_checkouts)) + Decimal(str(cash_collections)) - Decimal(str(expenses_today))
+    today = manila_date(now)
+    live = _service.repo.daily_ledger(today, today).get(today) or _service.repo.daily_ledger_empty(today)
+    cash_on_hand = Decimal(str(live["cash_on_hand"]))
 
     # Money still owed by active sessions and receivable customers.
     pending_balance_sum = Decimal("0.00")
@@ -205,18 +193,11 @@ def api_today_stats() -> tuple:
     expected_to_collect = pending_balance_sum + unpaid_receivables
     expected_cash_on_hand = cash_on_hand + expected_to_collect
 
-    # 3. Today's Paid Receivables
-    payments_today = ReceivablePayment.query.filter(
-        ReceivablePayment.received_at >= start_at,
-        ReceivablePayment.received_at < end_at,
-    ).all()
-    total_collected = sum((p.amount for p in payments_today), Decimal("0.00"))
-
     return api_ok({
         "cash_on_hand": float(cash_on_hand),
         "expected_to_collect": float(expected_to_collect),
         "expected_cash_on_hand": float(expected_cash_on_hand),
-        "receivables_paid_today": len({p.payment_group_id or f"single-{p.id}" for p in payments_today}),
-        "receivables_collected_today": float(total_collected)
+        "receivables_paid_today": live["collection_count"],
+        "receivables_collected_today": live["total_collections"],
     })
 

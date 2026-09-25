@@ -18,3 +18,20 @@ class Payable(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     created_by_user = db.relationship("User", backref="payables")
+
+
+class PayablePayment(db.Model):
+    __tablename__ = "payable_payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    payable_id = db.Column(db.Integer, db.ForeignKey("payables.id"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    payment_method = db.Column(db.String(50), nullable=False)
+    paid_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    paid_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    balance_before = db.Column(db.Numeric(10, 2), nullable=False)
+    balance_after = db.Column(db.Numeric(10, 2), nullable=False)
+    request_key = db.Column(db.String(200), unique=True, nullable=True)
+
+    payable = db.relationship("Payable", backref="payments")
+    paid_by_user = db.relationship("User", foreign_keys=[paid_by])

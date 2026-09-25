@@ -10,6 +10,7 @@ from app.core.idempotency import idempotent_request
 from app.repositories.payable_repository import PayableRepository
 from app.services.payable_service import PayableService
 from app.utils.auth import admin_required
+from app.core.socketio_handlers import emit_daily_balance_update
 
 payables_bp = Blueprint("payables", __name__, url_prefix="/admin/payables")
 
@@ -65,24 +66,17 @@ def api_create_payable() -> tuple:
 @idempotent_request("admin-mark-payable-paid")
 def api_mark_paid(p_id: int) -> tuple:
     data = request.get_json() or {}
-    amount_val = data.get("amount")
-    
-    amount = None
-    if amount_val is not None:
-        try:
-            amount = float(amount_val)
-        except (TypeError, ValueError):
-            return jsonify({"success": False, "error": "Invalid payment amount"}), 400
-        if not isfinite(amount) or amount <= 0:
-            return jsonify({"success": False, "error": "Payment amount must be greater than zero"}), 400
-            
-    result = _service.mark_paid(p_id, amount)
+    result = _service.mark_paid(
+        p_id, data.get("amount"), data.get("payment_method"), session["user_id"],
+        request.headers.get("Idempotency-Key"),
+    )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
         
     if result.get("success"):
+        emit_daily_balance_update()
         security_logger.info(
-            f"Payable marked paid/partially-paid: ID {p_id} with amount {amount} by user {session.get('username')} (ID: {session.get('user_id')})"
+            f"Payable payment recorded: payable ID {p_id}, payment ID {result['payment_id']} by user {session.get('username')} (ID: {session.get('user_id')})"
         )
     return jsonify(result), 200
 

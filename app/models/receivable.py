@@ -36,6 +36,9 @@ class ReceivablePayment(db.Model):
     received_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     received_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     payment_group_id = db.Column(db.String(32), nullable=True)
+    balance_before = db.Column(db.Numeric(10, 2), nullable=True)
+    balance_after = db.Column(db.Numeric(10, 2), nullable=True)
+    request_key = db.Column(db.String(200), nullable=True, index=True)
 
     receivable = db.relationship("Receivable", backref="payments")
     received_by_user = db.relationship("User", foreign_keys=[received_by])

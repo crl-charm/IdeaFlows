@@ -12,7 +12,7 @@ from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
 from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
 from .receivable import Receivable, ReceivablePayment
-from .payable import Payable
+from .payable import Payable, PayablePayment
 from .expense import Expense
 from .staff_performance import StaffPerformanceLog
 from .daily_sales_report import DailySalesReport
@@ -42,6 +42,7 @@ __all__ = [
     'Receivable',
     'ReceivablePayment',
     'Payable',
+    'PayablePayment',
     'Expense',
     'StaffPerformanceLog',  # Note: NOT 'StaffPerformance'
     'DailySalesReport',

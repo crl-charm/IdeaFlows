@@ -25,5 +25,9 @@ class FinanceTransaction(db.Model, BaseModel):
     _type = db.Column("type", db.String(30), nullable=False, default="expense")
     _amount = db.Column("amount", db.Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     _description = db.Column("description", db.String(255), nullable=True)
+    payment_method = db.Column(db.String(50), nullable=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    request_key = db.Column(db.String(200), unique=True, nullable=True)
 
     budget = db.relationship("FinanceBudget", backref="transactions")
+    actor = db.relationship("User", foreign_keys=[actor_id])

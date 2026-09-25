@@ -45,6 +45,9 @@ class SchemaMigrator:
             return
 
         checks = [
+            ("receivable_payments", "balance_before", "ALTER TABLE receivable_payments ADD COLUMN balance_before DECIMAL(10,2) NULL"),
+            ("receivable_payments", "balance_after", "ALTER TABLE receivable_payments ADD COLUMN balance_after DECIMAL(10,2) NULL"),
+            ("receivable_payments", "request_key", "ALTER TABLE receivable_payments ADD COLUMN request_key VARCHAR(200) NULL"),
             ("staff_attendance", "last_activity_at", "ALTER TABLE staff_attendance ADD COLUMN last_activity_at DATETIME NULL"),
             ("menu_items", "inventory_mode", "ALTER TABLE menu_items ADD COLUMN inventory_mode VARCHAR(16) NULL"),
             ("order_inventory_allocations", "menu_item_id", "ALTER TABLE order_inventory_allocations ADD COLUMN menu_item_id INTEGER NULL"),
@@ -157,6 +160,22 @@ class SchemaMigrator:
             ),
             ("receivables", "notes", "ALTER TABLE receivables ADD COLUMN notes TEXT NULL"),
             ("receivable_payments", "payment_group_id", "ALTER TABLE receivable_payments ADD COLUMN payment_group_id VARCHAR(32) NULL"),
+            ("expenses", "payment_method", "ALTER TABLE expenses ADD COLUMN payment_method VARCHAR(50) NULL"),
+            ("expenses", "voided_at", "ALTER TABLE expenses ADD COLUMN voided_at DATETIME NULL"),
+            ("expenses", "voided_by", "ALTER TABLE expenses ADD COLUMN voided_by INTEGER NULL"),
+            ("expenses", "void_reason", "ALTER TABLE expenses ADD COLUMN void_reason VARCHAR(255) NULL"),
+            ("expenses", "request_key", "ALTER TABLE expenses ADD COLUMN request_key VARCHAR(200) NULL"),
+            ("finance_transactions", "payment_method", "ALTER TABLE finance_transactions ADD COLUMN payment_method VARCHAR(50) NULL"),
+            ("finance_transactions", "actor_id", "ALTER TABLE finance_transactions ADD COLUMN actor_id INTEGER NULL"),
+            ("finance_transactions", "request_key", "ALTER TABLE finance_transactions ADD COLUMN request_key VARCHAR(200) NULL"),
+            ("daily_sales_reports", "total_collections", "ALTER TABLE daily_sales_reports ADD COLUMN total_collections DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("daily_sales_reports", "total_payables_paid", "ALTER TABLE daily_sales_reports ADD COLUMN total_payables_paid DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("daily_sales_reports", "total_other_income", "ALTER TABLE daily_sales_reports ADD COLUMN total_other_income DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("daily_sales_reports", "total_budget_spend", "ALTER TABLE daily_sales_reports ADD COLUMN total_budget_spend DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("soft_balance_entries", "total_collections", "ALTER TABLE soft_balance_entries ADD COLUMN total_collections DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("soft_balance_entries", "total_payables_paid", "ALTER TABLE soft_balance_entries ADD COLUMN total_payables_paid DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("soft_balance_entries", "total_other_income", "ALTER TABLE soft_balance_entries ADD COLUMN total_other_income DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("soft_balance_entries", "total_budget_spend", "ALTER TABLE soft_balance_entries ADD COLUMN total_budget_spend DECIMAL(12,2) NOT NULL DEFAULT 0"),
             (
                 "menu_item_ingredients",
                 "unit",
@@ -196,6 +215,21 @@ class SchemaMigrator:
     def _ensure_indexes(self, db, inspector) -> None:
         """Create performance indexes idempotently (MySQL/SQLite)."""
         indexes = [
+            (
+                "finance_transactions",
+                "uq_finance_transactions_request_key",
+                "CREATE UNIQUE INDEX uq_finance_transactions_request_key ON finance_transactions (request_key)",
+            ),
+            (
+                "receivable_payments",
+                "ix_receivable_payments_request_key",
+                "CREATE INDEX ix_receivable_payments_request_key ON receivable_payments (request_key)",
+            ),
+            (
+                "expenses",
+                "uq_expenses_request_key",
+                "CREATE UNIQUE INDEX uq_expenses_request_key ON expenses (request_key)",
+            ),
             (
                 "transactions",
                 "idx_transactions_created_at",

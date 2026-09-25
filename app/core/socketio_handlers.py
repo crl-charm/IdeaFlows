@@ -165,6 +165,7 @@ def emit_expenses_update(event_type, expense_data):
     socketio.emit(
         'expenses_update', compact_change(event_type, expense_data), to=ADMIN_ROOM
     )
+    emit_daily_balance_update()
 
 
 def emit_receivables_update(event_type, receivable_data):
@@ -178,6 +179,12 @@ def emit_receivables_update(event_type, receivable_data):
         'receivables_update', compact_change(event_type, receivable_data),
         to=ADMIN_ROOM,
     )
+    if event_type == "mark_paid":
+        emit_daily_balance_update()
+
+
+def emit_daily_balance_update() -> None:
+    socketio.emit("daily_balance_update", {}, to=AUTHENTICATED_ROOM)
 
 
 def emit_inventory_low_stock(payload: dict) -> None:

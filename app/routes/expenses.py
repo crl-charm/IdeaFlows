@@ -28,7 +28,7 @@ def list_expenses() -> str:
 @expenses_bp.route("/api/expenses", methods=["GET"])
 @admin_required
 def api_list_expenses() -> tuple:
-    expenses = _service.list_all()
+    expenses = _service.list_history()
     return jsonify({"success": True, "data": expenses}), 200
 
 
@@ -37,7 +37,7 @@ def api_list_expenses() -> tuple:
 @csrf.exempt
 @idempotent_request("admin-create-expense")
 def api_create_expense() -> tuple:
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     user_id = session.get("user_id")
     
     if not user_id:
@@ -56,7 +56,11 @@ def api_create_expense() -> tuple:
         amount=amount,
         expense_date=data.get("expense_date"),
         logged_by=user_id,
+        payment_method=data.get("payment_method"),
+        request_key=request.headers.get("Idempotency-Key"),
     )
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
     if result.get("success"):
         emit_expenses_update('create', result.get("data", {}))
     return jsonify(result), 201
@@ -66,7 +70,8 @@ def api_create_expense() -> tuple:
 @admin_required
 @idempotent_request("admin-delete-expense")
 def api_delete_expense(exp_id: int) -> tuple:
-    result = _service.delete(exp_id)
+    data = request.get_json(silent=True) or {}
+    result = _service.delete(exp_id, session["user_id"], data.get("reason"))
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):

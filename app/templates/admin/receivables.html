@@ -481,7 +481,7 @@
         history.innerHTML = data.data.length ? data.data.map(payment => `
           <tr>
             <td>${new Date(payment.received_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</td>
-            <td>₱${Number(payment.amount).toFixed(2)}</td>
+            <td>₱${Number(payment.amount).toFixed(2)}<br><small class="text-muted">${payment.allocations.map(a => `#${a.receivable_id} ${escapeReceivableText(a.item)}: ${a.balance_before == null ? 'historical balance unavailable' : `₱${a.balance_before.toFixed(2)} → ₱${a.balance_after.toFixed(2)}`}`).join('<br>')}</small></td>
             <td>${escapeReceivableText(payment.payment_method.toUpperCase())}</td>
             <td>${escapeReceivableText(payment.received_by)}</td>
           </tr>`).join('') : '<tr><td colspan="4" class="text-muted">No payments recorded yet.</td></tr>';

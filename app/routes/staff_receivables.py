@@ -87,7 +87,7 @@ def api_record_customer_payment() -> tuple:
     data = request.get_json(silent=True) or {}
     result = _service.record_customer_payment(
         data.get("customer_name"), data.get("amount"), session["user_id"],
-        data.get("payment_method", "cash"), data.get("customer_contact", ""),
+        data.get("payment_method", "cash"), data.get("customer_contact", ""), request.headers.get("Idempotency-Key"),
     )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]

@@ -121,6 +121,7 @@ def test_real_expense_route_commits_only_once_for_duplicate_key(app, client):
         "description": "Phase 5 duplicate test",
         "amount": 125.50,
         "expense_date": "2026-09-13",
+        "payment_method": "cash",
     }
     headers = {"Idempotency-Key": "phase5-real-expense-write"}
     first = client.post("/admin/expenses/api/expenses", json=payload, headers=headers)

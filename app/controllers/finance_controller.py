@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from flask import Blueprint, Response, jsonify, render_template, request
+from flask import Blueprint, Response, jsonify, render_template, request, session
 
 from app.controllers.base_controller import BaseController
 from app.services.finance_oop_service import FinanceService
 from app.utils.auth import admin_required
 from app import csrf
 from app.core.idempotency import idempotent_request
+from app.core.socketio_handlers import emit_daily_balance_update
 
 
 class FinanceController(BaseController):
@@ -62,22 +63,18 @@ class FinanceController(BaseController):
             if txn_type not in {"income", "expense"}:
                 return jsonify({"success": False, "error": "Invalid transaction type"}), 400
             
-            try:
-                amount = float(amount_val)
-                if amount <= 0:
-                    return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
-            except (TypeError, ValueError):
-                return jsonify({"success": False, "error": "Invalid amount"}), 400
-                
             from app.utils.auth import sanitize_input
             sanitized_description = sanitize_input(description)
-            
-            result = self._service.add_transaction(
-                budget_id=int(payload.get("budget_id", 1)),
-                txn_type=txn_type,
-                amount=amount,
-                description=sanitized_description,
-            )
+            try:
+                result = self._service.add_transaction(
+                    budget_id=int(payload.get("budget_id", 1)), txn_type=txn_type,
+                    amount=amount_val, description=sanitized_description,
+                    payment_method=payload.get("payment_method"), actor_id=session["user_id"],
+                    request_key=request.headers.get("Idempotency-Key"),
+                )
+            except (TypeError, ValueError) as exc:
+                return jsonify({"success": False, "error": str(exc)}), 400
+            emit_daily_balance_update()
             return jsonify({"success": True, "data": result})
 
         @self.blueprint.get("/api/finance/export")

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal
-from typing import Any, Optional
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from app.repositories.payable_repository import PayableRepository
 from app.models.payable import Payable
+from app.utils.payment import VALID_PAYMENT_METHODS
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,21 @@ class PayableService:
                 "incurred_date": p.incurred_date.strftime("%Y-%m-%d"),
                 "status": p.status,
                 "created_by": p.created_by_user.username if p.created_by_user else "Unknown",
+                "payments": [
+                    {
+                        "amount": float(payment.amount),
+                        "payment_method": payment.payment_method,
+                        "paid_at": payment.paid_at.isoformat() + "Z",
+                        "paid_by": payment.paid_by_user.username if payment.paid_by_user else "Unknown",
+                        "balance_before": float(payment.balance_before),
+                        "balance_after": float(payment.balance_after),
+                    }
+                    for payment in p.payments
+                ],
+                "legacy_paid_unattributed": float(max(
+                    p.partial_paid - sum((payment.amount for payment in p.payments), Decimal("0")),
+                    Decimal("0"),
+                )),
             }
             for p in payables
         ]
@@ -53,12 +69,25 @@ class PayableService:
         self.repo.save()
         return {"success": True, "data": {"id": payable.id}}
 
-    def mark_paid(self, payable_id: int, amount: Optional[float] = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
-        success = self.repo.mark_paid(payable_id, amount)
-        if not success:
+    def mark_paid(self, payable_id: int, amount: Any, payment_method: str, paid_by: int, request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
+            return {"error": "Invalid payment method"}, 400
+        try:
+            payment_amount = None if amount is None else Decimal(str(amount))
+            if payment_amount is not None and (
+                not payment_amount.is_finite() or payment_amount.as_tuple().exponent < -2
+            ):
+                raise ValueError
+        except (InvalidOperation, ValueError, TypeError):
+            return {"error": "Enter a valid payment amount with up to two decimal places."}, 400
+        try:
+            payment = self.repo.mark_paid(payable_id, payment_amount, payment_method, paid_by, request_key)
+        except ValueError as exc:
+            return {"error": str(exc)}, 400
+        if not payment:
             return {"error": "Payable not found"}, 404
         self.repo.save()
-        return {"success": True}
+        return {"success": True, "payment_id": payment.id}
 
     def get_due_count(self) -> int:
         today = date.today()

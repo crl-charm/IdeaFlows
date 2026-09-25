@@ -157,7 +157,7 @@ def test_staff_daily_balance_separates_cash_expenses_and_expected_collections(ap
                         total_bill=Decimal("250"), payment_method="cash"),
             Transaction(session_id=session_gcash.id, time_bill=Decimal("90"), food_bill=Decimal("0"),
                         total_bill=Decimal("90"), payment_method="gcash"),
-            Expense(category="supplies", description="Paper", amount=Decimal("40"), expense_date=today, logged_by=1),
+            Expense(category="supplies", description="Paper", amount=Decimal("40"), expense_date=today, logged_by=1, payment_method="cash"),
         ])
         rec = Receivable(customer_name="Owing customer", items_description="Meal", amount_owed=Decimal("200"),
                          partial_paid=Decimal("100"), due_date=today, created_by=1)

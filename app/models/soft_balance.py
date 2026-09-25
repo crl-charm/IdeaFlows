@@ -13,6 +13,10 @@ class SoftBalanceEntry(db.Model):
     period = db.Column(db.String(2), nullable=False)  # AM or PM
     total_revenue = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     total_expenses = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    total_collections = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    total_payables_paid = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    total_other_income = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    total_budget_spend = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     net_balance = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     notes = db.Column(db.Text, nullable=True)
     generated_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
