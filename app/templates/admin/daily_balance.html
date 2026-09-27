@@ -4,7 +4,19 @@
 
 {% block content %}
 
-<div class="container-fluid">
+<style>
+  #main-content { min-width: 0; }
+  .daily-balance-page, .daily-balance-table-card { min-width: 0; }
+  .daily-balance-table-scroll { max-width: 100%; }
+  .daily-balance-table-scroll th,
+  .daily-balance-table-scroll td { white-space: nowrap; }
+  .daily-balance-table-scroll .report-notes { white-space: normal; min-width: 10rem; max-width: 18rem; }
+  @media (max-width: 767.98px) {
+    .daily-balance-page { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+  }
+</style>
+
+<div class="container-fluid daily-balance-page">
   <div class="d-flex flex-column flex-md-row justify-content-md-between align-items-md-start gap-2 gap-md-3 mb-4">
     <h1 class="mb-0 mb-md-0" style="flex: 0 0 auto;">Daily Sales Balance</h1>
     <div class="daily-balance-export-buttons d-flex flex-wrap flex-md-nowrap gap-2 justify-content-start justify-content-md-end" style="flex: 1 1 auto;">
@@ -196,15 +208,20 @@
     </div>
   </div>
 
-  <div class="card mb-4"><div class="card-header"><strong>Payment method reconciliation</strong></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Method</th><th>Checkout sales</th><th>Debt collected</th><th>Other income</th><th>Expenses</th><th>Supplier paid</th><th>Budget spent</th><th>Net movement</th></tr></thead><tbody id="method-reconciliation-body"></tbody></table></div></div>
+  <div class="card mb-4 daily-balance-table-card">
+    <div class="card-header"><strong>Payment method reconciliation</strong><small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small></div>
+    <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Payment method reconciliation table" tabindex="0">
+      <table class="table table-sm mb-0"><thead><tr><th>Method</th><th>Checkout sales</th><th>Debt collected</th><th>Other income</th><th>Expenses</th><th>Supplier paid</th><th>Budget spent</th><th>Net movement</th></tr></thead><tbody id="method-reconciliation-body"></tbody></table>
+    </div>
+  </div>
 
-  <div class="card">
+  <div class="card daily-balance-table-card">
     <div class="card-header">
       <h5>Daily Reports</h5>
+      <small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small>
     </div>
-    <div class="card-body">
-      <!-- Desktop Table View -->
-      <div class="d-none d-md-block">
+    <div class="card-body p-2 p-md-3">
+      <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Daily reports table" tabindex="0">
         <table class="table table-hover">
           <thead>
             <tr>
@@ -230,21 +247,16 @@
           <tbody id="reports-table-body"></tbody>
         </table>
       </div>
-      
-      <!-- Mobile Card View -->
-      <div class="d-md-none" id="reports-mobile-cards">
-        <!-- Cards will be populated by JavaScript -->
-      </div>
     </div>
   </div>
 
-  <div class="card mt-4">
+  <div class="card mt-4 daily-balance-table-card">
     <div class="card-header">
       <h5>Soft Balancing History (AM/PM)</h5>
+      <small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small>
     </div>
-    <div class="card-body">
-      <!-- Desktop Table View -->
-      <div class="d-none d-md-block">
+    <div class="card-body p-2 p-md-3">
+      <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Soft balancing history table" tabindex="0">
         <table class="table table-hover">
           <thead>
             <tr>
@@ -264,11 +276,6 @@
           </thead>
           <tbody id="soft-balance-body"></tbody>
         </table>
-      </div>
-      
-      <!-- Mobile Card View -->
-      <div class="d-md-none" id="soft-balance-mobile-cards">
-        <!-- Cards will be populated by JavaScript -->
       </div>
     </div>
   </div>
@@ -414,9 +421,7 @@ function renderFilteredReports() {
   });
 
   const tbody = document.getElementById('reports-table-body');
-  const mobileCards = document.getElementById('reports-mobile-cards');
   tbody.innerHTML = '';
-  mobileCards.innerHTML = '';
 
   let sumRevenue = 0, sumCollections = 0, sumOtherIncome = 0, sumExpenses = 0, sumPayables = 0, sumBudgetSpend = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
   let cashCount = 0, gcashCount = 0, bdoCount = 0, bpiCount = 0, queenbankCount = 0;
@@ -448,7 +453,7 @@ function renderFilteredReports() {
       });
     });
     
-    // Desktop table row
+    // Report table row
     tbody.innerHTML += `
       <tr>
         <td>${report.report_date}</td>
@@ -467,87 +472,13 @@ function renderFilteredReports() {
         <td>${report.total_orders}</td>
         <td>${report.total_sessions}</td>
         <td>${window.escapeHTML(report.generated_by)}${report.generated_at ? `<br><small>${window.escapeHTML(report.generated_at)}</small>` : ''}</td>
-        <td>${window.escapeHTML(report.notes || '-')}</td>
+        <td class="report-notes">${window.escapeHTML(report.notes || '-')}</td>
       </tr>
-    `;
-    
-    // Mobile card layout
-    mobileCards.innerHTML += `
-      <div class="daily-report-card mb-3">
-        <div class="card-header-mobile">
-          <strong>${report.report_date}</strong>
-          <small class="text-muted">${window.escapeHTML(report.generated_by)}</small>
-        </div>
-        <div class="card-body-mobile">
-          <div class="row g-2">
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Revenue</span>
-                <span class="metric-value">₱${report.total_revenue.toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Expenses</span>
-                <span class="metric-value">₱${report.total_expenses.toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Debt collected</span><span class="metric-value">₱${report.total_collections.toFixed(2)}</span></div></div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Supplier paid</span><span class="metric-value">₱${report.total_payables_paid.toFixed(2)}</span></div></div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Other income</span><span class="metric-value">₱${report.total_other_income.toFixed(2)}</span></div></div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Budget spent</span><span class="metric-value">₱${report.total_budget_spend.toFixed(2)}</span></div></div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Cash</span>
-                <span class="metric-value">₱${(report.cash_total || 0).toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">GCash</span>
-                <span class="metric-value">₱${(report.gcash_total || 0).toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">BDO</span>
-                <span class="metric-value">₱${(report.bdo_total || 0).toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">BPI</span>
-                <span class="metric-value">₱${(report.bpi_total || 0).toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">QueenBank</span>
-                <span class="metric-value">₱${(report.queenbank_total || 0).toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Net</span>
-                <span class="metric-value text-success">₱${report.net_balance.toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Orders</span>
-                <span class="metric-value">${report.total_orders}</span>
-              </div>
-            </div>
-          </div>
-          ${report.notes ? `<div class="notes-section mt-2"><small class="text-muted">Note: ${window.escapeHTML(report.notes)}</small></div>` : ''}
-        </div>
-      </div>
     `;
   });
 
   if (filteredReports.length === 0) {
     tbody.innerHTML = '<tr><td colspan="17" class="text-center text-muted py-3">No activity found for this range.</td></tr>';
-    mobileCards.innerHTML = '<p class="text-center text-muted py-4">No reports found for this range.</p>';
   }
 
   document.getElementById('total-revenue').textContent = sumRevenue.toFixed(2);
@@ -597,9 +528,7 @@ function renderFilteredSoftBalances(startDate, endDate) {
   });
 
   const tbody = document.getElementById('soft-balance-body');
-  const mobileCards = document.getElementById('soft-balance-mobile-cards');
   tbody.innerHTML = '';
-  mobileCards.innerHTML = '';
 
   filteredSoft.forEach(row => {
     tbody.innerHTML += `
@@ -615,56 +544,12 @@ function renderFilteredSoftBalances(startDate, endDate) {
       <td>₱${row.net_balance.toFixed(2)}</td>
       <td>${window.escapeHTML(row.generated_by)}</td>
       <td>${window.escapeHTML(row.generated_at)}</td>
-      <td>${window.escapeHTML(row.notes || '-')}</td>
+      <td class="report-notes">${window.escapeHTML(row.notes || '-')}</td>
     </tr>`;
-    
-    mobileCards.innerHTML += `
-      <div class="soft-balance-card mb-3">
-        <div class="card-header-mobile">
-          <strong>${row.balance_date}</strong>
-          <span class="badge bg-secondary">${window.escapeHTML(row.period)}</span>
-          <small class="text-muted">${window.escapeHTML(row.generated_by)}</small>
-        </div>
-        <div class="card-body-mobile">
-          <div class="row g-2">
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Revenue</span>
-                <span class="metric-value">₱${row.total_revenue.toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Expenses</span>
-                <span class="metric-value">₱${row.total_expenses.toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Debt collected</span><span class="metric-value">₱${row.total_collections.toFixed(2)}</span></div></div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Other income</span><span class="metric-value">₱${row.total_other_income.toFixed(2)}</span></div></div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Supplier paid</span><span class="metric-value">₱${row.total_payables_paid.toFixed(2)}</span></div></div>
-            <div class="col-6"><div class="metric-item"><span class="metric-label">Budget spent</span><span class="metric-value">₱${row.total_budget_spend.toFixed(2)}</span></div></div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Net</span>
-                <span class="metric-value text-success">₱${row.net_balance.toFixed(2)}</span>
-              </div>
-            </div>
-            <div class="col-6">
-              <div class="metric-item">
-                <span class="metric-label">Time</span>
-                <span class="metric-value" style="font-size: 0.875rem;">${window.escapeHTML(row.generated_at)}</span>
-              </div>
-            </div>
-          </div>
-          ${row.notes ? `<div class="notes-section mt-2"><small class="text-muted">Note: ${window.escapeHTML(row.notes)}</small></div>` : ''}
-        </div>
-      </div>
-    `;
   });
 
   if (filteredSoft.length === 0) {
     tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No soft balances found for this range.</td></tr>';
-    mobileCards.innerHTML = '<p class="text-center text-muted py-4">No soft balances found for this range.</p>';
   }
 }
 
