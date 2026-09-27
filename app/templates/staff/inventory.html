@@ -152,6 +152,10 @@
           <select id="raw-stock-item" class="form-select" required></select>
         </div>
         <div>
+          <label for="raw-stock-unit" class="form-label">Unit</label>
+          <select id="raw-stock-unit" class="form-select" required></select>
+        </div>
+        <div>
           <label for="raw-stock-count" class="form-label">Amount on hand</label>
           <input id="raw-stock-count" class="form-control" type="number" min="0" max="999999" step="0.01" required>
         </div>
@@ -253,8 +257,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
   const rawForm = document.getElementById('raw-stock-form');
-  document.getElementById('raw-stock-item')?.addEventListener('change', event => {
-    document.getElementById('raw-stock-count').value = directStockItems.find(item => String(item.id) === event.target.value)?.stock_qty ?? 0;
+  document.getElementById('raw-stock-item')?.addEventListener('change', syncRawStockEntry);
+  document.getElementById('raw-stock-unit')?.addEventListener('change', () => {
+    document.getElementById('raw-stock-count').value = '';
+    document.getElementById('raw-stock-count').step = ['pieces', 'packs', 'trays'].includes(document.getElementById('raw-stock-unit').value) ? '1' : '0.01';
   });
   rawForm?.addEventListener('submit', async event => {
     event.preventDefault();
@@ -263,13 +269,26 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       await fetchJSON(`/inventory/api/ingredients/${document.getElementById('raw-stock-item').value}/stock`, {
         method:'PATCH', headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},
-        body:JSON.stringify({quantity:document.getElementById('raw-stock-count').value})});
+        body:JSON.stringify({quantity:document.getElementById('raw-stock-count').value, unit:document.getElementById('raw-stock-unit').value})});
       showToast('Ingredient stock updated.', 'success');
       refreshInventory();
     } catch (error) { showToast(error.message || 'Could not save ingredient stock.', 'error'); }
     finally { button.disabled = false; }
   });
 });
+
+function syncRawStockEntry() {
+  const selected = document.getElementById('raw-stock-item').value;
+  const item = directStockItems.find(row => String(row.id) === selected);
+  const unit = item?.unit === 'kg' ? 'klg' : item?.unit || 'pieces';
+  const compatible = {klg: ['klg', 'grams'], grams: ['grams', 'klg'], liters: ['liters', 'ml'], ml: ['ml', 'liters']};
+  const unitSelect = document.getElementById('raw-stock-unit');
+  unitSelect.replaceChildren(...(compatible[unit] || [unit]).map(value => new Option(value === 'klg' ? 'kg' : value, value)));
+  unitSelect.value = unit;
+  const count = document.getElementById('raw-stock-count');
+  count.value = item?.stock_qty ?? 0;
+  count.step = ['pieces', 'packs', 'trays'].includes(unit) ? '1' : '0.01';
+}
 
 function matchesInventorySearch(name) {
   const q = inventorySearchQuery.trim().toLowerCase();
@@ -291,9 +310,9 @@ function loadInventory() {
         const rawSelect = document.getElementById('raw-stock-item');
         if (rawSelect) {
           const selected = rawSelect.value;
-          rawSelect.innerHTML = directStockItems.map(item => `<option value="${Number(item.id)}">${escapeHtml(item.name)} (${escapeHtml(item.unit)})</option>`).join('');
+          rawSelect.innerHTML = directStockItems.map(item => `<option value="${Number(item.id)}">${escapeHtml(item.name)} (${escapeHtml(item.unit === 'klg' ? 'kg' : item.unit)})</option>`).join('');
           if (directStockItems.some(item => String(item.id) === selected)) rawSelect.value = selected;
-          document.getElementById('raw-stock-count').value = directStockItems.find(item => String(item.id) === rawSelect.value)?.stock_qty ?? 0;
+          syncRawStockEntry();
         }
         renderDirectStockTable();
         renderRecipeTable();

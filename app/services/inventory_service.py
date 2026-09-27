@@ -7,7 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import func
 
 from app.repositories.inventory_repository import InventoryRepository
-from app.utils.inventory_helpers import is_ingredient_category
+from app.utils.inventory_helpers import is_ingredient_category, normalize_unit, unit_conversion_ratio
 
 DEFAULT_LOW_STOCK_THRESHOLD = 10
 DEFAULT_UNIT = "pieces"
@@ -456,6 +456,8 @@ class InventoryService:
         reason: str,
         user_id: Optional[int],
         menu_item_id: int | None = None,
+        unit: str | None = None,
+        mode: str = "set",
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         try:
             quantity = Decimal(str(new_qty))
@@ -463,26 +465,55 @@ class InventoryService:
                 raise ValueError
         except (InvalidOperation, TypeError, ValueError):
             return {"error": "Enter a stock quantity from 0 to 999999 with at most two decimals."}, 400
+        if mode not in {"add", "sub", "set"}:
+            return {"error": "Select a valid stock adjustment mode."}, 400
+        if unit is not None and (not isinstance(unit, str) or not unit.strip()):
+            return {"error": "Select a valid stock unit."}, 400
 
         if item_id:
             item = self.repo.get_item_for_update(item_id)
         elif menu_item_id is not None:
-            item = self.ensure_inventory_row(menu_item_id)
+            item = self.repo.get_by_menu_item_id_for_update(menu_item_id)
         else:
             return {"error": "Inventory item not found"}, 404
 
-        if not item:
+        if item_id and not item:
             return {"error": "Inventory item not found"}, 404
 
-        old_qty = Decimal(str(item.stock_qty))
-        change = quantity - old_qty
+        stored_unit = normalize_unit(item.unit if item else DEFAULT_UNIT)
+        entered_unit = normalize_unit(unit if unit is not None else stored_unit)
+        stored_label = "kg" if stored_unit == "klg" else stored_unit
+        entered_label = "kg" if entered_unit == "klg" else entered_unit
+        valid_units = {"pieces", "grams", "klg", "trays", "packs", "liters", "ml", "servings"}
+        if entered_unit not in valid_units or stored_unit not in valid_units:
+            return {"error": "Select a valid stock unit."}, 400
+        if entered_unit in {"pieces", "trays", "packs", "servings"} and quantity != quantity.to_integral_value():
+            return {"error": "Enter a whole-number quantity for this unit."}, 400
+        ratio = unit_conversion_ratio(entered_unit, stored_unit)
+        if ratio is None:
+            return {"error": f"This ingredient is stored in {stored_label}; choose a compatible unit."}, 400
+        converted = quantity * ratio
+        if converted > 999999 or converted != converted.quantize(Decimal("0.01")):
+            return {"error": f"That amount cannot be stored exactly in {stored_label}. Use a larger increment or the stored unit."}, 400
+
+        old_qty = Decimal(str(item.stock_qty)) if item else Decimal(0)
+        target_qty = old_qty + converted if mode == "add" else old_qty - converted if mode == "sub" else converted
+        if target_qty < 0 or target_qty > 999999:
+            return {"error": "Resulting stock must be from 0 to 999999."}, 400
+        change = target_qty - old_qty
+
+        if item is None:
+            from app.models.menu_item import MenuItem
+            if not MenuItem.query.filter_by(id=menu_item_id).first():
+                return {"error": "Menu item not found"}, 404
+            item = self.repo.create(menu_item_id, 0, DEFAULT_LOW_STOCK_THRESHOLD, DEFAULT_UNIT)
 
         from app.models.user import User
 
         user = User.query.get(user_id) if user_id else None
         username = user.username if user else "System"
 
-        formatted_reason = f"{username} adjusted {change:+.2f} ({old_qty:.2f} → {quantity:.2f}) - {reason}"
+        formatted_reason = f"{mode} {quantity} {entered_label} ({old_qty:.2f} → {target_qty:.2f} {stored_label}); {reason}; {username}"
         formatted_reason = formatted_reason[:100]
 
         if change > 0:
@@ -491,7 +522,7 @@ class InventoryService:
             self.repo.deduct(item.id, abs(change), formatted_reason, user_id)
 
         self.repo.save()
-        return {"success": True, "data": {"inventory_item_id": item.id}}
+        return {"success": True, "data": {"inventory_item_id": item.id, "stock_qty": float(target_qty)}}
 
     def delete_raw_ingredient(
         self, menu_item_id: int

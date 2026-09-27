@@ -476,8 +476,12 @@
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label">Quantity</label>
-          <input type="number" id="adjustQtyInput" class="form-control" min="0" step="1" required>
+          <label class="form-label" for="adjustUnit">Unit</label>
+          <select id="adjustUnit" class="form-select" onchange="updateAdjustQuantityStep()" required></select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="adjustQtyInput">Quantity</label>
+          <input type="number" id="adjustQtyInput" class="form-control" min="0" max="999999" step="1" required>
           <div class="form-text text-muted" id="adjustHelperText">Add this quantity to current stock.</div>
         </div>
         <div class="mb-3">
@@ -493,7 +497,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary-modal" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn-primary-modal" onclick="submitStockAdjustment()">Save Changes</button>
+        <button type="button" class="btn-primary-modal" id="saveStockAdjustment" onclick="submitStockAdjustment()">Save Changes</button>
       </div>
     </div>
   </div>
@@ -533,8 +537,6 @@
 <script>
 let currentItemId = null;
 let currentMenuItemId = null;
-let currentItemStock = 0;
-let currentItemName = "";
 let currentMealId = null;
 let directStockItems = [];
 let recipeItems = [];
@@ -709,10 +711,10 @@ function renderDirectStockCard(item) {
             </div>
           </div>
           <div class="inventory-actions">
-            <button class="btn-icon" onclick="openAdjustModal(${invId}, ${item.stock_qty}, '${nameEsc}', ${item.menu_item_id})">
+            <button class="btn-icon" onclick="openAdjustModal(${invId}, ${item.stock_qty}, '${nameEsc}', ${item.menu_item_id}, '${escapeHtml(escapeJsString(item.unit || 'pieces'))}')">
               <i class="bi bi-plus-slash-minus"></i> Update stock
             </button>
-            <button class="btn-icon" onclick="viewLogsOrInit(${invId}, '${nameEsc}', ${item.menu_item_id})">
+            <button class="btn-icon" onclick="viewLogsOrInit(${invId}, '${nameEsc}', ${item.menu_item_id}, '${escapeHtml(escapeJsString(item.unit || 'pieces'))}')">
               <i class="bi bi-journal-text"></i> History
             </button>
             <button class="btn-icon btn-delete-item" onclick="deleteRawIngredient(${item.menu_item_id}, '${nameEsc}', ${item.recipe_count})" title="Delete ingredient">
@@ -763,10 +765,10 @@ function renderRecipeInventory() {
   if (recipeItems.length && !filtered.length) grid.innerHTML = '<p class="text-muted">No meals match your search.</p>';
 }
 
-function viewLogsOrInit(itemId, itemName, menuItemId) {
+function viewLogsOrInit(itemId, itemName, menuItemId, unit) {
   if (!itemId || itemId === 'null') {
     showToast('Save stock once to initialize logs for this ingredient', 'error');
-    openAdjustModal(null, 0, itemName, menuItemId);
+    openAdjustModal(null, 0, itemName, menuItemId, unit);
     return;
   }
   viewLogs(itemId, itemName);
@@ -976,10 +978,10 @@ function loadRecipeIngredients(mealId) {
               <td>${reqDisplay}</td>
               <td class="${stockClass}">${stockDisplay}</td>
               <td class="text-end">
-                <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Adjust Stock" onclick="openAdjustModal(${invId}, ${stockQty}, '${ingName}', ${m.ingredient_item_id})">
+                <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Adjust Stock" onclick="openAdjustModal(${invId}, ${stockQty}, '${ingName}', ${m.ingredient_item_id}, '${escapeHtml(escapeJsString(ingredientUnit))}')">
                   <i class="bi bi-plus-slash-minus"></i>
                 </button>
-                <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Logs" onclick="viewLogsOrInit(${invId}, '${ingName}', ${m.ingredient_item_id})">
+                <button class="btn btn-sm btn-outline-dark p-1 me-1" title="Logs" onclick="viewLogsOrInit(${invId}, '${ingName}', ${m.ingredient_item_id}, '${escapeHtml(escapeJsString(ingredientUnit))}')">
                   <i class="bi bi-journal-text"></i>
                 </button>
                 <button class="btn btn-sm btn-outline-danger p-1" title="Remove" onclick="removeRecipeIngredient(${m.id}, '${ingName}')">
@@ -1064,15 +1066,19 @@ async function removeRecipeIngredient(recipeId, ingredientName) {
 }
 
 // STOCK ADJUSTMENT MODAL
-function openAdjustModal(itemId, currentQty, itemName, menuItemId) {
+function openAdjustModal(itemId, currentQty, itemName, menuItemId, unit = 'pieces') {
   currentItemId = itemId && itemId !== 'null' ? itemId : null;
   currentMenuItemId = menuItemId || null;
-  currentItemStock = currentQty;
-  currentItemName = itemName;
-  
+  const storedUnit = unit === 'kg' ? 'klg' : unit;
+  const compatible = {klg: ['klg', 'grams'], grams: ['grams', 'klg'], liters: ['liters', 'ml'], ml: ['ml', 'liters']};
+  const unitSelect = document.getElementById('adjustUnit');
+  unitSelect.replaceChildren(...(compatible[storedUnit] || [storedUnit]).map(value => new Option(value === 'klg' ? 'kg' : value, value)));
+  unitSelect.value = storedUnit;
+
   document.getElementById('modalAdjustItemName').textContent = itemName;
-  document.getElementById('adjustCurrentQty').value = currentQty;
+  document.getElementById('adjustCurrentQty').value = `${currentQty} ${formatUnitSingular(currentQty, storedUnit)}`;
   document.getElementById('adjustQtyInput').value = '';
+  updateAdjustQuantityStep();
   document.getElementById('adjustMode').value = 'add';
   document.getElementById('reason').value = 'Restock';
   toggleAdjustHelperText();
@@ -1080,6 +1086,10 @@ function openAdjustModal(itemId, currentQty, itemName, menuItemId) {
   // Show the modal
   const adjustModal = new bootstrap.Modal(document.getElementById('editStockModal'));
   adjustModal.show();
+}
+
+function updateAdjustQuantityStep() {
+  document.getElementById('adjustQtyInput').step = ['pieces', 'packs', 'trays'].includes(document.getElementById('adjustUnit').value) ? '1' : '0.01';
 }
 
 function toggleAdjustHelperText() {
@@ -1096,28 +1106,10 @@ function toggleAdjustHelperText() {
 
 function submitStockAdjustment() {
   const mode = document.getElementById('adjustMode').value;
-  const adjustVal = parseFloat(document.getElementById('adjustQtyInput').value);
+  const quantityInput = document.getElementById('adjustQtyInput');
+  if (!quantityInput.reportValidity()) return;
+  const adjustVal = quantityInput.value;
   const reason = document.getElementById('reason').value;
-
-  if (isNaN(adjustVal) || adjustVal < 0) {
-    showToast('Please enter a valid positive quantity', 'error');
-    return;
-  }
-
-  let newQty = currentItemStock;
-  if (mode === 'add') {
-    newQty = currentItemStock + adjustVal;
-  } else if (mode === 'sub') {
-    newQty = currentItemStock - adjustVal;
-  } else {
-    newQty = adjustVal;
-  }
-
-  // Prevent negative inventory (Suggestion 2)
-  if (newQty < 0) {
-    showToast('✗ Error: Resulting stock quantity cannot go below 0!', 'error');
-    return;
-  }
 
   if (!currentItemId && !currentMenuItemId) {
     showToast('Cannot update stock: item not found', 'error');
@@ -1128,11 +1120,15 @@ function submitStockAdjustment() {
     ? `/admin/inventory/api/items/${currentItemId}/stock`
     : `/admin/inventory/api/menu-items/${currentMenuItemId}/stock`;
 
+  const saveButton = document.getElementById('saveStockAdjustment');
+  saveButton.disabled = true;
   csrfFetch(stockUrl, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify({
-      new_qty: newQty,
+      quantity: adjustVal,
+      unit: document.getElementById('adjustUnit').value,
+      mode: mode,
       reason: reason
     })
   }).then(r => r.json()).then(data => {
@@ -1151,7 +1147,8 @@ function submitStockAdjustment() {
     } else {
       showToast('✗ Error: ' + (data.error || 'Failed to update stock'), 'error');
     }
-  });
+  }).catch(error => showToast(error.message || 'Failed to update stock', 'error'))
+    .finally(() => { saveButton.disabled = false; });
 }
 
 // DELETE RAW INGREDIENT

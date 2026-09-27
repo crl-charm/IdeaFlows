@@ -77,7 +77,7 @@ def set_ingredient_stock(menu_id):
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(error="Enter a valid stock quantity."), 400
-    result = _service.update_stock(rows[0].id, data.get("quantity"), "Manual count", session.get("user_id"))
+    result = _service.update_stock(rows[0].id, data.get("quantity"), "Manual count", session.get("user_id"), unit=data.get("unit"))
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     emit_inventory_update("stock_change", {"item_id": rows[0].id})

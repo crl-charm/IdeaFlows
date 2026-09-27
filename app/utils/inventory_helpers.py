@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 
 def is_ingredient_category(category: str | None) -> bool:
     return (category or "").strip().lower() == "ingredient"
@@ -33,6 +35,18 @@ def normalize_unit(unit: str | None) -> str:
     if not raw:
         return "pieces"
     return _UNIT_ALIASES.get(raw, raw)
+
+
+def unit_conversion_ratio(from_unit: str, to_unit: str) -> Decimal | None:
+    source, target = normalize_unit(from_unit), normalize_unit(to_unit)
+    if source == target:
+        return Decimal(1)
+    return {
+        ("grams", "klg"): Decimal("0.001"),
+        ("klg", "grams"): Decimal("1000"),
+        ("ml", "liters"): Decimal("0.001"),
+        ("liters", "ml"): Decimal("1000"),
+    }.get((source, target))
 
 
 def units_are_compatible(

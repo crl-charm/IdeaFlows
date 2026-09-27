@@ -5,7 +5,7 @@ from datetime import datetime, UTC
 
 from app import create_app, db
 from app.models import Admin, CustomerSession, MenuItem, MenuItemIngredient, Order, SpaceType, User
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryItem, InventoryLog
 from app.db.migrator import SchemaMigrator
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.order_repository import OrderRepository
@@ -216,6 +216,57 @@ def test_cook_sets_servings_and_updates_raw_stock_independently(app, client):
     denied_raw = client.patch(f"/inventory/api/ingredients/{ingredient_id}/stock",
         json={"quantity": 5}, headers={"Idempotency-Key": "cashier-raw-count"})
     assert denied_raw.status_code == 403
+
+
+def test_owner_and_cook_can_enter_ingredient_stock_in_compatible_units(app, client):
+    with app.app_context():
+        owner = User(full_name="Unit Owner", username="unit_owner", role="admin",
+                     job_role="admin", is_active=True, password="not-used")
+        cook = User(full_name="Unit Cook", username="unit_cook", role="staff",
+                    job_role="cook", is_active=True, password="not-used")
+        rice = MenuItem(name="Unit Rice", price=0, category="ingredient", is_available=True)
+        db.session.add_all([owner, cook, rice])
+        db.session.flush()
+        stock = InventoryItem(menu_item_id=rice.id, stock_qty=Decimal("1.00"), unit="klg")
+        db.session.add(stock)
+        db.session.commit()
+        owner_id, cook_id, rice_id, stock_id = owner.id, cook.id, rice.id, stock.id
+
+    _set_auth_session(client, "admin", owner_id)
+    url = f"/admin/inventory/api/items/{stock_id}/stock"
+    payload = {"quantity": "500", "unit": "grams", "mode": "add", "reason": "Restock"}
+    added = client.patch(url, json=payload, headers={"Idempotency-Key": "rice-add-500g"})
+    retried = client.patch(url, json=payload, headers={"Idempotency-Key": "rice-add-500g"})
+    assert added.status_code == 200 and added.get_json()["data"]["stock_qty"] == 1.5
+    assert retried.status_code == 409
+    assert client.patch(url, json={"quantity": "1", "unit": "grams", "mode": "add"}).status_code == 400
+    assert client.patch(url, json={"quantity": "1", "unit": "packs", "mode": "add"}).status_code == 400
+    assert client.patch(url, json={"quantity": "2", "unit": "klg", "mode": "sub"}).status_code == 400
+
+    _set_auth_session(client, "staff", cook_id)
+    counted = client.patch(f"/inventory/api/ingredients/{rice_id}/stock",
+                           json={"quantity": "750", "unit": "grams"},
+                           headers={"Idempotency-Key": "rice-count-750g"})
+    assert counted.status_code == 200 and counted.get_json()["data"]["stock_qty"] == 0.75
+    with app.app_context():
+        assert InventoryItem.query.filter_by(id=stock_id).one().stock_qty == Decimal("0.75")
+        logs = InventoryLog.query.filter_by(inventory_item_id=stock_id).order_by(InventoryLog.id).all()
+        assert len(logs) == 2
+        assert "500 grams" in logs[0].reason and "1.00 → 1.50 kg" in logs[0].reason
+        assert "750 grams" in logs[1].reason and "1.50 → 0.75 kg" in logs[1].reason
+
+    _set_auth_session(client, "admin", owner_id)
+    with app.app_context():
+        salt = MenuItem(name="Unit Salt", price=0, category="ingredient", is_available=True)
+        db.session.add(salt)
+        db.session.commit()
+        salt_id = salt.id
+    missing_stock_url = f"/admin/inventory/api/menu-items/{salt_id}/stock"
+    assert client.patch(missing_stock_url, json={"quantity": "2", "unit": "grams", "mode": "add"}).status_code == 400
+    with app.app_context():
+        assert InventoryItem.query.filter_by(menu_item_id=salt_id).first() is None
+    initialized = client.patch(missing_stock_url, json={"quantity": "5", "unit": "pieces", "mode": "add"})
+    assert initialized.status_code == 200 and initialized.get_json()["data"]["stock_qty"] == 5
 
 
 def test_typed_recipe_edit_and_invalid_save_are_atomic(app, client):

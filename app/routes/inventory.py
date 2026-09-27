@@ -84,17 +84,21 @@ def api_create_item() -> tuple:
 @csrf.exempt
 @idempotent_request("admin-update-inventory-stock")
 def api_update_stock(item_id: int) -> tuple:
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter a valid stock adjustment."}), 400
     result = _service.update_stock(
         item_id=item_id,
-        new_qty=data.get("new_qty"),
+        new_qty=data.get("quantity", data.get("new_qty")),
         reason=data.get("reason", "Manual adjustment"),
         user_id=session.get("user_id"),
+        unit=data.get("unit"),
+        mode=data.get("mode", "set"),
     )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
-        emit_inventory_update('stock_change', {'item_id': item_id, 'new_qty': float(data.get("new_qty"))})
+        emit_inventory_update('stock_change', {'item_id': item_id, 'new_qty': result['data']['stock_qty']})
     return jsonify(result), 200
 
 
@@ -103,19 +107,23 @@ def api_update_stock(item_id: int) -> tuple:
 @csrf.exempt
 @idempotent_request("admin-update-menu-item-stock")
 def api_update_stock_by_menu_item(menu_item_id: int) -> tuple:
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter a valid stock adjustment."}), 400
     result = _service.update_stock(
         item_id=None,
         menu_item_id=menu_item_id,
-        new_qty=data.get("new_qty"),
+        new_qty=data.get("quantity", data.get("new_qty")),
         reason=data.get("reason", "Manual adjustment"),
         user_id=session.get("user_id"),
+        unit=data.get("unit"),
+        mode=data.get("mode", "set"),
     )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
         inv_id = result.get("data", {}).get("inventory_item_id")
-        emit_inventory_update('stock_change', {'item_id': inv_id, 'new_qty': float(data.get("new_qty"))})
+        emit_inventory_update('stock_change', {'item_id': inv_id, 'new_qty': result['data']['stock_qty']})
     return jsonify(result), 200
 
 

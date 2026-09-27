@@ -9,7 +9,7 @@ from uuid import uuid4
 from app import db
 from app.models import MenuItem, MenuItemIngredient, InventoryItem
 from app.services.menu_availability import StockError
-from app.utils.inventory_helpers import is_ingredient_category, normalize_unit
+from app.utils.inventory_helpers import is_ingredient_category, normalize_unit, unit_conversion_ratio
 from app.repositories.menu_repository import MenuRepository
 from app.core.cache import get_or_set_json, invalidate_menu_cache
 
@@ -28,10 +28,6 @@ class MenuService:
                 ingredients.setdefault(" ".join(candidate.name.split()).casefold(), []).append(candidate)
         mappings, used = [], set()
         units = {"pieces", "grams", "klg", "trays", "packs", "liters", "ml"}
-        conversions = {("grams", "klg"): Decimal("0.001"),
-                       ("klg", "grams"): Decimal("1000"),
-                       ("ml", "liters"): Decimal("0.001"),
-                       ("liters", "ml"): Decimal("1000")}
         for number, row in enumerate(rows, 1):
             if not isinstance(row, dict):
                 raise StockError(f"Ingredient {number} is invalid.", "INVALID_RECIPE", 400)
@@ -70,7 +66,7 @@ class MenuService:
             else:
                 stock_unit = unit
                 db.session.add(InventoryItem(menu_item_id=ingredient.id, stock_qty=0, unit=unit))
-            ratio = Decimal(1) if unit == stock_unit else conversions.get((unit, stock_unit))
+            ratio = unit_conversion_ratio(unit, stock_unit)
             if ratio is None or amount * ratio != (amount * ratio).quantize(Decimal("0.01")):
                 raise StockError(f"{name} is stored in {stock_unit}. Use a compatible amount and unit.", "INVALID_UNIT", 400)
             mappings.append(MenuItemIngredient(ingredient_item_id=ingredient.id,

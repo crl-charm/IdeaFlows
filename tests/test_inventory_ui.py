@@ -56,6 +56,18 @@ def test_add_ingredient_form_uses_plain_language_and_keeps_fractional_stock():
     assert "const startQty = Number(stockInput.value);" in admin
 
 
+def test_add_menu_item_has_no_recipe_fields_and_stock_forms_show_units():
+    menu = (TEMPLATES / "admin" / "menu.html").read_text(encoding="utf-8")
+    admin = (TEMPLATES / "admin" / "inventory.html").read_text(encoding="utf-8")
+    staff = (TEMPLATES / "staff" / "inventory.html").read_text(encoding="utf-8")
+    add_form = menu.split('id="addItemModal"', 1)[1].split('id="editItemModal"', 1)[0]
+    assert "Ingredients for one order" not in add_form
+    assert "newRecipeRows" not in menu
+    assert all(f'id="{field}"' in add_form for field in ("itemName", "category", "price", "description", "image"))
+    assert 'id="adjustUnit"' in admin
+    assert 'id="raw-stock-unit"' in staff
+
+
 def test_inventory_meal_cards_only_show_servings_and_availability():
     menu = (TEMPLATES / "admin" / "menu.html").read_text(encoding="utf-8")
     inventory = (TEMPLATES / "admin" / "inventory.html").read_text(encoding="utf-8")
