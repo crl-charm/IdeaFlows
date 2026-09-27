@@ -741,7 +741,13 @@
         </div>
         <div class="mb-3">
           <label class="form-label">Password</label>
-          <input type="password" class="form-control" id="new_password" placeholder="Enter password (min 8 chars)">
+          <div class="input-group">
+            <input type="password" class="form-control" id="new_password" placeholder="Enter password (min 8 chars)">
+            <button type="button" class="btn btn-outline-secondary" id="new-password-toggle"
+              aria-label="Show password" aria-pressed="false" onclick="toggleStaffPassword('new_password', 'new-password-toggle')">
+              <i class="bi bi-eye" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -786,7 +792,7 @@
             <input type="password" class="form-control" id="edit_password"
               placeholder="Leave blank to keep current password">
             <button type="button" class="btn btn-outline-secondary" id="edit-password-toggle"
-              aria-label="Show password" aria-pressed="false" onclick="toggleEditPassword()">
+              aria-label="Show password" aria-pressed="false" onclick="toggleStaffPassword('edit_password', 'edit-password-toggle')">
               <i class="bi bi-eye" aria-hidden="true"></i>
             </button>
           </div>
@@ -1419,15 +1425,21 @@
     socket.on('staff_status_change', refreshStaffStatus);
   }
 
-  function toggleEditPassword() {
-    const input = document.getElementById("edit_password");
-    const button = document.getElementById("edit-password-toggle");
+  function toggleStaffPassword(inputId, buttonId) {
+    const input = document.getElementById(inputId);
+    const button = document.getElementById(buttonId);
     const showing = input.type === "password";
     input.type = showing ? "text" : "password";
     button.setAttribute("aria-label", showing ? "Hide password" : "Show password");
     button.setAttribute("aria-pressed", String(showing));
     button.querySelector("i").className = showing ? "bi bi-eye-slash" : "bi bi-eye";
   }
+
+  document.getElementById("addUserModal").addEventListener("hidden.bs.modal", function () {
+    if (document.getElementById("new_password").type === "text") {
+      toggleStaffPassword("new_password", "new-password-toggle");
+    }
+  });
 
 </script>
 {% endblock %}
