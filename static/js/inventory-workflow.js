@@ -5,10 +5,18 @@ window.InventoryUI = (() => {
   const kitchen = root.dataset.kitchen === 'true';
   const dialog = document.getElementById('stock-dialog');
   const servingsDialog = document.getElementById('servings-dialog');
+  const mealHistoryDialog = document.getElementById('meal-history-dialog');
   const el = id => document.getElementById(id);
   const items = new Map();
   let meals = [];
+  let servingKey = null;
+  let historyMealId = null;
+  let historyNextPage = null;
   const escape = value => { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; };
+  const stockUnits = [['klg','kg'],['grams','grams'],['pieces','pieces (pcs)'],['packs','packs'],['trays','trays'],['liters','liters (L)'],['ml','milliliters (mL)']];
+  const shortUnit = unit => ({klg:'kg',grams:'gram',pieces:'piece',packs:'pack',trays:'tray',liters:'liter',ml:'mL'})[unit] || unit;
+  const unitSymbol = unit => ({klg:'kg',grams:'g',pieces:'pcs',packs:'packs',trays:'trays',liters:'L',ml:'mL'})[unit] || unit;
+  const needsUnitConversion = (entered, stored) => entered !== stored && !['klg:grams','grams:klg','liters:ml','ml:liters'].includes(`${entered}:${stored}`);
   const labels = {prepared:'Manual servings',direct:'Counted pieces',recipe:'Manual servings',untracked:'Quantity not tracked'};
   let current = null;
   function actions(item) {
@@ -48,7 +56,7 @@ window.InventoryUI = (() => {
     el('stock-dialog-title').textContent = {setup:'Stock setup',add:item.inventory_mode === 'prepared' ? 'Add Batch' : 'Add stock',waste:'Record waste',sold_out:'Mark sold out',count:'Correct stock count'}[action];
     el('stock-help').textContent = action === 'sold_out' ? 'This sets the remaining count to zero. Enter why the remaining stock is no longer available.' : action === 'setup' ? 'Enter the servings you expect to make. Raw ingredients are updated separately.' : 'Your change will be recorded with your name and time.';
     el('stock-mode').value = item.inventory_mode;
-    el('stock-quantity').value = ['setup','count'].includes(action) ? item.stock_qty ?? 0 : '';
+    el('stock-quantity').value = ['setup','count'].includes(action) ? item.stock_qty ?? item.available_quantity ?? 0 : '';
     el('stock-threshold').value = item.low_stock_threshold ?? 3;
     fields();
     dialog.showModal();
@@ -78,22 +86,27 @@ window.InventoryUI = (() => {
     finally { button.disabled = false; }
   });
   function setMeals(rows) {
-    meals = rows.filter(item => ['prepared', 'recipe', 'untracked'].includes(item.inventory_mode));
-    if (!servingsDialog) return;
-    const select = el('servings-meal');
-    const selected = select.value;
-    select.innerHTML = meals.map(item => `<option value="${Number(item.id)}">${escape(item.name)}</option>`).join('');
-    if (meals.some(item => String(item.id) === selected)) select.value = selected;
-    el('servings-count').value = meals.find(item => String(item.id) === select.value)?.available_quantity ?? 0;
+    meals = rows;
   }
-  function openServings() {
-    if (!servingsDialog || !meals.length) return showToast('Add a menu item first.', 'error');
+  function mealActions(item) {
+    if (!kitchen) return '';
+    const id = Number(item.id);
+    items.set(id, item);
+    const serving = ['prepared','recipe','untracked'].includes(item.inventory_mode);
+    const update = serving ? `<button type="button" class="btn btn-outline-warning btn-sm" onclick="InventoryUI.openServings(${id})">Set servings</button>`
+      : admin ? `<button type="button" class="btn btn-outline-warning btn-sm" onclick="InventoryUI.open(${id}, 'count')">Update stock</button>` : '';
+    return `<div class="d-flex flex-wrap gap-2 mt-3">${update}<button type="button" class="btn btn-outline-secondary btn-sm" onclick="InventoryUI.openMealHistory(${id})">History</button></div>`;
+  }
+  function openServings(id) {
+    const meal = meals.find(item => Number(item.id) === Number(id) && ['prepared','recipe','untracked'].includes(item.inventory_mode));
+    if (!servingsDialog || !meal) return showToast('This meal cannot be counted in servings.', 'error');
+    el('servings-meal').value = meal.id;
+    servingKey = crypto.randomUUID();
+    el('servings-meal-name').textContent = meal.name;
+    el('servings-count').value = meal.available_quantity ?? 0;
     el('servings-error').textContent = '';
     servingsDialog.showModal();
   }
-  el('servings-meal')?.addEventListener('change', event => {
-    el('servings-count').value = meals.find(item => String(item.id) === event.target.value)?.available_quantity ?? 0;
-  });
   el('servings-form')?.addEventListener('submit', async event => {
     event.preventDefault();
     const id = Number(el('servings-meal').value);
@@ -102,7 +115,7 @@ window.InventoryUI = (() => {
     el('servings-error').textContent = '';
     try {
       await fetchJSON(`/inventory/api/menu-items/${id}/action`, {method:'POST',
-        headers:{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},
+        headers:{'Content-Type':'application/json','Idempotency-Key':servingKey},
         body:JSON.stringify({action:'servings', quantity:el('servings-count').value})});
       servingsDialog.close();
       showToast('Servings updated.', 'success');
@@ -110,6 +123,39 @@ window.InventoryUI = (() => {
     } catch (error) { el('servings-error').textContent = error.message || 'Could not save servings.'; }
     finally { button.disabled = false; }
   });
+  function openMealHistory(id) {
+    const meal = meals.find(item => Number(item.id) === Number(id));
+    if (!mealHistoryDialog || !meal) return;
+    historyMealId = Number(id);
+    historyNextPage = 1;
+    el('meal-history-name').textContent = meal.name;
+    el('meal-history-rows').innerHTML = '<tr><td colspan="5">Loading history...</td></tr>';
+    mealHistoryDialog.showModal();
+    loadMealHistory();
+  }
+  async function loadMealHistory() {
+    if (!historyNextPage) return;
+    const id = historyMealId;
+    const page = historyNextPage;
+    const button = el('meal-history-more');
+    button.disabled = true;
+    button.hidden = true;
+    try {
+      const result = await fetchJSON(`/inventory/api/menu-items/${id}/history?page=${page}`);
+      if (id !== historyMealId) return;
+      const rows = result.data.map(row => `<tr><td>${escape(new Date(row.at).toLocaleString())}</td><td>${escape(row.action)}</td><td>${row.quantity > 0 ? '+' : ''}${escape(row.quantity)}</td><td>${escape(row.reason)}</td><td>${escape(row.actor)}</td></tr>`).join('');
+      if (page === 1) el('meal-history-rows').innerHTML = rows || '<tr><td colspan="5">No history recorded for this meal yet.</td></tr>';
+      else el('meal-history-rows').insertAdjacentHTML('beforeend', rows);
+      historyNextPage = result.next_page;
+      button.hidden = !historyNextPage;
+    } catch (error) {
+      if (id === historyMealId) {
+        if (page === 1) el('meal-history-rows').innerHTML = `<tr><td colspan="5">${escape(error.message || 'Could not load meal history.')}</td></tr>`;
+        button.hidden = false;
+      }
+    } finally { button.disabled = false; }
+  }
+  el('meal-history-more')?.addEventListener('click', loadMealHistory);
   async function history() {
     try {
       const result = await fetchJSON('/inventory/api/history');
@@ -124,5 +170,5 @@ window.InventoryUI = (() => {
   }
   document.querySelector('.stock-history')?.addEventListener('toggle', event => { if(event.target.open) history(); });
   document.querySelector('.prepared-summary')?.addEventListener('toggle', event => { if(event.target.open) summary(); });
-  return {actions,status,open,openServings,setMeals,escape,labels};
+  return {actions,status,open,openServings,openMealHistory,setMeals,mealActions,stockUnits,shortUnit,unitSymbol,needsUnitConversion,escape,labels};
 })();

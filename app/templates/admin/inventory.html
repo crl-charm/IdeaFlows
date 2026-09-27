@@ -325,7 +325,6 @@
   <div class="mb-2 pt-2 border-top">
     <h2 class="h5 fw-bold text-dark mb-1">Meals &amp; Availability</h2>
     <p class="text-muted mb-3" style="font-size: 0.9rem;">Enter your own serving estimate. Orders reduce servings; update raw ingredients separately.</p>
-    <button type="button" class="btn btn-outline-warning mb-3" onclick="InventoryUI.openServings()">Set available servings</button>
     <button type="button" id="setupReviewFilter" class="filter-chip mb-3" aria-pressed="false" onclick="toggleSetupReview()">Needs setup review: <span id="setupReviewCount">0</span></button>
   </div>
   <div class="row g-4" id="recipe-inventory-grid"></div>
@@ -476,8 +475,13 @@
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label" for="adjustUnit">Unit</label>
+          <label class="form-label" for="adjustUnit">Unit measurements</label>
           <select id="adjustUnit" class="form-select" onchange="updateAdjustQuantityStep()" required></select>
+        </div>
+        <div class="mb-3" id="adjustConversionField" hidden>
+          <label class="form-label" for="adjustConversionRatio" id="adjustConversionLabel"></label>
+          <input type="number" id="adjustConversionRatio" class="form-control" min="0.000001" max="999999" step="any">
+          <div class="form-text">Enter the amount in the ingredient's stored unit for one selected unit.</div>
         </div>
         <div class="mb-3">
           <label class="form-label" for="adjustQtyInput">Quantity</label>
@@ -486,12 +490,10 @@
         </div>
         <div class="mb-3">
           <label class="form-label">Reason</label>
-          <select id="reason" class="form-select" required>
+          <select id="reason" class="form-select" onchange="syncAdjustReason()" required>
             <option value="Restock">Restock</option>
             <option value="Damaged">Damaged</option>
             <option value="Expired">Expired</option>
-            <option value="Inventory count">Inventory count</option>
-            <option value="Other">Other</option>
           </select>
         </div>
       </div>
@@ -538,6 +540,7 @@
 let currentItemId = null;
 let currentMenuItemId = null;
 let currentMealId = null;
+let currentStoredUnit = 'pieces';
 let directStockItems = [];
 let recipeItems = [];
 let setupReviewOnly = false;
@@ -760,6 +763,7 @@ function renderRecipeInventory() {
       <h5 class="fw-bold text-dark mb-1">${escapeHtml(item.name)}</h5>
       <div class="inventory-count">${item.available_quantity == null ? 'Available while enabled' : item.available_quantity + ' ' + item.display_unit}</div>
       ${InventoryUI.status(item)}
+      ${InventoryUI.mealActions(item)}
     </div></div></div>`;
   }).join('');
   if (recipeItems.length && !filtered.length) grid.innerHTML = '<p class="text-muted">No meals match your search.</p>';
@@ -1070,9 +1074,10 @@ function openAdjustModal(itemId, currentQty, itemName, menuItemId, unit = 'piece
   currentItemId = itemId && itemId !== 'null' ? itemId : null;
   currentMenuItemId = menuItemId || null;
   const storedUnit = unit === 'kg' ? 'klg' : unit;
-  const compatible = {klg: ['klg', 'grams'], grams: ['grams', 'klg'], liters: ['liters', 'ml'], ml: ['ml', 'liters']};
+  currentStoredUnit = storedUnit;
   const unitSelect = document.getElementById('adjustUnit');
-  unitSelect.replaceChildren(...(compatible[storedUnit] || [storedUnit]).map(value => new Option(value === 'klg' ? 'kg' : value, value)));
+  unitSelect.replaceChildren(...InventoryUI.stockUnits.map(([value, label]) => new Option(label, value)));
+  if (!InventoryUI.stockUnits.some(([value]) => value === storedUnit)) unitSelect.add(new Option(storedUnit, storedUnit));
   unitSelect.value = storedUnit;
 
   document.getElementById('modalAdjustItemName').textContent = itemName;
@@ -1089,7 +1094,20 @@ function openAdjustModal(itemId, currentQty, itemName, menuItemId, unit = 'piece
 }
 
 function updateAdjustQuantityStep() {
-  document.getElementById('adjustQtyInput').step = ['pieces', 'packs', 'trays'].includes(document.getElementById('adjustUnit').value) ? '1' : '0.01';
+  const selected = document.getElementById('adjustUnit').value;
+  const needsRatio = InventoryUI.needsUnitConversion(selected, currentStoredUnit);
+  const ratioInput = document.getElementById('adjustConversionRatio');
+  document.getElementById('adjustQtyInput').value = '';
+  document.getElementById('adjustQtyInput').step = ['pieces', 'packs', 'trays'].includes(selected) ? '1' : '0.01';
+  document.getElementById('adjustConversionField').hidden = !needsRatio;
+  document.getElementById('adjustConversionLabel').textContent = `How many ${InventoryUI.unitSymbol(currentStoredUnit)} in 1 ${InventoryUI.shortUnit(selected)}?`;
+  ratioInput.required = needsRatio;
+  ratioInput.value = '';
+}
+
+function syncAdjustReason() {
+  document.getElementById('adjustMode').value = document.getElementById('reason').value === 'Restock' ? 'add' : 'sub';
+  toggleAdjustHelperText();
 }
 
 function toggleAdjustHelperText() {
@@ -1108,6 +1126,8 @@ function submitStockAdjustment() {
   const mode = document.getElementById('adjustMode').value;
   const quantityInput = document.getElementById('adjustQtyInput');
   if (!quantityInput.reportValidity()) return;
+  const ratioInput = document.getElementById('adjustConversionRatio');
+  if (ratioInput.required && !ratioInput.reportValidity()) return;
   const adjustVal = quantityInput.value;
   const reason = document.getElementById('reason').value;
 
@@ -1128,6 +1148,7 @@ function submitStockAdjustment() {
     body: JSON.stringify({
       quantity: adjustVal,
       unit: document.getElementById('adjustUnit').value,
+      conversion_ratio: ratioInput.required ? ratioInput.value : null,
       mode: mode,
       reason: reason
     })

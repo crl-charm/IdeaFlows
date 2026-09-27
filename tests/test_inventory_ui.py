@@ -4,7 +4,8 @@ from time import time
 
 import pytest
 
-from app import create_app
+from app import create_app, db
+from app.models import User
 
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "templates"
@@ -23,7 +24,8 @@ def test_inventory_pages_show_zero_stock_as_out_of_stock():
     assert "Out of stock" in admin and "Out of stock" in staff
     assert "InventoryUI.actions(item)" not in admin
     assert "InventoryUI.actions(item)" not in staff
-    assert "Set available servings" in admin and "Set available servings" in staff
+    assert "InventoryUI.mealActions(item)" in admin and "InventoryUI.mealActions(item)" in staff
+    assert "onclick=\"InventoryUI.openServings()\"" not in admin + staff
 
 
 def test_staff_inventory_uses_current_script_and_loads_empty_snapshot(app):
@@ -39,12 +41,27 @@ def test_staff_inventory_uses_current_script_and_loads_empty_snapshot(app):
         f"/static/js/inventory-workflow.js?v={version}"
     )
     assert b"function setMeals(rows)" in deployed_script.data
-    assert b"return {actions,status,open,openServings,setMeals" in deployed_script.data
+    assert b"return {actions,status,open,openServings,openMealHistory,setMeals" in deployed_script.data
     assert deployed_script.headers["Cache-Control"] == "public, no-cache, must-revalidate"
     snapshot = client.get("/inventory/api/dashboard-items")
     assert snapshot.status_code == 200
     assert snapshot.get_json()["success"] is True
     assert snapshot.get_json()["direct_stock"] == []
+
+
+def test_owner_inventory_renders_per_meal_dialogs(app):
+    with app.app_context():
+        owner = db.session.get(User, 1)
+        owner.role = "admin"
+        db.session.commit()
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, username="test_user", role="admin", last_activity=time())
+    page = client.get("/admin/inventory")
+    assert page.status_code == 200
+    assert b'id="servings-meal-name"' in page.data
+    assert b'id="meal-history-dialog"' in page.data
+    assert b'<select id="servings-meal"' not in page.data
 
 
 def test_add_ingredient_form_uses_plain_language_and_keeps_fractional_stock():
@@ -66,6 +83,11 @@ def test_add_menu_item_has_no_recipe_fields_and_stock_forms_show_units():
     assert all(f'id="{field}"' in add_form for field in ("itemName", "category", "price", "description", "image"))
     assert 'id="adjustUnit"' in admin
     assert 'id="raw-stock-unit"' in staff
+    assert "Unit measurements" in admin and "Unit measurements" in staff
+    assert 'id="adjustConversionRatio"' in admin and 'id="raw-stock-conversion"' in staff
+    reasons = admin.split('id="reason"', 1)[1].split('</select>', 1)[0]
+    assert all(f'value="{reason}"' in reasons for reason in ("Restock", "Damaged", "Expired"))
+    assert 'value="Inventory count"' not in reasons and 'value="Other"' not in reasons
 
 
 def test_inventory_meal_cards_only_show_servings_and_availability():
@@ -79,7 +101,7 @@ def test_inventory_meal_cards_only_show_servings_and_availability():
     assert "stock_quantity'," not in menu
     card = inventory.split("function renderRecipeInventory()", 1)[1].split("function viewLogsOrInit", 1)[0]
     assert "InventoryUI.actions(item)" not in card
-    assert "History</button>" not in card
+    assert "InventoryUI.mealActions(item)" in card
     assert "Advanced recipe tracking" not in card
     assert "Edit ingredients" not in card
     assert "Remove recipe" not in card
@@ -89,3 +111,6 @@ def test_inventory_meal_cards_only_show_servings_and_availability():
     assert all(f"button('{action}'" in workflow for action in ("add", "waste", "sold_out", "count"))
     assert "item.available_quantity + ' ' + item.display_unit" in card
     assert "InventoryUI.status(item)" in card
+    assert 'id="meal-history-dialog"' in controls
+    assert 'id="servings-meal-name"' in controls and '<select id="servings-meal"' not in controls
+    assert all(f"'{unit}'" in workflow for unit in ("klg", "grams", "pieces", "packs", "trays", "liters", "ml"))

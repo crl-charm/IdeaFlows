@@ -458,6 +458,7 @@ class InventoryService:
         menu_item_id: int | None = None,
         unit: str | None = None,
         mode: str = "set",
+        conversion_ratio: str | Decimal | None = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         try:
             quantity = Decimal(str(new_qty))
@@ -490,10 +491,18 @@ class InventoryService:
         if entered_unit in {"pieces", "trays", "packs", "servings"} and quantity != quantity.to_integral_value():
             return {"error": "Enter a whole-number quantity for this unit."}, 400
         ratio = unit_conversion_ratio(entered_unit, stored_unit)
-        if ratio is None:
-            return {"error": f"This ingredient is stored in {stored_label}; choose a compatible unit."}, 400
+        custom_conversion = ratio is None
+        if custom_conversion:
+            try:
+                ratio = Decimal(str(conversion_ratio))
+                if not ratio.is_finite() or ratio <= 0 or ratio > 999999 or ratio != ratio.quantize(Decimal("0.000001")):
+                    raise ValueError
+            except (InvalidOperation, TypeError, ValueError):
+                return {"error": f"Enter how many {stored_label} are in one {entered_label}."}, 400
         converted = quantity * ratio
-        if converted > 999999 or converted != converted.quantize(Decimal("0.01")):
+        if (converted > 999999 or converted != converted.quantize(Decimal("0.01"))
+                or (stored_unit in {"pieces", "trays", "packs", "servings"}
+                    and converted != converted.to_integral_value())):
             return {"error": f"That amount cannot be stored exactly in {stored_label}. Use a larger increment or the stored unit."}, 400
 
         old_qty = Decimal(str(item.stock_qty)) if item else Decimal(0)
@@ -501,6 +510,9 @@ class InventoryService:
         if target_qty < 0 or target_qty > 999999:
             return {"error": "Resulting stock must be from 0 to 999999."}, 400
         change = target_qty - old_qty
+        if ((reason == "Restock" and change < 0)
+                or (reason in {"Damaged", "Expired"} and change > 0)):
+            return {"error": "Restock must increase stock; Damaged and Expired must decrease it."}, 400
 
         if item is None:
             from app.models.menu_item import MenuItem
@@ -508,12 +520,8 @@ class InventoryService:
                 return {"error": "Menu item not found"}, 404
             item = self.repo.create(menu_item_id, 0, DEFAULT_LOW_STOCK_THRESHOLD, DEFAULT_UNIT)
 
-        from app.models.user import User
-
-        user = User.query.get(user_id) if user_id else None
-        username = user.username if user else "System"
-
-        formatted_reason = f"{mode} {quantity} {entered_label} ({old_qty:.2f} → {target_qty:.2f} {stored_label}); {reason}; {username}"
+        conversion_note = f" at {ratio} {stored_label}/{entered_label.rstrip('s')}" if custom_conversion else ""
+        formatted_reason = f"{reason}: {mode} {quantity} {entered_label}{conversion_note} ({old_qty:.2f} → {target_qty:.2f} {stored_label})"
         formatted_reason = formatted_reason[:100]
 
         if change > 0:

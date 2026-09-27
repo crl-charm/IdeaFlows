@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="{{ url_for('static', filename='css/inventory-workflow.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inventory-workflow.css', v=config['INVENTORY_JS_VERSION']) }}">
 <div id="inventory-workflow" data-admin="{{ 'true' if session.get('role') == 'admin' else 'false' }}" data-kitchen="{{ 'true' if session.get('role') == 'admin' or can_manage_kitchen|default(false) else 'false' }}"></div>
 <dialog id="stock-dialog" aria-labelledby="stock-dialog-title">
   <form id="stock-form">
@@ -44,10 +44,8 @@
       <button type="button" class="btn-close" aria-label="Close" onclick="document.getElementById('servings-dialog').close()"></button>
     </div>
     <p class="text-muted small">Enter how many servings you expect to make. Orders reduce this number; raw ingredients are updated separately.</p>
-    <div class="mb-3">
-      <label for="servings-meal" class="form-label">Menu item</label>
-      <select id="servings-meal" class="form-select" required></select>
-    </div>
+    <p class="fw-semibold" id="servings-meal-name"></p>
+    <input type="hidden" id="servings-meal">
     <div class="mb-3">
       <label for="servings-count" class="form-label">Servings available now</label>
       <input id="servings-count" class="form-control" type="number" inputmode="numeric" min="0" max="999999" step="1" required>
@@ -62,6 +60,19 @@
 </dialog>
 {% endif %}
 {% if session.get('role') == 'admin' or can_manage_kitchen|default(false) %}
+<dialog id="meal-history-dialog" aria-labelledby="meal-history-title">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+    <h2 id="meal-history-title" class="h5 m-0">Meal history: <span id="meal-history-name"></span></h2>
+    <button type="button" class="btn-close" aria-label="Close" onclick="document.getElementById('meal-history-dialog').close()"></button>
+  </div>
+  <div class="table-responsive" style="max-height: 60vh; overflow: auto;">
+    <table class="table table-sm align-middle">
+      <thead><tr><th>When</th><th>Action</th><th>Change</th><th>Details</th><th>By</th></tr></thead>
+      <tbody id="meal-history-rows"></tbody>
+    </table>
+  </div>
+  <button type="button" id="meal-history-more" class="btn btn-outline-secondary btn-sm" hidden>Load older history</button>
+</dialog>
 <details class="prepared-summary mt-4 p-3 bg-white rounded-3 border">
   <summary class="fw-semibold">Prepared servings summary</summary>
   <p class="text-muted small mt-2">Recorded totals since tracking began. Stock corrections can change the remaining count.</p>

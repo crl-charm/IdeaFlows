@@ -77,7 +77,8 @@ def set_ingredient_stock(menu_id):
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(error="Enter a valid stock quantity."), 400
-    result = _service.update_stock(rows[0].id, data.get("quantity"), "Manual count", session.get("user_id"), unit=data.get("unit"))
+    result = _service.update_stock(rows[0].id, data.get("quantity"), "Manual count", session.get("user_id"),
+                                   unit=data.get("unit"), conversion_ratio=data.get("conversion_ratio"))
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     emit_inventory_update("stock_change", {"item_id": rows[0].id})
@@ -96,6 +97,59 @@ def stock_history():
     rows = db.session.query(InventoryAction, User.full_name).outerjoin(User, User.id == InventoryAction.changed_by).order_by(InventoryAction.id.desc()).limit(100).all()
     return jsonify(data=[dict(item=a.item_name, menu_item_id=a.menu_item_id, action=a.action, quantity=float(a.quantity),
         reason=a.reason, actor=name or "System", at=a.created_at.isoformat()+"Z") for a, name in rows])
+
+
+@staff_inventory_bp.route("/api/menu-items/<int:menu_id>/history", methods=["GET"])
+@login_required
+def meal_history(menu_id):
+    from sqlalchemy import literal, select, union_all
+    from app import db
+    from app.models import InventoryItem, InventoryLog, MenuItem, User
+    from app.models.inventory import InventoryAction
+    from app.services.stock_management import kitchen_access
+    from app.utils.inventory_helpers import is_ingredient_category
+
+    if not kitchen_access(session.get("user_id")):
+        return jsonify(error="Forbidden"), 403
+    meal = db.session.get(MenuItem, menu_id)
+    if not meal or meal.status == "deleted" or is_ingredient_category(meal.category):
+        return jsonify(error="Meal not found."), 404
+    try:
+        page = int(request.args.get("page", "1"))
+        if not 1 <= page <= 10000:
+            raise ValueError
+    except ValueError:
+        return jsonify(error="Choose a valid history page."), 400
+
+    logs = select(
+        InventoryLog.id.label("id"), InventoryLog.created_at.label("at"),
+        InventoryLog.change_qty.label("quantity"), InventoryLog.reason.label("reason"),
+        InventoryLog.changed_by.label("actor_id"), literal("log").label("source"),
+    ).join(InventoryItem, InventoryItem.id == InventoryLog.inventory_item_id).where(
+        InventoryItem.menu_item_id == menu_id)
+    no_return_voids = select(
+        InventoryAction.id.label("id"), InventoryAction.created_at.label("at"),
+        literal(0).label("quantity"), InventoryAction.reason.label("reason"),
+        InventoryAction.changed_by.label("actor_id"), literal("void_no_return").label("source"),
+    ).where(InventoryAction.menu_item_id == menu_id, InventoryAction.action == "void_no_return")
+    events = union_all(logs, no_return_voids).subquery()
+    rows = db.session.execute(select(events).order_by(
+        events.c.at.desc(), events.c.id.desc(), events.c.source.desc()
+    ).offset((page - 1) * 30).limit(31)).mappings().all()
+    actors = {user.id: user.full_name or user.username for user in User.query.filter(
+        User.id.in_({row["actor_id"] for row in rows if row["actor_id"] is not None})
+    ).all()}
+    data = []
+    for row in rows[:30]:
+        reason = row["reason"]
+        action = ("Void without stock return" if row["source"] == "void_no_return" else
+                  "Order" if reason.startswith("Sale:") else
+                  "Void return" if reason.startswith("Void return:") else
+                  "Set servings" if reason.startswith(("Set servings:", "Manual serving estimate")) else
+                  "Stock change")
+        data.append(dict(action=action, quantity=float(row["quantity"]), reason=reason,
+            actor=actors.get(row["actor_id"], "System"), at=row["at"].isoformat() + "Z"))
+    return jsonify(data=data, next_page=page + 1 if len(rows) > 30 else None)
 
 
 @staff_inventory_bp.route("/api/menu-items/<int:menu_id>/last-batch", methods=["GET"])

@@ -59,9 +59,10 @@ def change_stock(menu_id, data, actor, key, *, admin=False, commit=True):
             item.inventory_mode = "prepared"
         elif item.inventory_mode is None:
             item.inventory_mode = mode
+        detail = f"Set servings: {int(previous)} → {quantity}"
         db.session.add(InventoryLog(inventory_item_id=row.id, change_qty=Decimal(quantity) - previous,
-            reason="Manual serving estimate", changed_by=actor))
-        record_action(item, "servings", quantity, "Manual serving estimate", actor, key)
+            reason=detail, changed_by=actor))
+        record_action(item, "servings", quantity, detail, actor, key)
     elif action == "setup":
         if not admin:
             raise StockError("Only the owner can change stock setup.", "FORBIDDEN", 403)

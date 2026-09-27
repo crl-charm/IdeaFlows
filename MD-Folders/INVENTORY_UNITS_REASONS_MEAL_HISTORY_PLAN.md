@@ -1,6 +1,6 @@
 # Inventory units, stock reasons, and per-meal serving controls
 
-Status: **plan only** (2026-09-27). No application behavior is changed by this file.
+Status: **implemented locally** (2026-09-28). Pending the user's push and deployment; the live site has not changed yet.
 
 ## What is already in place
 
@@ -76,6 +76,8 @@ Status: **plan only** (2026-09-27). No application behavior is changed by this f
 2. Simplify the owner Reason selector and check mode/reason behavior without altering historical rows.
 3. Add per-card meal actions, reuse the serving save path, and add meal-filtered history.
 4. Run the focused inventory tests and JavaScript syntax checks. Inspect the diff for extra code and regressions. Run broader tests if changes touch order or void behavior.
-5. Confirm the deployed revision after the user pushes and deploys it. This plan alone requires no database migration and does not change the live site.
+5. Confirm the deployed revision after the user pushes and deploys it. No database migration is required for these changes.
+
+Local verification: the focused inventory UI and recipe inventory tests passed (50 tests total), and the shared and inline inventory scripts passed JavaScript syntax checks.
 
 Related earlier work: `MD-Folders/STOCK_UNIT_AND_MENU_FORM_PLAN.md` documents the first unit selector and the simplified Add Menu Item form. This plan extends the unit selector and adds the reason and per-meal workflows.

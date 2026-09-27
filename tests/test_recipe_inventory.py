@@ -5,7 +5,7 @@ from datetime import datetime, UTC
 
 from app import create_app, db
 from app.models import Admin, CustomerSession, MenuItem, MenuItemIngredient, Order, SpaceType, User
-from app.models.inventory import InventoryItem, InventoryLog
+from app.models.inventory import InventoryAction, InventoryItem, InventoryLog
 from app.db.migrator import SchemaMigrator
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.order_repository import OrderRepository
@@ -156,6 +156,9 @@ def test_typed_menu_recipe_uses_manual_servings_without_deducting_raw_stock(app,
         assert returned["message"].endswith("Stock returned.")
         assert InventoryItem.query.filter_by(menu_item_id=meal_id).one().stock_qty == 4
         assert InventoryItem.query.filter_by(id=raw_ids["Rice"]).one().stock_qty == 120
+    history = client.get(f"/inventory/api/menu-items/{meal_id}/history").get_json()["data"]
+    assert {row["action"] for row in history} >= {"Set servings", "Order", "Void return"}
+    assert {row["quantity"] for row in history} >= {4, -1, 1}
 
 
 def test_cook_sets_servings_and_updates_raw_stock_independently(app, client):
@@ -218,7 +221,7 @@ def test_cook_sets_servings_and_updates_raw_stock_independently(app, client):
     assert denied_raw.status_code == 403
 
 
-def test_owner_and_cook_can_enter_ingredient_stock_in_compatible_units(app, client):
+def test_owner_and_cook_can_enter_ingredient_stock_in_selected_units(app, client):
     with app.app_context():
         owner = User(full_name="Unit Owner", username="unit_owner", role="admin",
                      job_role="admin", is_active=True, password="not-used")
@@ -239,21 +242,33 @@ def test_owner_and_cook_can_enter_ingredient_stock_in_compatible_units(app, clie
     retried = client.patch(url, json=payload, headers={"Idempotency-Key": "rice-add-500g"})
     assert added.status_code == 200 and added.get_json()["data"]["stock_qty"] == 1.5
     assert retried.status_code == 409
-    assert client.patch(url, json={"quantity": "1", "unit": "grams", "mode": "add"}).status_code == 400
-    assert client.patch(url, json={"quantity": "1", "unit": "packs", "mode": "add"}).status_code == 400
-    assert client.patch(url, json={"quantity": "2", "unit": "klg", "mode": "sub"}).status_code == 400
+    assert client.patch(url, json={"quantity": "1", "unit": "grams", "mode": "add", "reason": "Restock"}).status_code == 400
+    assert client.patch(url, json={"quantity": "1", "unit": "packs", "mode": "add", "reason": "Restock"}).status_code == 400
+    assert client.patch(url, json={"quantity": "1", "unit": "packs", "mode": "add", "reason": "Restock", "conversion_ratio": "0"}).status_code == 400
+    assert client.patch(url, json={"quantity": "1", "unit": "packs", "mode": "add", "reason": "Restock", "conversion_ratio": "0.000001"}).status_code == 400
+    assert client.patch(url, json={"quantity": "1", "unit": "packs", "mode": "add", "reason": "Other", "conversion_ratio": "0.25"}).status_code == 400
+    assert client.patch(url, json={"quantity": "2", "unit": "packs", "mode": "add", "reason": "Damaged", "conversion_ratio": "0.25"}).status_code == 400
+    packed = client.patch(url, json={"quantity": "2", "unit": "packs", "mode": "add", "reason": "Restock", "conversion_ratio": "0.25"})
+    assert packed.status_code == 200 and packed.get_json()["data"]["stock_qty"] == 2
+    assert client.patch(url, json={"quantity": "3", "unit": "klg", "mode": "sub", "reason": "Damaged"}).status_code == 400
 
     _set_auth_session(client, "staff", cook_id)
     counted = client.patch(f"/inventory/api/ingredients/{rice_id}/stock",
                            json={"quantity": "750", "unit": "grams"},
                            headers={"Idempotency-Key": "rice-count-750g"})
     assert counted.status_code == 200 and counted.get_json()["data"]["stock_qty"] == 0.75
+    packed_count = client.patch(f"/inventory/api/ingredients/{rice_id}/stock",
+        json={"quantity": "2", "unit": "packs", "conversion_ratio": "0.25"},
+        headers={"Idempotency-Key": "rice-count-2packs"})
+    assert packed_count.status_code == 200 and packed_count.get_json()["data"]["stock_qty"] == 0.5
     with app.app_context():
-        assert InventoryItem.query.filter_by(id=stock_id).one().stock_qty == Decimal("0.75")
+        assert InventoryItem.query.filter_by(id=stock_id).one().stock_qty == Decimal("0.50")
         logs = InventoryLog.query.filter_by(inventory_item_id=stock_id).order_by(InventoryLog.id).all()
-        assert len(logs) == 2
+        assert len(logs) == 4
         assert "500 grams" in logs[0].reason and "1.00 → 1.50 kg" in logs[0].reason
-        assert "750 grams" in logs[1].reason and "1.50 → 0.75 kg" in logs[1].reason
+        assert "2 packs at 0.25 kg/pack" in logs[1].reason and "1.50 → 2.00 kg" in logs[1].reason
+        assert "750 grams" in logs[2].reason and "2.00 → 0.75 kg" in logs[2].reason
+        assert "2 packs at 0.25 kg/pack" in logs[3].reason and "0.75 → 0.50 kg" in logs[3].reason
 
     _set_auth_session(client, "admin", owner_id)
     with app.app_context():
@@ -262,11 +277,74 @@ def test_owner_and_cook_can_enter_ingredient_stock_in_compatible_units(app, clie
         db.session.commit()
         salt_id = salt.id
     missing_stock_url = f"/admin/inventory/api/menu-items/{salt_id}/stock"
-    assert client.patch(missing_stock_url, json={"quantity": "2", "unit": "grams", "mode": "add"}).status_code == 400
+    assert client.patch(missing_stock_url, json={"quantity": "2", "unit": "grams", "mode": "add", "reason": "Restock"}).status_code == 400
     with app.app_context():
         assert InventoryItem.query.filter_by(menu_item_id=salt_id).first() is None
-    initialized = client.patch(missing_stock_url, json={"quantity": "5", "unit": "pieces", "mode": "add"})
+    initialized = client.patch(missing_stock_url, json={"quantity": "5", "unit": "pieces", "mode": "add", "reason": "Restock"})
     assert initialized.status_code == 200 and initialized.get_json()["data"]["stock_qty"] == 5
+
+
+def test_stock_conversion_keeps_whole_pieces_and_converts_liquid_units(app, client):
+    with app.app_context():
+        owner = User(full_name="Conversion Owner", username="conversion_owner", role="admin",
+                     job_role="admin", is_active=True, password="not-used")
+        egg = MenuItem(name="Egg stock", price=0, category="ingredient", is_available=True)
+        milk = MenuItem(name="Milk stock", price=0, category="ingredient", is_available=True)
+        db.session.add_all([owner, egg, milk])
+        db.session.flush()
+        pieces = InventoryItem(menu_item_id=egg.id, stock_qty=Decimal("4.00"), unit="pieces")
+        liters = InventoryItem(menu_item_id=milk.id, stock_qty=Decimal("1.00"), unit="liters")
+        db.session.add_all([pieces, liters])
+        db.session.commit()
+        owner_id, piece_id, liter_id = owner.id, pieces.id, liters.id
+    _set_auth_session(client, "admin", owner_id)
+    piece_url = f"/admin/inventory/api/items/{piece_id}/stock"
+    assert client.patch(piece_url, json={"quantity": 1, "unit": "packs", "conversion_ratio": "2.5", "mode": "add", "reason": "Restock"}).status_code == 400
+    added = client.patch(piece_url, json={"quantity": 1, "unit": "packs", "conversion_ratio": "6", "mode": "add", "reason": "Restock"})
+    assert added.status_code == 200 and added.get_json()["data"]["stock_qty"] == 10
+    liquid_url = f"/admin/inventory/api/items/{liter_id}/stock"
+    assert client.patch(liquid_url, json={"quantity": 1, "unit": "ml", "mode": "add", "reason": "Restock"}).status_code == 400
+    added_liquid = client.patch(liquid_url, json={"quantity": 500, "unit": "ml", "mode": "add", "reason": "Restock"})
+    assert added_liquid.status_code == 200 and added_liquid.get_json()["data"]["stock_qty"] == 1.5
+    with app.app_context():
+        assert InventoryLog.query.filter_by(inventory_item_id=piece_id).count() == 1
+        assert InventoryLog.query.filter_by(inventory_item_id=liter_id).count() == 1
+
+
+def test_meal_history_is_scoped_paged_and_restricted(app, client):
+    with app.app_context():
+        owner = User(full_name="History Owner", username="history_owner", role="admin",
+                     job_role="admin", is_active=True, password="not-used")
+        meal = MenuItem(name="History Meal", price=80, category="Main Dish", is_available=True,
+                        inventory_mode="prepared")
+        other = MenuItem(name="Other Meal", price=80, category="Main Dish", is_available=True,
+                         inventory_mode="prepared")
+        db.session.add_all([owner, meal, other])
+        db.session.flush()
+        stock = InventoryItem(menu_item_id=meal.id, stock_qty=Decimal("5.00"), unit="servings")
+        other_stock = InventoryItem(menu_item_id=other.id, stock_qty=Decimal("5.00"), unit="servings")
+        db.session.add_all([stock, other_stock])
+        db.session.flush()
+        db.session.add_all([InventoryLog(inventory_item_id=stock.id, change_qty=-1,
+            reason=f"Sale: History Meal {number}", changed_by=owner.id) for number in range(31)])
+        db.session.add(InventoryLog(inventory_item_id=other_stock.id, change_qty=-1,
+            reason="Sale: Other Meal", changed_by=owner.id))
+        db.session.add(InventoryAction(request_key="history-void-no-return", menu_item_id=meal.id,
+            item_name=meal.name, action="void_no_return", quantity=1,
+            reason="Prepared order was cancelled", changed_by=owner.id))
+        db.session.commit()
+        owner_id, meal_id = owner.id, meal.id
+    _set_auth_session(client, "staff", 1)
+    assert client.get(f"/inventory/api/menu-items/{meal_id}/history").status_code == 403
+    _set_auth_session(client, "admin", owner_id)
+    first = client.get(f"/inventory/api/menu-items/{meal_id}/history").get_json()
+    second = client.get(f"/inventory/api/menu-items/{meal_id}/history?page=2").get_json()
+    assert len(first["data"]) == 30 and first["next_page"] == 2
+    assert len(second["data"]) == 2 and second["next_page"] is None
+    rows = first["data"] + second["data"]
+    assert any(row["action"] == "Void without stock return" and row["quantity"] == 0 for row in rows)
+    assert all("Other Meal" not in row["reason"] for row in rows)
+    assert all(row["actor"] == "History Owner" for row in rows)
 
 
 def test_typed_recipe_edit_and_invalid_save_are_atomic(app, client):
