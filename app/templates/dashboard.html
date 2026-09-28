@@ -13,6 +13,8 @@
             <small id="session-count" class="text-muted">0 customers</small>
         </div>
 
+        {% if boardroom_view %}<a class="btn btn-warning" href="/lounge-booking">Boardroom walk-in or advance booking</a>{% endif %}
+
         <input 
             type="text" 
             id="searchInput" 
@@ -130,6 +132,7 @@
   </div>
 </div>
 
+{% if not boardroom_view %}
 <!-- CHECK-IN MODAL -->
 <div class="modal fade" id="checkinModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
@@ -147,11 +150,19 @@
         <input type="text" id="course" class="form-control mb-2" placeholder="Course">
         <input type="number" id="numberOfPeople" class="form-control mb-2" placeholder="Number of People" min="1" value="1">
 
-        <select id="spaceType" class="form-control">
+        {% if selected_space %}
+        <label class="form-label mb-1">Space</label>
+        <div class="form-control bg-light" aria-label="Selected space">{{ selected_space.name }}</div>
+        <input type="hidden" id="spaceType" value="{{ selected_space.id }}">
+        {% else %}
+        <label for="spaceType" class="form-label mb-1">Space</label>
+        <select id="spaceType" class="form-select" required>
+            <option value="">Select space...</option>
             {% for space in space_types %}
             <option value="{{ space.id }}">{{ space.name }}</option>
             {% endfor %}
         </select>
+        {% endif %}
 
       </div>
 
@@ -171,6 +182,7 @@
     data-bs-target="#checkinModal">
     +
 </button>
+{% endif %}
 
 {% endblock %}
 
@@ -228,6 +240,10 @@ async function checkinCustomer() {
         showToast("Customer name is required.", "error");
         return;
     }
+    if (!spaceType) {
+        showToast("Select a space.", "error");
+        return;
+    }
 
     const button = document.getElementById("checkinCustomerBtn");
     try {
@@ -245,7 +261,7 @@ async function checkinCustomer() {
                 school: school,
                 course: course,
                 number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
-                space_type_id: parseInt(spaceType)
+                space_type_id: parseInt(spaceType, 10)
             })
         }));
         if (!data) return;

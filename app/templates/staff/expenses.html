@@ -15,6 +15,17 @@
     </button>
   </div>
 
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    <label for="filterStartDate" class="small fw-semibold">Business dates</label>
+    <input type="date" id="filterStartDate" class="form-control form-control-sm w-auto" onchange="loadExpenses()">
+    <span>to</span>
+    <input type="date" id="filterEndDate" class="form-control form-control-sm w-auto" onchange="loadExpenses()">
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setExpenseDates('today')">Today</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setExpenseDates('all')">Show All</button>
+  </div>
+  <p class="text-muted small mb-2">Net spending by method. Owner/external-funded expenses do not reduce business funds. A later void appears on its reversal date.</p>
+  <div class="row g-3 mb-4" id="expense-method-cards" aria-live="polite"></div>
+
   <!-- Desktop Table View -->
   <div class="d-none d-md-block">
     <div class="card">
@@ -29,21 +40,13 @@
               <th>Description</th>
               <th>Amount</th>
               <th>Date</th>
+              <th>Method / Funding</th>
               <th>Logged By</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody id="expenses-table-body">
-            {% for exp in expenses %}
-            <tr>
-              <td><span class="badge bg-secondary">{{ exp.category }}</span></td>
-              <td>{{ exp.description }}</td>
-              <td class="fw-semibold">₱{{ "%.2f"|format(exp.amount) }}</td>
-              <td>{{ exp.expense_date }}</td>
-              <td>{{ exp.logged_by or exp.logged_by_username or 'Staff' }}</td>
-            </tr>
-            {% else %}
-            <tr><td colspan="5" class="text-center text-muted py-4">No expenses recorded.</td></tr>
-            {% endfor %}
+            <tr><td colspan="7" class="text-center text-muted py-4">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -89,8 +92,9 @@
             </div>
           </div>
           <div class="mb-3">
-            <label class="form-label fw-semibold" for="expenseDate">Expense Date <span class="text-danger">*</span></label>
+            <label class="form-label fw-semibold" for="expenseDate">Receipt / Expense Date <span class="text-danger">*</span></label>
             <input type="date" id="expenseDate" class="form-control" required>
+            <small class="text-muted">Daily Balance uses the Manila date when you log this payment.</small>
           </div>
           <div class="mb-3">
             <label class="form-label fw-semibold" for="expensePaymentMethod">Paid using *</label>
@@ -117,6 +121,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/expense-summary.js') }}"></script>
 <style>
   .today-expense td:nth-child(1),
   .today-expense td:nth-child(2),
@@ -132,9 +137,12 @@ function manilaExpenseDate() {
   return new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
 }
 const refreshExpenses = window.createDebouncedRefresh(loadExpenses, 150);
+let expensesCache = [];
+let reportsCache = [];
+let expenseLoadId = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
-  loadExpenses();
+  setExpenseDates('today');
 
   const modalEl = document.getElementById('addExpenseModal');
   if (modalEl) {
@@ -155,6 +163,7 @@ document.addEventListener('DOMContentLoaded', function() {
       socket.on('expenses_update', function(data) {
         refreshExpenses();
       });
+      socket.on('daily_balance_update', refreshExpenses);
     } catch (e) {
       console.warn('Socket connection note:', e);
     }
@@ -162,102 +171,67 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function loadExpenses() {
-  fetch('/expenses-view/api/expenses')
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        const today = manilaExpenseDate();
-        const expensesByDate = {};
-        
-        // Group by date
-        data.data.forEach(exp => {
-          const date = exp.expense_date;
-          if (!expensesByDate[date]) {
-            expensesByDate[date] = [];
-          }
-          expensesByDate[date].push(exp);
-        });
+  const requestId = ++expenseLoadId;
+  const params = new URLSearchParams();
+  const start = document.getElementById('filterStartDate').value;
+  const end = document.getElementById('filterEndDate').value;
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  Promise.all([
+    fetch('/expenses-view/api/expenses').then(r => r.json()),
+    fetch(`/admin/daily-balance/api/reports?${params}`).then(r => r.json())
+  ]).then(([expenses, reports]) => {
+    if (requestId !== expenseLoadId) return;
+    if (!expenses.success || !reports.success) throw new Error('Could not load expenses');
+    expensesCache = expenses.data;
+    reportsCache = reports.data;
+    renderExpenses();
+  }).catch(() => {
+    if (requestId === expenseLoadId) showToast('Could not load expense history and totals.', 'error');
+  });
+}
 
-        // Desktop table
-        const tbody = document.getElementById('expenses-table-body');
-        tbody.innerHTML = '';
-        data.data.forEach(exp => {
-          const isToday = exp.expense_date === today;
-          const rowClass = isToday ? 'today-expense' : '';
-          tbody.innerHTML += `
-            <tr class="${rowClass}">
-              <td><span class="badge bg-secondary">${exp.category}</span></td>
-              <td>${escapeHTML(exp.description || '')}</td>
-              <td class="fw-semibold">₱${parseFloat(exp.amount || 0).toFixed(2)}</td>
-              <td>${exp.expense_date}</td>
-              <td>${escapeHTML(exp.logged_by || exp.logged_by_username || 'Staff')}</td>
-            </tr>
-          `;
-        });
+function setExpenseDates(preset) {
+  const day = preset === 'today' ? manilaExpenseDate() : '';
+  document.getElementById('filterStartDate').value = day;
+  document.getElementById('filterEndDate').value = day;
+  loadExpenses();
+}
 
-        // Mobile cards
-        const cardContainer = document.getElementById('expenses-card-container');
-        document.getElementById('expense-count').innerText = `${data.data.length} record(s)`;
-
-        if (!data.data.length) {
-          cardContainer.innerHTML = `<p class="text-center text-muted py-4">No expenses recorded.</p>`;
-          return;
-        }
-
-        let html = '';
-        const sortedDates = Object.keys(expensesByDate).sort((a, b) => b.localeCompare(a));
-
-        for (const date of sortedDates) {
-          const expenses = expensesByDate[date];
-          const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { 
-            weekday: 'short', 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric' 
-          });
-
-          html += `
-            <div class="mb-3">
-              <h6 class="text-muted fw-semibold mb-2 border-bottom pb-1">${dateLabel}</h6>
-              <div class="d-flex flex-column gap-2">
-                ${expenses.map(exp => {
-                  const isToday = exp.expense_date === today;
-                  const highlightClass = isToday ? 'border-warning' : '';
-                  return `
-                    <div class="record-card ${highlightClass}">
-                      <div class="record-card-header">
-                        <div>
-                          <div class="record-card-title text-capitalize">${escapeHTML(exp.category || '')}</div>
-                          <div class="record-card-subtitle">${escapeHTML(exp.description || '')}</div>
-                        </div>
-                      </div>
-                      <div class="record-card-body">
-                        <div class="record-card-row">
-                          <span class="record-card-label">Logged By:</span>
-                          <span class="record-card-value">${escapeHTML(exp.logged_by || exp.logged_by_username || 'Staff')}</span>
-                        </div>
-                        <div class="record-card-row">
-                          <span class="record-card-label">Date:</span>
-                          <span class="record-card-value">${exp.expense_date}</span>
-                        </div>
-                      </div>
-                      <div class="record-card-footer">
-                        <span class="record-card-total">₱${parseFloat(exp.amount || 0).toFixed(2)}</span>
-                      </div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            </div>
-          `;
-        }
-
-        cardContainer.innerHTML = html;
-      }
-    })
-    .catch(err => {
-      console.error('Error loading expenses:', err);
-    });
+function renderExpenses() {
+  const start = document.getElementById('filterStartDate').value;
+  const end = document.getElementById('filterEndDate').value;
+  const inRange = day => day && (!start || day >= start) && (!end || day <= end);
+  const filtered = expensesCache.filter(exp => inRange(exp.business_date) || inRange(exp.void_business_date));
+  const today = manilaExpenseDate();
+  document.getElementById('expense-count').textContent = `${filtered.length} record(s)`;
+  window.renderExpenseCards(reportsCache, start, end, document.getElementById('expense-method-cards'));
+  const tbody = document.getElementById('expenses-table-body');
+  const cards = document.getElementById('expenses-card-container');
+  tbody.innerHTML = filtered.map(exp => {
+    const funding = exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
+    const balance = exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`;
+    const voidBalance = exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`;
+    return `<tr class="${exp.business_date === today ? 'today-expense' : ''}">
+      <td>${escapeHTML(exp.category)}</td><td>${escapeHTML(exp.description)}</td>
+      <td class="fw-semibold">₱${exp.amount.toFixed(2)}</td>
+      <td>${exp.business_date}${exp.expense_date !== exp.business_date ? `<div class="small text-muted">Receipt: ${exp.expense_date}</div>` : ''}</td>
+      <td>${escapeHTML(exp.payment_method.toUpperCase())}<div class="small">${funding}</div>${balance}</td>
+      <td>${escapeHTML(exp.logged_by)}</td>
+      <td>${exp.voided_at ? `Voided ${exp.void_business_date} by ${escapeHTML(exp.voided_by || '')}: ${escapeHTML(exp.void_reason || '')}${voidBalance}` : 'Active'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="text-center text-muted py-4">No expenses for this range.</td></tr>';
+  cards.innerHTML = filtered.map(exp => {
+    const funding = exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
+    const balance = exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`;
+    const voidBalance = exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`;
+    return `<div class="record-card mb-2">
+      <div class="record-card-header"><div><div class="record-card-title">${escapeHTML(exp.category)}</div><div class="record-card-subtitle">${escapeHTML(exp.description)}</div></div></div>
+      <div class="record-card-body small">${exp.business_date} · ${escapeHTML(exp.payment_method.toUpperCase())} · ${funding}<br>
+        Logged by ${escapeHTML(exp.logged_by)}${balance}${exp.voided_at ? `<br>Voided ${exp.void_business_date} by ${escapeHTML(exp.voided_by || '')}: ${escapeHTML(exp.void_reason || '')}${voidBalance}` : ''}</div>
+      <div class="record-card-footer"><span class="record-card-total">₱${exp.amount.toFixed(2)}</span></div>
+    </div>`;
+  }).join('') || '<p class="text-center text-muted py-4">No expenses for this range.</p>';
 }
 
 async function createExpense() {
@@ -309,7 +283,9 @@ async function createExpense() {
 
     if (body.success !== false) {
       if (typeof showToast === 'function') {
-        showToast('✓ Expense logged successfully!', 'success');
+        showToast(body.data?.funding_source === 'external'
+          ? 'Expense logged as externally funded; business balance unchanged.'
+          : 'Expense logged successfully!', 'success');
       }
 
       // Close modal

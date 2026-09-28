@@ -89,3 +89,11 @@ def test_receivables_cancels_queued_socket_refresh_before_modal_reload():
     reload_at = receivables.index("await loadReceivables();", cancel_at)
 
     assert cancel_at < reload_at
+
+
+def test_staff_expense_mobile_rows_define_balance_details_in_their_scope():
+    source = _template("staff/expenses.html")
+    mobile_renderer = source.split("cards.innerHTML = filtered.map(exp => {", 1)[1]
+
+    assert "const balance =" in mobile_renderer
+    assert "const voidBalance =" in mobile_renderer

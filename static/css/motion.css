@@ -5,66 +5,10 @@
   --ih-motion-slow: 420ms;
   --ih-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ih-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
-  --ih-ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 html {
   scroll-behavior: smooth;
-}
-
-/* Keep the application frame steady while the destination content arrives. */
-@view-transition {
-  navigation: auto;
-}
-
-.navbar {
-  view-transition-name: ideaflow-navbar;
-}
-
-.sidebar {
-  view-transition-name: ideaflow-sidebar;
-}
-
-.mobile-bottom-nav {
-  view-transition-name: ideaflow-mobile-nav;
-}
-
-::view-transition-group(root),
-::view-transition-group(ideaflow-navbar),
-::view-transition-group(ideaflow-sidebar),
-::view-transition-group(ideaflow-mobile-nav) {
-  animation-duration: var(--ih-motion-slow);
-  animation-timing-function: var(--ih-ease-enter);
-}
-
-::view-transition-old(root) {
-  animation: ih-page-out var(--ih-motion-fast) var(--ih-ease-exit) both;
-}
-
-::view-transition-new(root) {
-  animation: ih-page-in 360ms var(--ih-ease-enter) both;
-}
-
-::view-transition-old(ideaflow-navbar),
-::view-transition-new(ideaflow-navbar),
-::view-transition-old(ideaflow-sidebar),
-::view-transition-new(ideaflow-sidebar),
-::view-transition-old(ideaflow-mobile-nav),
-::view-transition-new(ideaflow-mobile-nav) {
-  animation: ih-frame-crossfade var(--ih-motion-base) ease both;
-}
-
-@keyframes ih-page-out {
-  to { opacity: 0.94; }
-}
-
-@keyframes ih-page-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes ih-content-out {
-  to { opacity: 0; transform: translateY(-5px); }
 }
 
 @keyframes ih-content-in {
@@ -72,12 +16,7 @@ html {
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes ih-frame-crossfade {
-  from { opacity: 0.94; }
-  to { opacity: 1; }
-}
-
-/* Fallback entrance for browsers without cross-document transitions. */
+/* Page entrance without cross-document view transitions. */
 html.ih-motion-ready:not(.ih-restored) #main-content > :not(style):not(script),
 html.ih-motion-ready:not(.ih-restored) .auth-split-wrapper,
 html.ih-motion-ready:not(.ih-restored) .login-wrapper {
@@ -85,8 +24,7 @@ html.ih-motion-ready:not(.ih-restored) .login-wrapper {
    * `backwards` applies the opening frame while the animation is starting,
    * then releases `transform` completely. Keeping the final transform creates
    * a permanent stacking context that can trap Bootstrap modals underneath
-   * their backdrop. The modal-bearing #main-content is intentionally not a
-   * named view-transition element for the same reason.
+   * their backdrop.
    */
   animation: ih-content-in var(--ih-motion-slow) var(--ih-ease-enter) backwards;
 }
@@ -489,12 +427,6 @@ html.ih-content-ready .ih-skeleton-shell {
     scroll-behavior: auto;
   }
 
-  ::view-transition-group(root),
-  ::view-transition-group(ideaflow-navbar),
-  ::view-transition-group(ideaflow-sidebar),
-  ::view-transition-group(ideaflow-mobile-nav),
-  ::view-transition-old(root),
-  ::view-transition-new(root),
   html.ih-motion-ready:not(.ih-restored) #main-content > :not(style):not(script),
   html.ih-motion-ready:not(.ih-restored) .auth-split-wrapper,
   html.ih-motion-ready:not(.ih-restored) .login-wrapper {

@@ -31,6 +31,10 @@ class PayablePayment(db.Model):
     paid_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     balance_before = db.Column(db.Numeric(10, 2), nullable=False)
     balance_after = db.Column(db.Numeric(10, 2), nullable=False)
+    # NULL preserves the original Daily Balance treatment for older payments.
+    funding_source = db.Column(db.String(20), nullable=True)
+    method_balance_before = db.Column(db.Numeric(12, 2), nullable=True)
+    method_balance_after = db.Column(db.Numeric(12, 2), nullable=True)
     request_key = db.Column(db.String(200), unique=True, nullable=True)
 
     payable = db.relationship("Payable", backref="payments")

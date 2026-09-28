@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from flask import current_app
@@ -93,13 +93,9 @@ class AdminService:
         user = self.repo.get_staff_user(user_id)
         if not user:
             return {"error": "Staff not found."}, 404
-        self.repo.delete_staff_attendance(user_id)
-        self.repo.clear_user_orders(user_id)
-        from app import db
-
-        db.session.delete(user)
+        self.repo.deactivate_staff(user, datetime.now(timezone.utc).replace(tzinfo=None))
         self.repo.save()
-        return {"message": "Staff deleted."}
+        return {"message": "Staff deactivated."}
 
     def customer_records(self):
         sessions = self.repo.list_customer_sessions()

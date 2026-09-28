@@ -146,7 +146,9 @@
     <div class="summary-box"><div class="label">Other Income</div><div class="value">Php {{ "%.2f"|format(total_other_income) }}</div></div>
     <div class="summary-box"><div class="label">Budget Spending</div><div class="value">Php {{ "%.2f"|format(total_budget_spend) }}</div></div>
   </div>
-  <p>Net movement = checkout sales + debt collected + other income − expenses − supplier payments − budget spending.</p>
+  <p>Net movement = checkout sales + debt collected + other income − business-funded expenses − business-funded supplier payments − budget spending. Externally funded payments are recorded separately and do not reduce business funds.</p>
+  <p>Expenses: Php {{ "%.2f"|format(total_business_expenses) }} business-funded; Php {{ "%.2f"|format(total_external_expenses) }} externally funded.</p>
+  <p>Supplier payments: Php {{ "%.2f"|format(total_business_payables_paid) }} business-funded; Php {{ "%.2f"|format(total_external_payables_paid) }} externally funded.</p>
 
   <div class="summary summary-payments">
     <div class="summary-box">
@@ -177,8 +179,8 @@
   </div>
 
   <h2>Payment Method Reconciliation</h2>
-  <table class="data"><thead><tr><th>Method</th><th class="amount">Checkout</th><th class="amount">Debt Collected</th><th class="amount">Other Income</th><th class="amount">Expenses</th><th class="amount">Supplier Paid</th><th class="amount">Budget Spent</th><th class="amount">Net</th></tr></thead><tbody>
-    {% for m in method_rows %}<tr><td>{{ m.method }}</td><td class="amount">Php {{ "%.2f"|format(m.checkout) }}</td><td class="amount">Php {{ "%.2f"|format(m.collection) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_income) }}</td><td class="amount">Php {{ "%.2f"|format(m.expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.net) }}</td></tr>{% endfor %}
+  <table class="data"><thead><tr><th>Method</th><th class="amount">Checkout</th><th class="amount">Debt Collected</th><th class="amount">Other Income</th><th class="amount">Business Expenses</th><th class="amount">External-funded Expenses</th><th class="amount">Business Supplier Paid</th><th class="amount">External-funded Supplier Paid</th><th class="amount">Budget Spent</th><th class="amount">Net</th></tr></thead><tbody>
+    {% for m in method_rows %}<tr><td>{{ m.method }}</td><td class="amount">Php {{ "%.2f"|format(m.checkout) }}</td><td class="amount">Php {{ "%.2f"|format(m.collection) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_income) }}</td><td class="amount">Php {{ "%.2f"|format(m.expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.external_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.external_payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.net) }}</td></tr>{% endfor %}
   </tbody></table>
 
   <h2>Daily Reports</h2>

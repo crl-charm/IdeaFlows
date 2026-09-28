@@ -34,6 +34,8 @@
     </div>
   </div>
 
+  {% include "partials/receivable_collection_cards.html" %}
+
   <!-- Desktop Table View -->
   <div class="card d-none d-md-block">
     <div class="card-header">
@@ -201,6 +203,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/receivable-collections.js') }}"></script>
 <style>
   .due-today td:nth-child(1),
   .due-today td:nth-child(2),
@@ -586,6 +589,7 @@
       recorded = true;
       refreshReceivables.cancel();
       await loadReceivables();
+      window.refreshReceivableCollections?.();
       openViewOrderModal(customerName, customerContact);
       showToast(`Payment recorded. ₱${data.remaining.toFixed(2)} still owed.`, 'success');
     } catch (error) {

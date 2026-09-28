@@ -77,12 +77,17 @@ def test_live_ledger_reconciles_midnight_payments_and_export(app):
     }, headers={"Idempotency-Key": "ledger-expense"})
     assert expense.status_code == 201
     expense_id = expense.get_json()["data"]["id"]
+    with app.app_context():
+        db.session.get(Expense, expense_id).created_at = datetime(2026, 9, 23, 16, 17)
+        db.session.commit()
     payment_body = {"amount": "20.00", "payment_method": "cash"}
     payment_url = f"/admin/payables/api/payables/{payable_id}/mark-paid"
     paid = client.patch(payment_url, json=payment_body, headers={"Idempotency-Key": "ledger-payable"})
     retry = client.patch(payment_url, json=payment_body, headers={"Idempotency-Key": "ledger-payable"})
     assert paid.status_code == 200
-    assert retry.status_code == 409
+    assert retry.status_code == 200
+    assert retry.get_json()["payment_id"] == paid.get_json()["payment_id"]
+    assert retry.get_json()["replayed"] is True
     with app.app_context():
         payment = PayablePayment.query.one()
         payment.paid_at = datetime(2026, 9, 23, 16, 20)
@@ -99,6 +104,8 @@ def test_live_ledger_reconciles_midnight_payments_and_export(app):
     assert day["total_collections"] == 50
     assert day["collection_count"] == 1
     assert day["total_expenses"] == 15
+    assert day["total_business_expenses"] == 15
+    assert day["total_external_expenses"] == 0
     assert day["expense_methods"]["unclassified"] == 5
     assert day["total_payables_paid"] == 20
     assert day["cash_on_hand"] == 20
@@ -125,6 +132,9 @@ def test_live_ledger_reconciles_midnight_payments_and_export(app):
     voided = client.delete(f"/admin/expenses/api/expenses/{expense_id}", json={"reason": "Duplicate receipt"},
                            headers={"Idempotency-Key": "ledger-expense-void"})
     assert voided.status_code == 200
+    with app.app_context():
+        db.session.get(Expense, expense_id).voided_at = datetime(2026, 9, 23, 16, 30)
+        db.session.commit()
     refreshed = client.get("/admin/daily-balance/api/reports?start_date=2026-09-24&end_date=2026-09-24")
     assert refreshed.get_json()["data"][0]["net_balance"] == 75
     history = client.get("/admin/expenses/api/expenses").get_json()["data"]
@@ -179,5 +189,7 @@ def test_additive_upgrade_accepts_legacy_sqlite_schema():
     inspector = inspect(engine)
     assert inspector.has_table("payable_payments")
     assert "request_key" in {column["name"] for column in inspector.get_columns("expenses")}
+    assert "funding_source" in {column["name"] for column in inspector.get_columns("expenses")}
+    assert "funding_source" in {column["name"] for column in inspector.get_columns("payable_payments")}
     assert "total_other_income" in {column["name"] for column in inspector.get_columns("daily_sales_reports")}
     assert "uq_expenses_request_key" in {index["name"] for index in inspector.get_indexes("expenses")}

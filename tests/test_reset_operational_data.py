@@ -1,3 +1,4 @@
+from datetime import date, datetime, time as day_time
 from decimal import Decimal
 from time import time
 
@@ -7,7 +8,7 @@ from sqlalchemy import text
 from app import create_app, db
 from app.db.reset_operational_data import ACCOUNT_TABLES, RESET_TABLES, preview_reset, reset_operational_data
 from app.models import (
-    Admin, CustomerSession, InventoryItem, MenuItem, Order, OrderItem,
+    Admin, BookingChange, BoardroomBooking, CustomerSession, InventoryItem, MenuItem, Order, OrderItem,
     SpaceType, StaffAttendance, Transaction, User,
 )
 
@@ -40,12 +41,22 @@ def test_operational_reset_preserves_accounts_and_reseeds_defaults(app):
         db.session.add_all([order, transaction])
         db.session.commit()
         db.session.add(OrderItem(order_id=order.id, menu_item_id=menu.id, quantity=1, price=50))
+        booking = BoardroomBooking(customer_name="Guest", date=date(2026, 9, 25),
+                                   start_time=day_time(10), end_time=day_time(11), number_of_people=1)
+        db.session.add(booking)
+        db.session.flush()
+        db.session.add(BookingChange(
+            booking_id=booking.id, action="created", actor="test_user", customer_name="Guest",
+            event_at=datetime(2026, 9, 25, 2), business_date=date(2026, 9, 25),
+            amount_before=0, amount_after=250, after_state={"status": "booked"},
+        ))
         db.session.commit()
 
         account_passwords = (db.session.get(User, 1).password, admin.password)
         before = preview_reset()
         assert before["users"] == before["admins"] == 1
         assert before["order_items"] == before["transactions"] == 1
+        assert before["booking_changes"] == 1
         assert before["staff_attendance"] == 1
         assert before["menu_items"] == 1
 

@@ -6,12 +6,15 @@ from typing import Optional
 from sqlalchemy import func
 
 from app import db
-from app.models import BoardroomBooking, CustomerSession, SpaceType
+from app.models import BoardroomBooking, BookingChange, CustomerSession, SpaceType
 
 
 class BookingRepository:
     def get_booking(self, booking_id: int) -> Optional[BoardroomBooking]:
         return BoardroomBooking.query.filter_by(id=booking_id).first()
+
+    def list_changes(self, booking_id: int) -> list[BookingChange]:
+        return BookingChange.query.filter_by(booking_id=booking_id).order_by(BookingChange.id.asc()).all()
 
     def list_bookings(self, selected_date: Optional[date], status_filter: str) -> list[BoardroomBooking]:
         query = BoardroomBooking.query
@@ -106,3 +109,4 @@ class BookingRepository:
 
     def add(self, obj) -> None:
         db.session.add(obj)
+        db.session.flush()

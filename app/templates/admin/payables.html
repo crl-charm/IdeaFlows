@@ -34,6 +34,17 @@
     </div>
   </div>
 
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <label for="paidStartDate" class="small fw-semibold">Supplier payment dates</label>
+    <input type="date" id="paidStartDate" class="form-control form-control-sm w-auto" aria-label="Start supplier payment date" onchange="loadPayableCards()">
+    <span>to</span>
+    <input type="date" id="paidEndDate" class="form-control form-control-sm w-auto" aria-label="End supplier payment date" onchange="loadPayableCards()">
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setPaidDates('today')">Today</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setPaidDates('all')">Show All</button>
+  </div>
+  <p class="small text-muted mb-2">Payments by method for the selected Manila dates. External-funded payments reduce supplier debt but leave business funds unchanged.</p>
+  <div class="row g-2 mb-4" id="payable-method-cards" aria-live="polite"></div>
+
   <!-- Filter section -->
   <div class="d-flex gap-2 mb-3 flex-wrap">
     <button class="btn btn-outline-secondary btn-sm active filter-btn" onclick="setPayablesFilter('All', this)">All</button>
@@ -195,12 +206,22 @@ let payablesCache = [];
 let pendingPayableId = null;
 let markPayableModalInstance = null;
 let activePayableFilter = "All";
+let payableCardRequestId = 0;
+
+function manilaPayableDate() {
+  return new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
+}
 
 document.addEventListener('DOMContentLoaded', function() {
   // Set default incurred date to today
   document.getElementById('incurredDate').valueAsDate = new Date();
   
+  const today = manilaPayableDate();
+  document.getElementById('paidStartDate').value = today;
+  document.getElementById('paidEndDate').value = today;
   loadPayables();
+  const socket = window.getIdeaFlowSocket();
+  if (socket) socket.on('daily_balance_update', window.createDebouncedRefresh(loadPayables, 150));
   
   const markModalEl = document.getElementById('markPayablePaidModal');
   if (markModalEl) {
@@ -217,8 +238,12 @@ function setPayablesFilter(status, btn) {
 }
 
 function loadPayables() {
+  loadPayableCards();
   fetch('/admin/payables/api/payables')
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Payables unavailable');
+      return r.json();
+    })
     .then(data => {
       if (data.success) {
         payablesCache = data.data;
@@ -228,6 +253,48 @@ function loadPayables() {
     .catch(() => {
       showToast('Error loading payables', 'error');
     });
+}
+
+function setPaidDates(preset) {
+  const day = preset === 'today' ? manilaPayableDate() : '';
+  document.getElementById('paidStartDate').value = day;
+  document.getElementById('paidEndDate').value = day;
+  loadPayableCards();
+}
+
+function loadPayableCards() {
+  const requestId = ++payableCardRequestId;
+  const params = new URLSearchParams();
+  const start = document.getElementById('paidStartDate').value;
+  const end = document.getElementById('paidEndDate').value;
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  fetch(`/admin/daily-balance/api/reports?${params}`).then(r => {
+    if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Payment totals unavailable');
+    return r.json();
+  }).then(result => {
+    if (requestId !== payableCardRequestId) return;
+    if (!result.success) throw new Error('Could not load payment totals');
+    const methods = [['cash', 'Cash'], ['gcash', 'GCash'], ['bdo', 'BDO'],
+      ['bpi', 'BPI'], ['queenbank', 'QueenBank'], ['unclassified', 'Legacy / unknown']];
+    const rows = methods.map(([key, label]) => ({key, label, ...result.data.reduce((sum, report) => ({
+      business: sum.business + Number((report.payable_methods || {})[key] || 0),
+      external: sum.external + Number((report.external_payable_methods || {})[key] || 0),
+      paid: sum.paid + Number((report.payable_paid_methods || {})[key] || 0)
+    }), {business: 0, external: 0, paid: 0})}));
+    const overall = rows.reduce((sum, row) => ({
+      business: sum.business + row.business, external: sum.external + row.external,
+      paid: sum.paid + row.paid
+    }), {business: 0, external: 0, paid: 0});
+    const card = (label, amounts) => `<div class="col-12 col-sm-6 col-xl-3"><div class="card h-100 shadow-sm"><div class="card-body">
+      <div class="small text-muted fw-semibold">${label}</div><div class="h5 mb-2">₱${amounts.paid.toFixed(2)}</div>
+      <div class="small">Business ₱${amounts.business.toFixed(2)} · External-funded ₱${amounts.external.toFixed(2)}</div>
+    </div></div></div>`;
+    document.getElementById('payable-method-cards').innerHTML = card('All methods · supplier paid', overall) +
+      rows.filter(row => row.key !== 'unclassified' || row.paid).map(row => card(row.label, row)).join('');
+  }).catch(() => {
+    if (requestId === payableCardRequestId) showToast('Could not load supplier payment totals.', 'error');
+  });
 }
 
 function renderPayables() {
@@ -279,8 +346,8 @@ function renderPayables() {
     // Desktop
     tbody.innerHTML += `
       <tr>
-        <td class="fw-semibold">${p.creditor_name}</td>
-        <td>${p.items}</td>
+        <td class="fw-semibold">${window.escapeHTML(p.creditor_name)}</td>
+        <td>${window.escapeHTML(p.items)}</td>
         <td>₱${p.amount_owed.toFixed(2)}</td>
         <td>₱${p.partial_paid.toFixed(2)}</td>
         <td>${p.incurred_date}</td>
@@ -295,7 +362,7 @@ function renderPayables() {
       <div class="record-card">
         <div class="record-card-header">
           <div>
-            <div class="record-card-title">${p.creditor_name}</div>
+            <div class="record-card-title">${window.escapeHTML(p.creditor_name)}</div>
             <div class="record-card-subtitle">Due: ${p.due_date}</div>
           </div>
           ${statusBadge}
@@ -303,7 +370,7 @@ function renderPayables() {
         <div class="record-card-body">
           <div class="record-card-row">
             <span class="record-card-label">Description:</span>
-            <span class="record-card-value">${p.items}</span>
+            <span class="record-card-value">${window.escapeHTML(p.items)}</span>
           </div>
           <div class="record-card-row">
             <span class="record-card-label">Amount Owed:</span>
@@ -463,7 +530,7 @@ function confirmMarkPayablePaid() {
     if (data.success) {
       if (markPayableModalInstance) markPayableModalInstance.hide();
       pendingPayableId = null;
-      showToast(isPartial ? 'Partial payment recorded' : 'Payable marked as paid', 'success');
+      showToast(data.funding_source === 'external' ? 'Supplier payment recorded as externally funded; business balance unchanged.' : isPartial ? 'Partial payment recorded' : 'Payable marked as paid', 'success');
       loadPayables();
     } else {
       showToast(data.error || 'Error saving payment', 'error');
@@ -484,10 +551,13 @@ function showPayableHistory(pId) {
   const history = payments.length ? payments.map(payment => `
     <tr><td>${new Date(payment.paid_at).toLocaleString('en-PH', {timeZone: 'Asia/Manila'})}</td>
     <td>₱${payment.amount.toFixed(2)}</td><td>${window.escapeHTML(payment.payment_method)}</td>
-    <td>${window.escapeHTML(payment.paid_by)}</td><td>₱${payment.balance_before.toFixed(2)} → ₱${payment.balance_after.toFixed(2)}</td></tr>
-  `).join('') : '<tr><td colspan="5">No dated payments recorded.</td></tr>';
+    <td>${window.escapeHTML(payment.paid_by)}</td>
+    <td>${payment.funding_source === 'external' ? 'External-funded' : payment.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business-funded'}</td>
+    <td>₱${payment.balance_before.toFixed(2)} → ₱${payment.balance_after.toFixed(2)}</td>
+    <td>${payment.method_balance_before == null ? 'Unknown' : `₱${payment.method_balance_before.toFixed(2)} → ₱${payment.method_balance_after.toFixed(2)}`}</td></tr>
+  `).join('') : '<tr><td colspan="7">No dated payments recorded.</td></tr>';
   const legacy = p.legacy_paid_unattributed > 0 ? `<p class="text-warning">₱${p.legacy_paid_unattributed.toFixed(2)} was paid before payment history existed; its date and method are unknown.</p>` : '';
-  document.getElementById('payableHistoryBody').innerHTML = `${legacy}<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Manila time</th><th>Amount</th><th>Method</th><th>Recorded by</th><th>Balance before → after</th></tr></thead><tbody>${history}</tbody></table></div>`;
+  document.getElementById('payableHistoryBody').innerHTML = `${legacy}<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Manila time</th><th>Amount</th><th>Method</th><th>Recorded by</th><th>Funding</th><th>Supplier debt before → after</th><th>Business method before → after</th></tr></thead><tbody>${history}</tbody></table></div>`;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('payableHistoryModal')).show();
 }
 </script>

@@ -17,6 +17,14 @@ COLUMNS = (
     ("expenses", "voided_by", "ALTER TABLE expenses ADD COLUMN voided_by INTEGER NULL"),
     ("expenses", "void_reason", "ALTER TABLE expenses ADD COLUMN void_reason VARCHAR(255) NULL"),
     ("expenses", "request_key", "ALTER TABLE expenses ADD COLUMN request_key VARCHAR(200) NULL"),
+    ("expenses", "funding_source", "ALTER TABLE expenses ADD COLUMN funding_source VARCHAR(20) NULL"),
+    ("expenses", "balance_before", "ALTER TABLE expenses ADD COLUMN balance_before NUMERIC(12,2) NULL"),
+    ("expenses", "balance_after", "ALTER TABLE expenses ADD COLUMN balance_after NUMERIC(12,2) NULL"),
+    ("expenses", "void_balance_before", "ALTER TABLE expenses ADD COLUMN void_balance_before NUMERIC(12,2) NULL"),
+    ("expenses", "void_balance_after", "ALTER TABLE expenses ADD COLUMN void_balance_after NUMERIC(12,2) NULL"),
+    ("payable_payments", "funding_source", "ALTER TABLE payable_payments ADD COLUMN funding_source VARCHAR(20) NULL"),
+    ("payable_payments", "method_balance_before", "ALTER TABLE payable_payments ADD COLUMN method_balance_before NUMERIC(12,2) NULL"),
+    ("payable_payments", "method_balance_after", "ALTER TABLE payable_payments ADD COLUMN method_balance_after NUMERIC(12,2) NULL"),
     ("finance_transactions", "payment_method", "ALTER TABLE finance_transactions ADD COLUMN payment_method VARCHAR(50) NULL"),
     ("finance_transactions", "actor_id", "ALTER TABLE finance_transactions ADD COLUMN actor_id INTEGER NULL"),
     ("finance_transactions", "request_key", "ALTER TABLE finance_transactions ADD COLUMN request_key VARCHAR(200) NULL"),
@@ -33,6 +41,7 @@ COLUMNS = (
 
 def upgrade(engine):
     with engine.begin() as connection:
+        PayablePayment.__table__.create(bind=connection, checkfirst=True)
         for table, column, ddl in COLUMNS:
             if column not in {entry["name"] for entry in inspect(connection).get_columns(table)}:
                 connection.execute(text(ddl))
@@ -47,7 +56,6 @@ def upgrade(engine):
         receivable_indexes = {entry["name"] for entry in inspect(connection).get_indexes("receivable_payments")}
         if "ix_receivable_payments_request_key" not in receivable_indexes:
             connection.execute(text("CREATE INDEX ix_receivable_payments_request_key ON receivable_payments (request_key)"))
-        PayablePayment.__table__.create(bind=connection, checkfirst=True)
 
 
 def main():
@@ -60,10 +68,11 @@ def main():
     Config.AUTO_MIGRATE_ON_STARTUP = False
     app = create_app()
     with app.app_context():
+        # Preview older databases that do not have payment history yet.
         inspector = inspect(db.engine)
         print(f"Database: {db.engine.url.host or 'local'}/{db.engine.url.database or '(unnamed)'}")
         for table, column, _ in COLUMNS:
-            present = column in {entry["name"] for entry in inspector.get_columns(table)}
+            present = inspector.has_table(table) and column in {entry["name"] for entry in inspector.get_columns(table)}
             print(f"{table}.{column}: {'ready' if present else 'missing'}")
         print(f"payable_payments: {'ready' if inspector.has_table('payable_payments') else 'missing'}")
         print(f"expenses.request_key unique index: {'ready' if ('request_key',) in {tuple(i['column_names']) for i in inspector.get_unique_constraints('expenses')} or 'uq_expenses_request_key' in {i['name'] for i in inspector.get_indexes('expenses')} else 'missing'}")

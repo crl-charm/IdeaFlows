@@ -91,11 +91,8 @@ def preview_checkout(session_id):
 @session_bp.route("/api/checkout-records")
 @login_required
 def checkout_records():
-    page = request.args.get("page", 1, type=int) or 1
-    per_page = request.args.get("per_page", 50, type=int) or 50
-    per_page = min(per_page, 100)
-    transactions = _service.checkout_records(page=page, per_page=per_page)
-    tx_items = transactions.items if hasattr(transactions, "items") else transactions
+    page = max(request.args.get("page", 1, type=int) or 1, 1)
+    per_page = min(max(request.args.get("per_page", 50, type=int) or 50, 1), 100)
 
     # Optional date-range filter (YYYY-MM-DD strings from the frontend)
     date_from_str = request.args.get("date_from", "").strip()
@@ -112,18 +109,11 @@ def checkout_records():
     except ValueError:
         pass  # Ignore bad dates — return unfiltered
 
-    result = []
-    for tx in tx_items:
-        if date_from and tx.created_at.date() < date_from:
-            continue
-        if date_to and tx.created_at.date() > date_to:
-            continue
-        serialized = serialize_transaction(tx)
-        if payment_filter and serialized.get("payment_method") != payment_filter:
-            continue
-        result.append(serialized)
-
-    return jsonify(result)
+    transactions = _service.checkout_records(
+        page=page, per_page=per_page, date_from=date_from, date_to=date_to,
+        payment_method=payment_filter,
+    )
+    return jsonify([serialize_transaction(tx) for tx in transactions.items])
 
 
 @session_bp.route("/api/space-availability")

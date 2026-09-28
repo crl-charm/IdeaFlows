@@ -103,6 +103,37 @@ def test_staff_booking_page_shows_walk_in_and_whole_hub(app):
     assert b'<th>Duration</th>' in response.data
 
 
+def test_space_pages_fix_checkin_context_and_boardroom_uses_bookings(app):
+    with app.app_context():
+        spaces = [SpaceType(name=name, rate_per_minute=Decimal("0.1667"))
+                  for name in ("Regular Lounge", "Premium Lounge", "Boardroom")]
+        db.session.add_all(spaces)
+        db.session.commit()
+        regular_id, premium_id = spaces[0].id, spaces[1].id
+
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, role="staff", last_activity=datetime.now(timezone.utc).timestamp())
+
+    for name, space_id in (("Regular Lounge", regular_id), ("Premium Lounge", premium_id)):
+        page = client.get("/dashboard", query_string={"space": name})
+        assert page.status_code == 200
+        assert f'id="spaceType" value="{space_id}"'.encode() in page.data
+        assert b'<select id="spaceType"' not in page.data
+        assert b'id="floatingAddBtn"' in page.data
+
+    general = client.get("/dashboard")
+    assert b'<select id="spaceType"' in general.data
+    assert b"Select space..." in general.data
+    assert b'<option value="3">Boardroom</option>' not in general.data
+
+    for path in ("/dashboard?space=Boardroom", "/boardroom"):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert b'id="floatingAddBtn"' not in page.data
+        assert b'href="/lounge-booking"' in page.data
+
+
 def test_staff_friend_rate_is_recorded_once_and_reconciles_with_daily_balance(app, monkeypatch):
     from app.routes import lounge_routes, session_routes
 

@@ -47,6 +47,16 @@ def get_lounge_bookings():
     return jsonify(_service.list_bookings(date_str=date_str, status_filter=status_filter))
 
 
+@lounge_bp.route("/api/lounge-bookings/<int:booking_id>/history")
+@login_required
+def get_booking_history(booking_id):
+    result = _service.booking_history(booking_id)
+    if isinstance(result, tuple):
+        body, status = result
+        return jsonify(body), status
+    return jsonify(result)
+
+
 # ----------------------------------
 # CANCEL BOOKING
 # ----------------------------------
@@ -54,7 +64,7 @@ def get_lounge_bookings():
 @login_required
 @idempotent_request("cancel-lounge-booking")
 def cancel_lounge_booking(booking_id):
-    resp = _service.cancel_booking(booking_id)
+    resp = _service.cancel_booking(booking_id, actor_name=session.get("username"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status
@@ -72,6 +82,7 @@ def update_lounge_booking(booking_id):
     resp = _service.update_booking_start(
         booking_id=booking_id,
         start_time_str=(data.get("start_time") or "").strip(),
+        actor_name=session.get("username"),
     )
     if isinstance(resp, tuple):
         payload, status = resp
@@ -86,7 +97,7 @@ def update_lounge_booking(booking_id):
 @login_required
 @idempotent_request("start-lounge-booking")
 def start_booking_session(booking_id):
-    resp = _service.start_booking(booking_id)
+    resp = _service.start_booking(booking_id, actor_name=session.get("username"))
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status
@@ -101,7 +112,10 @@ def start_booking_session(booking_id):
 @idempotent_request("extend-lounge-booking")
 def extend_booking(booking_id):
     data = request.get_json(silent=True) or {}
-    resp = _service.extend_booking(booking_id=booking_id, minutes=int(data.get("minutes", 0)))
+    resp = _service.extend_booking(
+        booking_id=booking_id, minutes=int(data.get("minutes", 0)),
+        actor_name=session.get("username"),
+    )
     if isinstance(resp, tuple):
         payload, status = resp
         return jsonify(payload), status

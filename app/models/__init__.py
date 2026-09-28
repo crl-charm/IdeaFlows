@@ -8,6 +8,7 @@ from .order import Order
 from .order_item import OrderItem
 from .transaction import Transaction
 from .boardroom_booking import BoardroomBooking
+from .booking_change import BookingChange
 from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
 from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
@@ -35,6 +36,7 @@ __all__ = [
     'OrderItem',
     'Transaction',
     'BoardroomBooking',
+    'BookingChange',
     'LoungeBooking',
     'StaffAttendance',
     'InventoryItem',

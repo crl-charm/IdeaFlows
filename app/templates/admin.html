@@ -944,11 +944,11 @@
             </button>
             <button
               class="action-btn action-btn-delete"
-              title="Delete staff"
+              title="Deactivate staff"
               onclick="deleteUser(${u.id}, decodeURIComponent(this.getAttribute('data-name')))"
               data-name="${encodeURIComponent(u.name)}"
             >
-              <i class="bi bi-trash-fill"></i> Delete
+              <i class="bi bi-person-x-fill"></i> Deactivate
             </button>
           </div>
         </td>
@@ -985,11 +985,11 @@
         } else {
           body.innerHTML = data.map(r => `
         <tr>
-          <td>${r.name}</td>
-          <td>${r.orders}</td>
-          <td>${r.room}</td>
-          <td>${r.time_in}</td>
-          <td>${r.time_out}</td>
+          <td>${escapeHTML(r.name)}</td>
+          <td>${escapeHTML(r.orders)}</td>
+          <td>${escapeHTML(r.room)}</td>
+          <td>${escapeHTML(r.time_in)}</td>
+          <td>${escapeHTML(r.time_out)}</td>
         </tr>
       `).join("");
         }
@@ -1240,12 +1240,12 @@
   }
 
 
-  // DELETE USER
+  // DEACTIVATE USER
   async function deleteUser(id, name) {
     const confirmed = await showConfirmDialog({
-      title: "Delete Staff",
-      message: `Are you sure you want to delete staff "${name}"? This action cannot be undone.`,
-      confirmText: "Delete Staff",
+      title: "Deactivate Staff",
+      message: `Deactivate staff "${name}"? They will lose access; their sales and attendance history will remain.`,
+      confirmText: "Deactivate Staff",
       confirmClass: "btn-danger",
       iconType: "delete",
       icon: '<i class="bi bi-trash3 fs-1 text-danger"></i>'
@@ -1279,11 +1279,11 @@
           return;
         }
 
-        showToast(`Staff "${name}" deleted successfully.`, "success");
+        showToast(`Staff "${name}" deactivated.`, "success");
         loadUsers();
       })
       .catch(() => {
-        showToast("Failed to delete staff. Please try again.", "error");
+        showToast("Failed to deactivate staff. Please try again.", "error");
       });
   }
 

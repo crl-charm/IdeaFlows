@@ -207,7 +207,7 @@ class SessionService:
 
         self.repo.create_transaction(tx)
         self.repo.complete_session(sess, time_out)
-        self.repo.link_booking_completion_if_any(sess.id, time_out)
+        self.repo.link_booking_completion_if_any(sess.id, time_out, tx)
         self.repo.commit()
 
         self.notifier.session_checked_out(
@@ -237,9 +237,13 @@ class SessionService:
             "change_given": change_given,
         }
 
-    def checkout_records(self, page: int | None = None, per_page: int | None = None):
+    def checkout_records(self, page: int | None = None, per_page: int | None = None, *,
+                         date_from=None, date_to=None, payment_method: str = ""):
         if page and per_page:
-            return self.repo.list_transactions_paginated(page=page, per_page=per_page)
+            return self.repo.list_transactions_paginated(
+                page=page, per_page=per_page, date_from=date_from, date_to=date_to,
+                payment_method=payment_method,
+            )
         return self.repo.list_transactions()
 
     def space_availability(self) -> list[dict[str, Any]]:

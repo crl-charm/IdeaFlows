@@ -344,7 +344,7 @@ function updateCustomersList(topCustomers) {
         <div class="d-flex align-items-center">
           <span class="badge rounded-circle ${rankBadgeClass} rank-badge me-3">${rank}</span>
           <div>
-            <span class="fw-semibold text-dark small">${cust.name}</span>
+            <span class="fw-semibold text-dark small">${escapeHTML(cust.name)}</span>
             <br>
             <small class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-clock-history me-1"></i>${cust.visits} visit(s)</small>
           </div>

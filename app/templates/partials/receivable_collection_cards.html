@@ -1,0 +1,10 @@
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+  <label for="collectionStartDate" class="small fw-semibold">Payments received</label>
+  <input type="date" id="collectionStartDate" class="form-control form-control-sm w-auto" aria-label="Start collection date">
+  <span>to</span>
+  <input type="date" id="collectionEndDate" class="form-control form-control-sm w-auto" aria-label="End collection date">
+  <button type="button" id="collectionToday" class="btn btn-sm btn-outline-secondary">Today</button>
+  <button type="button" id="collectionAll" class="btn btn-sm btn-outline-secondary">Show All</button>
+</div>
+<p class="small text-muted mb-2">Collections by payment method for the selected Manila dates. Open customer balances below are current totals.</p>
+<div class="row g-2 mb-4" id="receivable-method-cards" aria-live="polite">Loading collections...</div>

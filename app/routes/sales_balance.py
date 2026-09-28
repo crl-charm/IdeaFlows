@@ -143,7 +143,7 @@ def api_create_soft_balance() -> tuple:
 @sales_bp.route("/api/today-stats", methods=["GET"])
 @login_required
 def api_today_stats() -> tuple:
-    from app.models import CustomerSession, Receivable, Order, OrderItem
+    from app.models import CustomerSession, Order, OrderItem
     from datetime import datetime
     from sqlalchemy import func
     from sqlalchemy.orm import selectinload
@@ -155,7 +155,7 @@ def api_today_stats() -> tuple:
     live = _service.repo.daily_ledger(today, today).get(today) or _service.repo.daily_ledger_empty(today)
     cash_on_hand = Decimal(str(live["cash_on_hand"]))
 
-    # Money still owed by active sessions and receivable customers.
+    # Still to collect here is limited to customers currently checked in.
     pending_balance_sum = Decimal("0.00")
     active_sessions = (
         CustomerSession.query.options(selectinload(CustomerSession.space_type))
@@ -185,12 +185,7 @@ def api_today_stats() -> tuple:
         
         pending_balance_sum += time_bill + Decimal(str(food_total))
 
-    unpaid_receivables = sum(
-        (r.amount_owed - r.partial_paid for r in Receivable.query.filter(Receivable.paid.is_(False)).all()
-         if r.session_id not in session_ids),
-        Decimal("0.00"),
-    )
-    expected_to_collect = pending_balance_sum + unpaid_receivables
+    expected_to_collect = pending_balance_sum
     expected_cash_on_hand = cash_on_hand + expected_to_collect
 
     return api_ok({

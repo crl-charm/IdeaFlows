@@ -63,7 +63,6 @@ def api_create_payable() -> tuple:
 
 @payables_bp.route("/api/payables/<int:p_id>/mark-paid", methods=["PATCH"])
 @admin_required
-@idempotent_request("admin-mark-payable-paid")
 def api_mark_paid(p_id: int) -> tuple:
     data = request.get_json() or {}
     result = _service.mark_paid(
@@ -73,12 +72,16 @@ def api_mark_paid(p_id: int) -> tuple:
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
         
-    if result.get("success"):
+    if result.get("success") and not result.get("replayed"):
         emit_daily_balance_update()
         security_logger.info(
             f"Payable payment recorded: payable ID {p_id}, payment ID {result['payment_id']} by user {session.get('username')} (ID: {session.get('user_id')})"
         )
     return jsonify(result), 200
+
+
+# The payment row's unique request key provides durable cross-worker replay protection.
+api_mark_paid._idempotency_action = "admin-mark-payable-paid"
 
 
 @payables_bp.route("/api/due-count", methods=["GET"])

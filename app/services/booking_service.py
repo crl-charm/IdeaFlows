@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from app.core.interfaces import Clock, Notifier
 from app.dto.serializers import serialize_booking
+from app.models import BookingChange
 from app.repositories.booking_repository import BookingRepository
 
 
@@ -104,6 +105,7 @@ class BookingService:
             session = self.repo.create_customer_session_for_booking(booking, space.id, now)
             booking.session_id = session.id
             booking.started_at = now
+        self.repo.add(BookingChange.capture(booking, "created", actor_name, now))
         self.repo.save()
         self.notifier.booking_updated({"booking_id": booking.id, "status": booking.status})
         return {"message": "Customer checked in." if walk_in else "Booking saved.", "booking_id": booking.id,
@@ -130,7 +132,27 @@ class BookingService:
             rows.append(row)
         return rows
 
-    def update_booking_start(self, booking_id: int, start_time_str: str):
+    def booking_history(self, booking_id: int):
+        if not self.repo.get_booking(booking_id):
+            return {"error": "Booking not found"}, 404
+        return [
+            {
+                "action": change.action,
+                "actor": change.actor,
+                "event_at": change.event_at.isoformat() + "Z",
+                "business_date": change.business_date.isoformat(),
+                "amount_before": float(change.amount_before),
+                "amount_after": float(change.amount_after),
+                "payment_method": change.payment_method,
+                "session_id": change.session_id,
+                "transaction_id": change.transaction_id,
+                "before_state": change.before_state,
+                "after_state": change.after_state,
+            }
+            for change in self.repo.list_changes(booking_id)
+        ]
+
+    def update_booking_start(self, booking_id: int, start_time_str: str, actor_name: str | None = None):
         booking = self.repo.get_booking(booking_id)
         if not booking:
             return {"error": "Booking not found"}, 404
@@ -173,8 +195,10 @@ class BookingService:
                 "error": f"Slot conflicts with existing booking ({conflict.start_time.strftime('%H:%M')}–{conflict.end_time.strftime('%H:%M')})"
             }, 400
 
+        before = BookingChange.snapshot(booking)
         booking.start_time = new_start
         booking.expected_end_at = datetime.combine(booking.date, end_time)
+        self.repo.add(BookingChange.capture(booking, "time_changed", actor_name, now, before))
         self.repo.save()
         self.notifier.booking_updated({"booking_id": booking.id, "status": "updated"})
         return {
@@ -182,7 +206,7 @@ class BookingService:
             "data": serialize_booking(booking),
         }
 
-    def start_booking(self, booking_id: int):
+    def start_booking(self, booking_id: int, actor_name: str | None = None):
         booking = self.repo.get_booking(booking_id)
         if not booking:
             return {"error": "Booking not found"}, 404
@@ -204,16 +228,18 @@ class BookingService:
             return {"error": "The requested space is currently occupied."}, 409
         if not whole_hub and space.capacity and booking.number_of_people > space.capacity:
             return {"error": f"Boardroom fits only {space.capacity} people."}, 409
+        before = BookingChange.snapshot(booking)
         session = self.repo.create_customer_session_for_booking(booking, space.id, now)
         booking.status = "active"
         booking.started_at = now
         booking.expected_end_at = datetime.combine(booking.date, booking.end_time)
         booking.session_id = session.id
+        self.repo.add(BookingChange.capture(booking, "started", actor_name, now, before))
         self.repo.save()
         self.notifier.booking_updated({"booking_id": booking.id, "status": "active", "session_id": session.id})
         return {"message": "Booking started.", "session_id": session.id}
 
-    def extend_booking(self, booking_id: int, minutes: int):
+    def extend_booking(self, booking_id: int, minutes: int, actor_name: str | None = None):
         booking = self.repo.get_booking(booking_id)
         if not booking:
             return {"error": "Booking not found"}, 404
@@ -227,9 +253,11 @@ class BookingService:
             return {"error": "Extension must end by 10:00 PM."}, 400
         if self.repo.find_conflict_excluding(booking.id, booking.date, booking.start_time, new_end.time()):
             return {"error": "Extension overlaps another booking."}, 409
+        before = BookingChange.snapshot(booking)
         booking.expected_end_at = new_end
         booking.end_time = new_end.time()
         booking.extended_minutes = (booking.extended_minutes or 0) + minutes
+        self.repo.add(BookingChange.capture(booking, "extended", actor_name, self.clock.now(), before))
         self.repo.save()
         self.notifier.booking_updated({"booking_id": booking.id, "status": "extended"})
         return {
@@ -239,13 +267,15 @@ class BookingService:
             "extended_minutes": booking.extended_minutes,
         }
 
-    def cancel_booking(self, booking_id: int):
+    def cancel_booking(self, booking_id: int, actor_name: str | None = None):
         booking = self.repo.get_booking(booking_id)
         if not booking:
             return {"error": "Booking not found"}, 404
-        if booking.status == "active":
-            return {"error": "Active session cannot be cancelled. Checkout first."}, 400
+        if booking.status != "booked":
+            return {"error": "Only upcoming bookings can be cancelled."}, 400
+        before = BookingChange.snapshot(booking)
         booking.status = "cancelled"
+        self.repo.add(BookingChange.capture(booking, "cancelled", actor_name, self.clock.now(), before))
         self.repo.save()
         self.notifier.booking_updated({"booking_id": booking.id, "status": "cancelled"})
         return {"message": "Booking cancelled"}

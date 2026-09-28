@@ -9,7 +9,9 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models import BoardroomBooking, CustomerSession, Order, OrderItem, SpaceType, Transaction
+from app.models import BoardroomBooking, BookingChange, CustomerSession, Order, OrderItem, SpaceType, Transaction
+from app.utils.dates import manila_day_bounds
+from app.utils.payment import VALID_PAYMENT_METHODS
 
 
 @dataclass(frozen=True)
@@ -82,16 +84,22 @@ class SessionRepository:
         session.time_out = time_out_utc
         session.status = "completed"
 
-    def link_booking_completion_if_any(self, session_id: int, time_out_utc: datetime) -> None:
+    def link_booking_completion_if_any(self, session_id: int, time_out_utc: datetime,
+                                       transaction: Transaction) -> None:
         linked = BoardroomBooking.query.filter_by(session_id=session_id, status="active").first()
         if not linked:
             return
+        before = BookingChange.snapshot(linked)
         linked.status = "completed"
         linked.ended_at = time_out_utc
         if linked.expected_end_at:
             extra_seconds = (time_out_utc + timedelta(hours=8) - linked.expected_end_at).total_seconds() - 600
             if extra_seconds > 0:
                 linked.extended_minutes = (linked.extended_minutes or 0) + ceil(extra_seconds / 60)
+        db.session.flush()
+        db.session.add(BookingChange.capture(
+            linked, "checked_out", transaction.collected_by, time_out_utc, before, transaction
+        ))
 
     def create_transaction(self, tx: Transaction) -> None:
         db.session.add(tx)
@@ -122,13 +130,24 @@ class SessionRepository:
             .all()
         )
 
-    def list_transactions_paginated(self, page: int, per_page: int):
-        return (
-            Transaction.query.options(
-                selectinload(Transaction.session).selectinload(CustomerSession.space_type)
-            )
-            .order_by(Transaction.created_at.desc())
-            .paginate(page=page, per_page=per_page, error_out=False)
+    def list_transactions_paginated(self, page: int, per_page: int, *, date_from=None, date_to=None,
+                                    payment_method: str = ""):
+        query = Transaction.query.options(
+            selectinload(Transaction.session).selectinload(CustomerSession.space_type)
+        )
+        if date_from:
+            query = query.filter(Transaction.created_at >= manila_day_bounds(date_from)[0])
+        if date_to:
+            query = query.filter(Transaction.created_at < manila_day_bounds(date_to)[1])
+        if payment_method:
+            stored_method = func.lower(func.trim(Transaction.payment_method))
+            if payment_method == "cash":
+                query = query.filter(or_(stored_method == "cash", stored_method.notin_(VALID_PAYMENT_METHODS),
+                                         Transaction.payment_method.is_(None)))
+            else:
+                query = query.filter(stored_method == payment_method)
+        return query.order_by(Transaction.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
         )
 
     def list_space_types_for_availability(self) -> list[SpaceType]:

@@ -92,7 +92,7 @@ class ReceivableRepository:
         db.session.flush()
         return receivable
 
-    def record_payment(self, receivable_id: int, amount: Decimal | None, received_by: int, payment_method: str, request_key: str | None = None) -> bool:
+    def record_payment(self, receivable_id: int, amount: Decimal | None, received_by: int, payment_method: str, request_key: str | None = None, received_at: datetime | None = None) -> bool:
         receivable = self.get_for_update(receivable_id)
         if not receivable:
             return False
@@ -106,17 +106,18 @@ class ReceivableRepository:
             raise ValueError(f"Payment must be between ₱0.01 and ₱{remaining:.2f}.")
         receivable.partial_paid += collected
         receivable.paid = receivable.partial_paid >= receivable.amount_owed
+        received_at = received_at or datetime.utcnow()
         if receivable.paid:
-            receivable.paid_at = datetime.utcnow()
+            receivable.paid_at = received_at
         db.session.add(ReceivablePayment(
             receivable_id=receivable.id, amount=collected,
             payment_method=payment_method, received_by=received_by,
             balance_before=remaining, balance_after=remaining - collected,
-            request_key=request_key,
+            request_key=request_key, received_at=received_at,
         ))
         return True
 
-    def record_customer_payment(self, customer_name: str, amount: Decimal, received_by: int, payment_method: str, customer_contact: str = "", request_key: str | None = None) -> Decimal:
+    def record_customer_payment(self, customer_name: str, amount: Decimal, received_by: int, payment_method: str, customer_contact: str = "", request_key: str | None = None, received_at: datetime | None = None) -> Decimal:
         # Lock the customer's open orders, then apply one tab payment in a
         # stable order. The allocation is bookkeeping; the customer pays one total.
         unpaid = Receivable.query.filter(
@@ -134,7 +135,7 @@ class ReceivableRepository:
             raise ValueError(f"Payment must be between ₱0.01 and ₱{total_remaining:.2f}.")
 
         unallocated = amount
-        now = datetime.utcnow()
+        now = received_at or datetime.utcnow()
         payment_group_id = uuid4().hex
         for receivable in unpaid:
             if unallocated <= 0:

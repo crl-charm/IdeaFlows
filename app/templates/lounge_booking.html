@@ -320,6 +320,18 @@
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="bookingHistoryModal" tabindex="-1" aria-labelledby="bookingHistoryTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="bookingHistoryTitle">Booking history</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="booking-history-body"></div>
+    </div>
+  </div>
+</div>
 </div>
 {% endblock %}
 
@@ -563,7 +575,7 @@ function renderList(bookings) {
     if (b.status === "booked") {
       actions += `<button class="btn btn-sm btn-outline-danger" title="Cancel this reservation" onclick="cancelBooking(${b.id})">Cancel</button>`;
     }
-    if (!actions) actions = `<span class="text-muted">No action</span>`;
+    actions += `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="showBookingHistory(${b.id})">History</button>`;
 
     const timeCell = late
       ? `${fmt12(b.start_time)} – ${fmt12(b.end_time)}<br><span class="late-hint-badge"><i class="bi bi-exclamation-circle me-1"></i>Waiting — was due ${fmt12(b.start_time)}</span>`
@@ -583,6 +595,40 @@ function renderList(bookings) {
       </tr>
     `;
   }).join("");
+}
+
+async function showBookingHistory(bookingId) {
+  const body = document.getElementById("booking-history-body");
+  body.textContent = "Loading history...";
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("bookingHistoryModal")).show();
+  try {
+    const response = await fetch(`/api/lounge-bookings/${bookingId}/history`, { credentials: "include" });
+    if (!response.ok) throw new Error("History unavailable");
+    const changes = await response.json();
+    if (!changes.length) {
+      body.textContent = "No change history was recorded for this booking.";
+      return;
+    }
+    body.innerHTML = `<p class="small text-muted">Booking amounts are quotes until checkout. Daily Balance counts the checkout payment once.</p>` +
+      changes.map(change => {
+        const before = change.before_state;
+        const after = change.after_state;
+        const oldTime = before ? `${before.start_time}–${before.end_time}` : "—";
+        const newTime = `${after.start_time}–${after.end_time}`;
+        const amountLabel = change.action === "checked_out" ? "Collected" : "Quote";
+        const amount = change.action === "checked_out"
+          ? `₱${change.amount_after.toFixed(2)} via ${escapeBookingText(change.payment_method || "unknown")}`
+          : `₱${change.amount_before.toFixed(2)} → ₱${change.amount_after.toFixed(2)}`;
+        const when = new Date(change.event_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+        return `<div class="border-bottom py-2">
+          <div class="fw-semibold">${escapeBookingText(change.action.replaceAll("_", " "))}</div>
+          <div class="small">${escapeBookingText(oldTime)} → ${escapeBookingText(newTime)} · ${amountLabel}: ${amount}</div>
+          <div class="small text-muted">${escapeBookingText(when)} · ${escapeBookingText(change.actor)}</div>
+        </div>`;
+      }).join("");
+  } catch (_) {
+    body.textContent = "Could not load booking history.";
+  }
 }
 
 async function submitBooking(walkIn = false, button) {

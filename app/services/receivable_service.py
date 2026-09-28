@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from app.repositories.receivable_repository import ReceivableRepository
+from app.repositories.sales_repository import SalesRepository
+from app.utils.dates import manila_date
 from app.utils.payment import VALID_PAYMENT_METHODS
 
 
@@ -103,13 +105,24 @@ class ReceivableService:
                 raise ValueError
         except (InvalidOperation, ValueError, TypeError):
             return {"error": "Enter a valid payment amount with up to two decimal places."}, 400
+        day = manila_date(datetime.utcnow())
         try:
-            success = self.repo.record_payment(receivable_id, payment, received_by, payment_method, request_key)
+            with SalesRepository.method_lock(day, payment_method):
+                received_at = datetime.utcnow()
+                if manila_date(received_at) != day:
+                    return {"error": "The business day changed. Please retry."}, 409
+                success = self.repo.record_payment(
+                    receivable_id, payment, received_by, payment_method, request_key,
+                    received_at=received_at,
+                )
+                if success:
+                    self.repo.save()
         except ValueError as exc:
             return {"error": str(exc)}, 400
+        except TimeoutError as exc:
+            return {"error": str(exc)}, 503
         if not success:
             return {"error": "Receivable not found"}, 404
-        self.repo.save()
         from app.core.socketio_handlers import emit_receivable_marked_paid
 
         emit_receivable_marked_paid(receivable_id)
@@ -128,11 +141,21 @@ class ReceivableService:
                 raise ValueError
         except (InvalidOperation, ValueError, TypeError):
             return {"error": "Enter a valid payment amount with up to two decimal places."}, 400
+        day = manila_date(datetime.utcnow())
         try:
-            remaining = self.repo.record_customer_payment(customer_name, payment, received_by, payment_method, customer_contact, request_key)
+            with SalesRepository.method_lock(day, payment_method):
+                received_at = datetime.utcnow()
+                if manila_date(received_at) != day:
+                    return {"error": "The business day changed. Please retry."}, 409
+                remaining = self.repo.record_customer_payment(
+                    customer_name, payment, received_by, payment_method,
+                    customer_contact, request_key, received_at=received_at,
+                )
+                self.repo.save()
         except ValueError as exc:
             return {"error": str(exc)}, 400
-        self.repo.save()
+        except TimeoutError as exc:
+            return {"error": str(exc)}, 503
         return {"success": True, "remaining": float(remaining)}
 
     def list_customer_payments(self, customer_name: str, customer_contact: str = "") -> list[dict[str, Any]]:

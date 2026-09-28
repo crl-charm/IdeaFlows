@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -16,6 +16,9 @@ class PayableRepository:
 
     def get_for_update(self, payable_id: int) -> Optional[Payable]:
         return Payable.query.filter_by(id=payable_id).with_for_update().first()
+
+    def get_payment_by_request_key(self, request_key: str) -> Optional[PayablePayment]:
+        return PayablePayment.query.filter_by(request_key=request_key).first()
 
     def list_all(self) -> list[Payable]:
         return (
@@ -47,22 +50,17 @@ class PayableRepository:
         db.session.flush()
         return payable
 
-    def mark_paid(self, payable_id: int, amount: Decimal | None, payment_method: str, paid_by: int, request_key: str | None = None) -> PayablePayment | None:
-        payable = self.get_for_update(payable_id)
-        if not payable:
-            return None
-        if request_key and PayablePayment.query.filter_by(request_key=request_key).first():
-            raise ValueError("This payment was already recorded.")
+    def record_payment(self, payable: Payable, paid: Decimal, payment_method: str, paid_by: int,
+                       request_key: str | None, paid_at: datetime, funding_source: str,
+                       method_balance_before: Decimal, method_balance_after: Decimal) -> PayablePayment:
         before = payable.amount_owed - payable.partial_paid
-        paid = before if amount is None else amount
-        if before <= 0 or paid <= 0 or paid > before:
-            raise ValueError(f"Payment must be between ₱0.01 and ₱{before:.2f}.")
         payable.partial_paid += paid
         payable.status = "Paid" if payable.partial_paid == payable.amount_owed else "Partially Paid"
         payment = PayablePayment(
             payable_id=payable.id, amount=paid, payment_method=payment_method,
             paid_by=paid_by, balance_before=before, balance_after=before - paid,
-            request_key=request_key,
+            request_key=request_key, paid_at=paid_at, funding_source=funding_source,
+            method_balance_before=method_balance_before, method_balance_after=method_balance_after,
         )
         db.session.add(payment)
         return payment

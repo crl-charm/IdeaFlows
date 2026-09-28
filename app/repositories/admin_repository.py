@@ -6,14 +6,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, User, StaffPerformanceLog
+from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, User
 from app.models.space_price_history import SpacePriceHistory
 
 
 class AdminRepository:
     def list_staff_paginated(self, page: int, per_page: int):
         return (
-            User.query.filter_by(role="staff")
+            User.query.filter_by(role="staff", is_active=True)
             .order_by(User.created_at.desc())
             .paginate(page=page, per_page=per_page, error_out=False)
         )
@@ -49,7 +49,7 @@ class AdminRepository:
             db.session.commit()
 
     def get_staff_user(self, user_id: int):
-        return User.query.filter_by(id=user_id, role="staff").first()
+        return User.query.filter_by(id=user_id, role="staff", is_active=True).first()
 
     def username_exists_for_other(self, username: str, user_id: int) -> bool:
         existing_user = User.query.filter_by(username=username).first()
@@ -58,14 +58,10 @@ class AdminRepository:
         existing_admin = Admin.query.filter_by(username=username).first()
         return bool(existing_admin)
 
-    def delete_staff_attendance(self, user_id: int) -> None:
-        StaffAttendance.query.filter_by(user_id=user_id).delete(synchronize_session=False)
-        StaffPerformanceLog.query.filter_by(user_id=user_id).delete(synchronize_session=False)
-        db.session.commit()
-
-    def clear_user_orders(self, user_id: int) -> None:
-        Order.query.filter_by(handled_by=user_id).update({"handled_by": None}, synchronize_session=False)
-        db.session.commit()
+    def deactivate_staff(self, user: User, ended_at: datetime) -> None:
+        user.is_active = False
+        for row in StaffAttendance.query.filter_by(user_id=user.id, time_out=None).all():
+            row.time_out = ended_at
 
     def list_customer_sessions(self) -> list[CustomerSession]:
         return (

@@ -152,6 +152,13 @@ def delete_user(user_id):
     if isinstance(resp, tuple):
         body, status = resp
         return jsonify(body), status
+    if current_app.config.get("SINGLE_SESSION_ENABLED"):
+        try:
+            current_app.extensions["session_leases"].revoke(f"staff:{user_id}")
+        except SessionLeaseUnavailable:
+            import logging
+            logging.getLogger("security").warning("Could not revoke deactivated staff lease for user_id=%s", user_id)
+    emit_session_revoked(user_id)
     return jsonify(resp)
 
 

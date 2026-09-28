@@ -34,6 +34,8 @@
     </div>
   </div>
 
+  {% include "partials/receivable_collection_cards.html" %}
+
   <div class="card mb-4">
     <div class="card-header"><h5 class="mb-0">Customer tabs</h5></div>
     <div class="card-body table-responsive">
@@ -162,6 +164,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/receivable-collections.js') }}"></script>
 <script>
 let receivablesCache = [];
 const escapeReceivableText = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -308,6 +311,7 @@ async function recordStaffPayment() {
     if (!response.ok || !data?.success) throw new Error(data?.error || 'Server error. Check payment history before retrying.');
     recorded = true;
     await loadReceivables();
+    window.refreshReceivableCollections?.();
     openStaffTab(customerName, customerContact);
     showToast(`Payment recorded. ₱${data.remaining.toFixed(2)} still owed.`, 'success');
   } catch (error) {

@@ -83,7 +83,7 @@ def test_customer_tab_payment_covers_all_orders_and_logs_one_payment(app):
 
     stats = client.get("/admin/daily-balance/api/today-stats").get_json()["data"]
     assert stats["cash_on_hand"] == 50
-    assert stats["expected_to_collect"] == 80
+    assert stats["expected_to_collect"] == 0
     assert stats["receivables_paid_today"] == 1
 
     _auth(client, "admin")
@@ -178,6 +178,44 @@ def test_staff_daily_balance_separates_cash_expenses_and_expected_collections(ap
     assert response.status_code == 200
     stats = response.get_json()["data"]
     assert stats["cash_on_hand"] == 310
-    assert stats["expected_to_collect"] == 100
-    assert stats["expected_cash_on_hand"] == 410
+    assert stats["expected_to_collect"] == 0
+    assert stats["expected_cash_on_hand"] == 310
     assert stats["receivables_collected_today"] == 100
+
+
+def test_still_to_collect_counts_active_session_bills_only(app):
+    with app.app_context():
+        space = SpaceType(name="Regular Lounge", rate_per_minute=Decimal("0.1667"))
+        db.session.add(space)
+        db.session.flush()
+        active = CustomerSession(customer_name="Visitor", space_type_id=space.id,
+                                 time_in=datetime.utcnow(), status="active")
+        db.session.add(active)
+        db.session.flush()
+        db.session.add_all([
+            Receivable(customer_name="Old tab", items_description="Snack", amount_owed=Decimal("200"),
+                       due_date=datetime.utcnow().date(), created_by=1),
+            Receivable(customer_name="Linked tab", items_description="Meal", amount_owed=Decimal("75"),
+                       due_date=datetime.utcnow().date(), created_by=1, session_id=active.id),
+        ])
+        db.session.commit()
+        active_id = active.id
+
+    client = app.test_client()
+    _auth(client)
+    page = client.get("/admin/daily-balance")
+    assert b'id="today-receivables-collected"' in page.data
+    assert b'id="total-collections"' not in page.data
+    assert b'id="total-other-income"' not in page.data
+    assert b'id="total-budget-spend"' not in page.data
+    assert b"Active customer sessions only" in page.data
+
+    stats = client.get("/admin/daily-balance/api/today-stats").get_json()["data"]
+    assert (stats["expected_to_collect"], stats["expected_cash_on_hand"]) == (10, 10)
+
+    with app.app_context():
+        db.session.get(CustomerSession, active_id).status = "completed"
+        db.session.commit()
+        assert Receivable.query.count() == 2
+    stats = client.get("/admin/daily-balance/api/today-stats").get_json()["data"]
+    assert (stats["expected_to_collect"], stats["expected_cash_on_hand"]) == (0, 0)

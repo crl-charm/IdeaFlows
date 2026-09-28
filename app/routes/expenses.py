@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from math import isfinite
-
 from flask import Blueprint, jsonify, request, render_template, session
 
 from app import csrf
@@ -43,17 +41,10 @@ def api_create_expense() -> tuple:
     if not user_id:
         return jsonify({"success": False, "error": "User session not found"}), 400
     
-    try:
-        amount = float(data.get("amount"))
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "Invalid amount"}), 400
-    if not isfinite(amount) or amount <= 0:
-        return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
-
     result = _service.create(
         category=data.get("category"),
         description=data.get("description"),
-        amount=amount,
+        amount=data.get("amount"),
         expense_date=data.get("expense_date"),
         logged_by=user_id,
         payment_method=data.get("payment_method"),

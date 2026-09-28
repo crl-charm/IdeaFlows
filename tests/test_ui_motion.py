@@ -42,10 +42,10 @@ def test_skeleton_is_non_blocking_and_has_script_failure_failsafe():
     assert "window.setTimeout(revealContent, 1500)" in MOTION_JS
 
 
-def test_motion_layer_supports_cross_page_navigation_and_reduced_motion():
-    assert "@view-transition" in MOTION_CSS
-    assert "navigation: auto" in MOTION_CSS
-    assert "::view-transition-new(root)" in MOTION_CSS
+def test_motion_layer_uses_page_entrance_without_browser_view_transitions():
+    assert "@view-transition" not in MOTION_CSS
+    assert "view-transition-name" not in MOTION_CSS
+    assert "ih-content-in" in MOTION_CSS
     assert "@media (prefers-reduced-motion: reduce)" in MOTION_CSS
     assert "scroll-behavior: auto" in MOTION_CSS
     reduced_motion = MOTION_CSS.split("@media (prefers-reduced-motion: reduce)", 1)[1]

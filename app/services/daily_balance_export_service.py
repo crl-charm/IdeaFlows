@@ -17,7 +17,9 @@ class DailyBalanceExportService(ExportService):
 
     PDF_TEMPLATE = "admin/daily_balance_report_pdf.html"
     METHODS = ("cash", "gcash", "bdo", "bpi", "queenbank", "unclassified")
-    FLOWS = ("checkout", "collection", "adjustment_income", "expense", "payable", "adjustment_expense")
+    FLOWS = ("checkout", "collection", "adjustment_income", "expense", "external_expense",
+             "expense_paid", "expense_void", "payable", "external_payable", "payable_paid",
+             "adjustment_expense")
 
     @staticmethod
     def _period_label(reports: list[dict[str, Any]]) -> str:
@@ -61,8 +63,12 @@ class DailyBalanceExportService(ExportService):
             "soft_entries": soft_entries,
             "total_revenue": sum(r["total_revenue"] for r in reports),
             "total_expenses": sum(r["total_expenses"] for r in reports),
+            "total_business_expenses": sum(r.get("total_business_expenses", 0) for r in reports),
+            "total_external_expenses": sum(r.get("total_external_expenses", 0) for r in reports),
             "total_collections": sum(r.get("total_collections", 0) for r in reports),
             "total_payables_paid": sum(r.get("total_payables_paid", 0) for r in reports),
+            "total_business_payables_paid": sum(r.get("total_business_payables_paid", 0) for r in reports),
+            "total_external_payables_paid": sum(r.get("total_external_payables_paid", 0) for r in reports),
             "total_other_income": sum(r.get("total_other_income", 0) for r in reports),
             "total_budget_spend": sum(r.get("total_budget_spend", 0) for r in reports),
             "net_balance": sum(r["net_balance"] for r in reports),
@@ -104,7 +110,11 @@ class DailyBalanceExportService(ExportService):
                 "QueenBank",
                 "Unclassified Checkout",
                 "Total Expenses",
+                "Business Expenses",
+                "External-funded Expenses",
                 "Supplier Paid",
+                "Business Supplier Paid",
+                "External-funded Supplier Paid",
                 "Other Income",
                 "Budget Spent",
                 "Net Balance",
@@ -129,7 +139,11 @@ class DailyBalanceExportService(ExportService):
                 "QueenBank": f"₱{report.get('queenbank_total', 0):.2f}",
                 "Unclassified Checkout": f"₱{report.get('unclassified_total', 0):.2f}",
                 "Total Expenses": f"₱{report['total_expenses']:.2f}",
+                "Business Expenses": f"₱{report.get('total_business_expenses', 0):.2f}",
+                "External-funded Expenses": f"₱{report.get('total_external_expenses', 0):.2f}",
                 "Supplier Paid": f"₱{report.get('total_payables_paid', 0):.2f}",
+                "Business Supplier Paid": f"₱{report.get('total_business_payables_paid', 0):.2f}",
+                "External-funded Supplier Paid": f"₱{report.get('total_external_payables_paid', 0):.2f}",
                 "Other Income": f"₱{report.get('total_other_income', 0):.2f}",
                 "Budget Spent": f"₱{report.get('total_budget_spend', 0):.2f}",
                 "Net Balance": f"₱{report['net_balance']:.2f}",
@@ -254,6 +268,14 @@ class DailyBalanceExportService(ExportService):
         ws["B18"] = sum(r.get("total_other_income", 0) for r in reports)
         ws["A19"] = "Budget Spent:"
         ws["B19"] = sum(r.get("total_budget_spend", 0) for r in reports)
+        ws["A20"] = "Business Expenses:"
+        ws["B20"] = sum(r.get("total_business_expenses", 0) for r in reports)
+        ws["A21"] = "External-funded Expenses:"
+        ws["B21"] = sum(r.get("total_external_expenses", 0) for r in reports)
+        ws["A22"] = "Business Supplier Paid:"
+        ws["B22"] = sum(r.get("total_business_payables_paid", 0) for r in reports)
+        ws["A23"] = "External-funded Supplier Paid:"
+        ws["B23"] = sum(r.get("total_external_payables_paid", 0) for r in reports)
 
     @staticmethod
     def _create_details_sheet(ws, reports: list[dict[str, Any]]) -> None:
@@ -286,6 +308,10 @@ class DailyBalanceExportService(ExportService):
             "Notes",
             "Other Income",
             "Budget Spent",
+            "Business Expenses",
+            "External-funded Expenses",
+            "Business Supplier Paid",
+            "External-funded Supplier Paid",
         ]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col)
@@ -316,15 +342,19 @@ class DailyBalanceExportService(ExportService):
                 report["notes"] or "",
                 report.get("total_other_income", 0),
                 report.get("total_budget_spend", 0),
+                report.get("total_business_expenses", 0),
+                report.get("total_external_expenses", 0),
+                report.get("total_business_payables_paid", 0),
+                report.get("total_external_payables_paid", 0),
             ]
             for col, value in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col)
                 cell.value = value
                 cell.border = border
-                if 2 <= col <= 12 or col in (18, 19):
+                if 2 <= col <= 12 or col in (18, 19, 20, 21, 22, 23):
                     cell.number_format = "₱#,##0.00"
 
-        for col, width in zip("ABCDEFGHIJKLMNOPQRS", [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 10, 10, 15, 25, 25, 15, 15]):
+        for col, width in zip("ABCDEFGHIJKLMNOPQRSTUVW", [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 10, 10, 15, 25, 25, 15, 15, 15, 15, 15, 15]):
             ws.column_dimensions[col].width = width
 
     @staticmethod

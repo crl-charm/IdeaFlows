@@ -13,6 +13,8 @@
             <small id="booking-count" class="text-muted">0 bookings</small>
         </div>
 
+        <a class="btn btn-warning" href="/lounge-booking">Walk-in or advance booking</a>
+
     </div>
 
     <div id="booking-container" class="row"></div>
@@ -22,44 +24,6 @@
     </div>
 
 </div>
-
-<!-- BOOKING MODAL -->
-<div class="modal fade" id="bookingModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-
-      <div class="modal-header">
-        <h5 class="modal-title">Book Boardroom</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-
-      <div class="modal-body">
-
-        <input id="name" class="form-control mb-2" placeholder="Customer Name">
-        <input id="date" type="date" class="form-control mb-2">
-        <input id="start" type="time" class="form-control mb-2">
-        <input id="end" type="time" class="form-control mb-2">
-        <input id="people" type="number" class="form-control mb-2" placeholder="Number of People">
-        <input id="purpose" class="form-control mb-2" placeholder="Purpose">
-
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" onclick="bookBoardroom()">Book</button>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<!-- FLOATING BUTTON -->
-<button id="floatingAddBtn"
-    class="btn btn-success"
-    data-bs-toggle="modal"
-    data-bs-target="#bookingModal">
-    +
-</button>
 
 {% endblock %}
 
@@ -109,52 +73,6 @@ function loadBookings() {
             `;
         });
 
-    });
-}
-
-
-// BOOK FUNCTION
-function bookBoardroom() {
-
-    csrfFetch("/api/book-boardroom", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            customer_name: document.getElementById("name").value,
-            date: document.getElementById("date").value,
-            start_time: document.getElementById("start").value,
-            end_time: document.getElementById("end").value,
-            number_of_people: document.getElementById("people").value,
-            purpose: document.getElementById("purpose").value
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-
-        if (data.error) {
-            showToast(data.error, "error");
-            return;
-        }
-
-        showToast("Booking successful!", "success");
-
-        let modal = bootstrap.Modal.getInstance(document.getElementById('bookingModal'));
-        modal.hide();
-
-        // Clear form
-        document.getElementById("name").value = "";
-        document.getElementById("date").value = "";
-        document.getElementById("start").value = "";
-        document.getElementById("end").value = "";
-        document.getElementById("people").value = "";
-        document.getElementById("purpose").value = "";
-
-        loadBookings();
-    })
-    .catch(err => {
-        showToast("An error occurred. Please try again.", "error");
     });
 }
 

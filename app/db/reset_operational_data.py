@@ -16,6 +16,7 @@ from app.models.menu_category import MenuCategory
 ACCOUNT_TABLES = {"admins", "users"}
 RESET_TABLES = {
     "boardroom_bookings",
+    "booking_changes",
     "customer_sessions",
     "daily_sales_reports",
     "expenses",

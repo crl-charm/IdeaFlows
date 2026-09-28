@@ -20,9 +20,9 @@
           <span class="fw-semibold text-secondary small"><i class="bi bi-funnel me-1"></i> Filter Expenses:</span>
         </div>
         <div class="col-12 col-sm-auto d-flex align-items-center gap-2">
-          <input type="date" id="filterStartDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="renderFilteredExpenses()">
+          <input type="date" id="filterStartDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="loadExpenses()">
           <span class="text-muted small">to</span>
-          <input type="date" id="filterEndDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="renderFilteredExpenses()">
+          <input type="date" id="filterEndDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="loadExpenses()">
         </div>
         <div class="col-12 col-md-auto ms-md-auto d-flex flex-wrap gap-1">
           <button class="btn btn-sm btn-outline-secondary" onclick="setDateFilterPreset('today')">Today</button>
@@ -34,16 +34,8 @@
     </div>
   </div>
 
-  <div class="row mb-4">
-    <div class="col-md-3">
-      <div class="card bg-info text-white">
-        <div class="card-body">
-          <h5 class="card-title">Total Expenses</h5>
-          <p class="card-text display-6">₱<span id="total-expenses">0.00</span></p>
-        </div>
-      </div>
-    </div>
-  </div>
+  <p class="text-muted small mb-2">Net spending by payment method for the selected Manila business dates. Owner/external-funded expenses stay outside business funds. A later void appears on its reversal date.</p>
+  <div class="row g-3 mb-4" id="expense-method-cards" aria-live="polite"></div>
 
   <div class="card">
     <div class="card-header">
@@ -113,8 +105,9 @@
           <input type="number" id="amount" class="form-control" step="0.01" required>
         </div>
         <div class="mb-3">
-          <label class="form-label">Expense Date *</label>
+          <label class="form-label">Receipt / Expense Date *</label>
           <input type="date" id="expenseDate" class="form-control" required>
+          <small class="text-muted">Daily Balance uses the Manila date when you log this payment.</small>
         </div>
         <div class="mb-3">
           <label class="form-label" for="expensePaymentMethod">Paid using *</label>
@@ -137,6 +130,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/expense-summary.js') }}"></script>
 <script>
 // Socket.IO for real-time updates
 const socket = window.getIdeaFlowSocket();
@@ -153,6 +147,8 @@ if (socket) socket.on('disconnect', function() {
 });
 
 let expensesCache = [];
+let reportsCache = [];
+let expenseLoadId = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
   // Set default filter date range to today's local date
@@ -193,15 +189,27 @@ function setDateFilterPreset(preset) {
     document.getElementById('filterStartDate').value = '';
     document.getElementById('filterEndDate').value = '';
   }
-  renderFilteredExpenses();
+  loadExpenses();
 }
 
 function loadExpenses() {
-  fetch('/admin/expenses/api/expenses').then(r => r.json()).then(data => {
-    if (data.success) {
-      expensesCache = data.data;
-      renderFilteredExpenses();
-    }
+  const requestId = ++expenseLoadId;
+  const params = new URLSearchParams();
+  const start = document.getElementById('filterStartDate').value;
+  const end = document.getElementById('filterEndDate').value;
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  Promise.all([
+    fetch('/admin/expenses/api/expenses').then(r => r.json()),
+    fetch(`/admin/daily-balance/api/reports?${params}`).then(r => r.json())
+  ]).then(([expenses, reports]) => {
+    if (requestId !== expenseLoadId) return;
+    if (!expenses.success || !reports.success) throw new Error('Could not load expenses');
+    expensesCache = expenses.data;
+    reportsCache = reports.data;
+    renderFilteredExpenses();
+  }).catch(() => {
+    if (requestId === expenseLoadId) showToast('Could not load expense history and totals.', 'error');
   });
 }
 
@@ -210,27 +218,24 @@ function renderFilteredExpenses() {
   const endDateVal = document.getElementById('filterEndDate').value;
   
   // Filter expenses
-  const filtered = expensesCache.filter(exp => {
-    if (startDateVal && exp.expense_date < startDateVal) return false;
-    if (endDateVal && exp.expense_date > endDateVal) return false;
-    return true;
-  });
+  const inRange = date => date && (!startDateVal || date >= startDateVal) && (!endDateVal || date <= endDateVal);
+  const filtered = expensesCache.filter(exp => inRange(exp.business_date) || inRange(exp.void_business_date));
 
   const tbody = document.getElementById('expenses-table-body');
   tbody.innerHTML = '';
-  let totalExp = 0;
-
   filtered.forEach(exp => {
-    if (!exp.voided_at) totalExp += exp.amount;
+    const funding = exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
+    const balance = exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`;
+    const voidBalance = exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`;
     tbody.innerHTML += `
       <tr>
-        <td>${exp.expense_date}</td>
-        <td><span class="badge bg-secondary">${exp.category}</span></td>
-        <td>${exp.description}</td>
+        <td>${exp.business_date}${exp.expense_date !== exp.business_date ? `<div class="small text-muted">Receipt: ${exp.expense_date}</div>` : ''}</td>
+        <td><span class="badge bg-secondary">${escapeHTML(exp.category)}</span></td>
+        <td>${escapeHTML(exp.description)}</td>
         <td>₱${exp.amount.toFixed(2)}</td>
-        <td>${exp.payment_method}</td>
-        <td>${exp.logged_by}</td>
-        <td>${exp.voided_at ? `Voided by ${exp.voided_by}: ${exp.void_reason}` : 'Active'}</td>
+        <td>${escapeHTML(exp.payment_method.toUpperCase())}<div class="small">${funding}</div>${balance}</td>
+        <td>${escapeHTML(exp.logged_by)}</td>
+        <td>${exp.voided_at ? `Voided ${exp.void_business_date} by ${escapeHTML(exp.voided_by || '')}: ${escapeHTML(exp.void_reason || '')}${voidBalance}` : 'Active'}</td>
         <td>${exp.voided_at ? '' : `<button class="btn btn-sm btn-danger" onclick="deleteExpense(${exp.id}, this)">Void</button>`}</td>
       </tr>
     `;
@@ -240,7 +245,7 @@ function renderFilteredExpenses() {
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No expenses found for this range.</td></tr>';
   }
 
-  document.getElementById('total-expenses').textContent = totalExp.toFixed(2);
+  window.renderExpenseCards(reportsCache, startDateVal, endDateVal, document.getElementById('expense-method-cards'));
 }
 
 async function createExpense() {
@@ -276,7 +281,7 @@ async function createExpense() {
     }));
     if (!data) return;
     if (data.success) {
-      showToast('Expense logged', 'success');
+      showToast(data.data.funding_source === 'external' ? 'Expense logged as externally funded; business balance unchanged.' : 'Expense logged', 'success');
       bootstrap.Modal.getInstance(document.getElementById('addExpenseModal')).hide();
       document.getElementById('category').value = '';
       document.getElementById('description').value = '';
