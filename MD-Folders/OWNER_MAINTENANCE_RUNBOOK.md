@@ -169,6 +169,8 @@ separate required improvements.
 
 ### One-time operational data reset (keep accounts)
 
+**This reset also deletes configured spaces, prices, menu, and inventory.** For the client handoff that keeps those settings, use [CLIENT_HANDOFF_DATA_CLEANUP.md](CLIENT_HANDOFF_DATA_CLEANUP.md) instead.
+
 Use only after deploying `app/db/reset_operational_data.py`. Schedule downtime,
 ask everyone to log out, stop the app, and complete the verified database backup
 above before executing the reset. Check that the preview names the expected

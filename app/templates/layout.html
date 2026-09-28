@@ -339,6 +339,11 @@
     </a>
 
     <div class="d-flex align-items-center gap-2 ms-auto d-md-none">
+      {% if session.get("role") == "staff" %}
+      <button type="button" class="btn btn-link nav-link p-1" onclick="openStaffShift()" aria-label="Staff Time In or Time Out" title="Time In / Out">
+        <i class="bi bi-clock-history fs-5 text-secondary" aria-hidden="true"></i>
+      </button>
+      {% endif %}
       <a class="nav-link p-1 position-relative" href="/orders" aria-label="Orders">
         <i class="bi bi-bag fs-5 text-secondary"></i>
         <span id="orders-badge-mobile"
@@ -354,6 +359,9 @@
     <div class="collapse navbar-collapse d-none d-md-flex" id="mainNavbarNav">
       <div class="ms-auto d-flex gap-2">
 
+        {% if session.get("role") == "staff" %}
+        <button type="button" class="btn btn-link text-decoration-none nav-link top-nav-link d-inline me-3" onclick="openStaffShift()">Time In / Out</button>
+        {% endif %}
         <a class="nav-link top-nav-link d-inline me-3" href="/orders">
           Orders
           <span id="orders-badge" class="badge text-bg-warning ms-2"
@@ -551,6 +559,50 @@
 
   </div>
 
+
+  {% if session.get("role") == "staff" %}
+  <div class="modal fade" id="staffShiftModal" tabindex="-1" aria-labelledby="staffShiftModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="staffShiftModalTitle"><i class="bi bi-clock-history me-2"></i>Staff Time In / Out</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="staffShiftForm">
+          <div class="modal-body">
+            <p class="text-muted small">Enter the date and time you actually started or ended work (Asia/Manila).</p>
+            <div class="mb-3">
+              <label class="form-label" for="staffShiftName">Name</label>
+              <input id="staffShiftName" class="form-control" type="text" readonly>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="staffShiftRole">Shift role</label>
+              <select id="staffShiftRole" class="form-select" required>
+                <option value="general">General Staff</option>
+                <option value="cashier">Cashier</option>
+                <option value="cook">Cook</option>
+                <option value="server">Server</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="staffShiftTimeIn">Time In (date and time)</label>
+              <input id="staffShiftTimeIn" class="form-control" type="datetime-local" required>
+            </div>
+            <div class="mb-2">
+              <label class="form-label" for="staffShiftTimeOut">Time Out (date and time)</label>
+              <input id="staffShiftTimeOut" class="form-control" type="datetime-local" disabled>
+              <div class="form-text" id="staffShiftHelp">Time Out stays blank until you save Time In.</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-warning" id="staffShiftSave">Save Time In</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- IdeaHub Toast Container -->
   <div id="ih-toast-container"></div>
@@ -1269,6 +1321,63 @@
       }
       window.createSmartPoller(poll, 60000);
     })();
+  </script>
+  {% endif %}
+
+  {% if session.get("role") == "staff" %}
+  <script>
+    let staffOpenShift = null;
+
+    async function refreshStaffShift() {
+      const data = await fetchJSON('/api/staff-shift', { credentials: 'include' });
+      staffOpenShift = data.open_shift;
+      const role = document.getElementById('staffShiftRole');
+      const timeIn = document.getElementById('staffShiftTimeIn');
+      const timeOut = document.getElementById('staffShiftTimeOut');
+      document.getElementById('staffShiftName').value = data.name;
+      role.value = staffOpenShift ? staffOpenShift.role : data.account_role;
+      role.disabled = !!staffOpenShift;
+      timeIn.value = staffOpenShift ? staffOpenShift.time_in : '';
+      timeIn.readOnly = !!staffOpenShift;
+      timeOut.value = '';
+      timeOut.disabled = !staffOpenShift;
+      timeOut.required = !!staffOpenShift;
+      document.getElementById('staffShiftSave').textContent = staffOpenShift ? 'Save Time Out' : 'Save Time In';
+      document.getElementById('staffShiftHelp').textContent = staffOpenShift
+        ? 'This shift remains open until you save Time Out, even after logging out.'
+        : 'Time Out stays blank until you save Time In.';
+    }
+
+    async function openStaffShift() {
+      try {
+        await refreshStaffShift();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('staffShiftModal')).show();
+      } catch (error) {
+        showToast(error.message || 'Could not load your shift.', 'error');
+      }
+    }
+
+    document.getElementById('staffShiftForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      const button = document.getElementById('staffShiftSave');
+      const ending = !!staffOpenShift;
+      const url = ending ? '/api/staff-shift/time-out' : '/api/staff-shift/time-in';
+      const payload = ending
+        ? { time_out: document.getElementById('staffShiftTimeOut').value }
+        : { role: document.getElementById('staffShiftRole').value, time_in: document.getElementById('staffShiftTimeIn').value };
+      try {
+        await runButtonAction(button, { label: 'Saving...' }, key => fetchJSON(url, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+          body: JSON.stringify(payload)
+        }));
+        await refreshStaffShift();
+        showToast(ending ? 'Time Out saved.' : 'Time In saved.', 'success');
+      } catch (error) {
+        if (error.status === 409) await refreshStaffShift();
+        showToast(error.message || 'Could not save your shift.', 'error');
+      }
+    });
   </script>
   {% endif %}
 

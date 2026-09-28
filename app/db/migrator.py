@@ -49,6 +49,7 @@ class SchemaMigrator:
             ("receivable_payments", "balance_after", "ALTER TABLE receivable_payments ADD COLUMN balance_after DECIMAL(10,2) NULL"),
             ("receivable_payments", "request_key", "ALTER TABLE receivable_payments ADD COLUMN request_key VARCHAR(200) NULL"),
             ("staff_attendance", "last_activity_at", "ALTER TABLE staff_attendance ADD COLUMN last_activity_at DATETIME NULL"),
+            ("staff_attendance", "show_in_history", "ALTER TABLE staff_attendance ADD COLUMN show_in_history BOOLEAN NOT NULL DEFAULT TRUE"),
             ("menu_items", "inventory_mode", "ALTER TABLE menu_items ADD COLUMN inventory_mode VARCHAR(16) NULL"),
             ("order_inventory_allocations", "menu_item_id", "ALTER TABLE order_inventory_allocations ADD COLUMN menu_item_id INTEGER NULL"),
             ("order_inventory_allocations", "ordered_units", "ALTER TABLE order_inventory_allocations ADD COLUMN ordered_units INTEGER NULL"),

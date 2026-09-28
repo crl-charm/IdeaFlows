@@ -10,5 +10,6 @@ class StaffAttendance(db.Model):
     time_in = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     time_out = db.Column(db.DateTime, nullable=True)
     last_activity_at = db.Column(db.DateTime, nullable=True)
+    show_in_history = db.Column(db.Boolean, default=True, server_default=db.true(), nullable=False)
 
     user = db.relationship("User", backref="attendance_records")

@@ -40,6 +40,7 @@ RESET_TABLES = {
     "space_price_history",
     "space_types",
     "staff_attendance",
+    "staff_shifts",
     "staff_performance_logs",
     "transactions",
 }

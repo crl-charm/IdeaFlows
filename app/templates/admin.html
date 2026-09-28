@@ -668,13 +668,15 @@
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Shift Role</th>
                 <th>Time In</th>
                 <th>Time Out</th>
+                <th>Source</th>
               </tr>
             </thead>
             <tbody id="staff-attendance-body">
               <tr>
-                <td colspan="3" class="text-center text-muted py-4">Loading...</td>
+                <td colspan="5" class="text-center text-muted py-4">Loading...</td>
               </tr>
             </tbody>
           </table>
@@ -1003,17 +1005,22 @@
 
   function loadStaffAttendanceData() {
     return fetch("/api/admin/staff-attendance", { credentials: "include" })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("Could not load staff shifts.");
+        return res.json();
+      })
       .then(data => {
         const body = document.getElementById("staff-attendance-body");
         if (!Array.isArray(data) || !data.length) {
-          body.innerHTML = `<tr><td colspan="3" class="text-center text-muted py-4">No staff attendance records yet.</td></tr>`;
+          body.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No staff shifts recorded yet.</td></tr>`;
         } else {
           body.innerHTML = data.map(r => `
         <tr>
-          <td>${r.name}</td>
-          <td>${r.time_in}</td>
-          <td>${r.time_out}</td>
+          <td>${escapeHTML(r.name)}</td>
+          <td>${escapeHTML(r.shift_role)}</td>
+          <td>${escapeHTML(r.time_in)}</td>
+          <td>${escapeHTML(r.time_out)}</td>
+          <td>${escapeHTML(r.source)}</td>
         </tr>
       `).join("");
         }

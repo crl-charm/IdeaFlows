@@ -138,17 +138,37 @@ class AdminService:
 
     def staff_attendance(self):
         self.active_staff_ids()
+        shifts = self.repo.list_staff_shifts()
         logs = self.repo.list_staff_attendance()
-        return [
+        manual = [
+            {
+                "id": shift.id,
+                "name": shift.user.full_name,
+                "shift_role": shift.shift_role.title(),
+                "time_in": (shift.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
+                "time_out": (shift.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if shift.time_out else "Open shift",
+                "source": "Manual shift",
+                "sort_at": shift.time_in,
+            }
+            for shift in shifts if shift.user and shift.user.role == "staff"
+        ]
+        legacy = [
             {
                 "id": log.id,
                 "name": log.user.full_name,
+                "shift_role": "Not recorded",
                 "time_in": (log.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if log.time_in else "N/A",
                 "time_out": (log.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if log.time_out else "Active",
+                "source": "Legacy login record",
+                "sort_at": log.time_in,
             }
             for log in logs
             if log.user and log.user.role == "staff"
         ]
+        rows = sorted(manual + legacy, key=lambda row: row["sort_at"] or datetime.min, reverse=True)
+        for row in rows:
+            del row["sort_at"]
+        return rows
 
     def capacities(self):
         rows = self.repo.list_spaces_with_occupancy()

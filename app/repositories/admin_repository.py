@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, User
+from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, StaffAttendance, StaffShift, User
 from app.models.space_price_history import SpacePriceHistory
 
 
@@ -100,7 +100,15 @@ class AdminRepository:
     def list_staff_attendance(self) -> list[StaffAttendance]:
         return (
             StaffAttendance.query.options(selectinload(StaffAttendance.user))
+            .filter(StaffAttendance.show_in_history.is_(True))
             .order_by(StaffAttendance.time_in.desc())
+            .all()
+        )
+
+    def list_staff_shifts(self) -> list[StaffShift]:
+        return (
+            StaffShift.query.options(selectinload(StaffShift.user))
+            .order_by(StaffShift.time_in.desc())
             .all()
         )
 

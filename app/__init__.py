@@ -138,11 +138,13 @@ def create_app():
     # 1. Authentication & User Management Module
     from app.routes.auth_routes import bp as auth_bp
     from app.routes.user_routes import user_bp
+    from app.routes.staff_shifts import bp as staff_shifts_bp
     from app.routes.admin_routes import admin_bp
     from app.controllers.management_controller import ManagementController
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(user_bp)
+    app.register_blueprint(staff_shifts_bp)
     register_admin_blueprint(app, admin_bp)
 
     # 2. POS Operations & Space Management Module

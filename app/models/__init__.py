@@ -11,6 +11,7 @@ from .boardroom_booking import BoardroomBooking
 from .booking_change import BookingChange
 from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
+from .staff_shift import StaffShift
 from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
 from .receivable import Receivable, ReceivablePayment
 from .payable import Payable, PayablePayment
@@ -39,6 +40,7 @@ __all__ = [
     'BookingChange',
     'LoungeBooking',
     'StaffAttendance',
+    'StaffShift',
     'InventoryItem',
     'InventoryLog',
     'Receivable',

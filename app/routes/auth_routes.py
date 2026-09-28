@@ -207,7 +207,10 @@ def login_api():
                     obs.time_out = min(now_utc, obs.last_activity_at + timedelta(seconds=idle_seconds)) if obs.last_activity_at else now_utc
 
                 # Log attendance
-                attendance = StaffAttendance(user_id=account.id, time_in=now_utc, last_activity_at=now_utc)
+                attendance = StaffAttendance(
+                    user_id=account.id, time_in=now_utc, last_activity_at=now_utc,
+                    show_in_history=False,
+                )
                 db.session.add(attendance)
                 db.session.commit()
                 session["attendance_id"] = attendance.id

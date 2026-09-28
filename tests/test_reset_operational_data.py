@@ -9,7 +9,7 @@ from app import create_app, db
 from app.db.reset_operational_data import ACCOUNT_TABLES, RESET_TABLES, preview_reset, reset_operational_data
 from app.models import (
     Admin, BookingChange, BoardroomBooking, CustomerSession, InventoryItem, MenuItem, Order, OrderItem,
-    SpaceType, StaffAttendance, Transaction, User,
+    SpaceType, StaffAttendance, StaffShift, Transaction, User,
 )
 
 
@@ -33,7 +33,8 @@ def test_operational_reset_preserves_accounts_and_reseeds_defaults(app):
         inventory = InventoryItem(menu_item_id=menu.id, stock_qty=10)
         customer = CustomerSession(customer_name="Guest", space_type_id=space.id)
         attendance = StaffAttendance(user_id=1)
-        db.session.add_all([inventory, customer, attendance])
+        db.session.add_all([inventory, customer, attendance,
+                            StaffShift(user_id=1, shift_role="cashier", time_in=datetime(2026, 9, 25, 1))])
         db.session.commit()
 
         order = Order(customer_session_id=customer.id, handled_by=1)
@@ -58,6 +59,7 @@ def test_operational_reset_preserves_accounts_and_reseeds_defaults(app):
         assert before["order_items"] == before["transactions"] == 1
         assert before["booking_changes"] == 1
         assert before["staff_attendance"] == 1
+        assert before["staff_shifts"] == 1
         assert before["menu_items"] == 1
 
         with pytest.raises(ValueError, match="Database name does not match"):
