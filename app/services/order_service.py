@@ -152,6 +152,7 @@ class OrderService:
                 "session_id": session_id,
                 "customer_name": sess.customer_name if sess else None,
                 "space_type": sess.space_type.name if sess and sess.space_type else None,
+                "service_mode": sess.service_mode if sess else "timed",
                 "time_in": (sess.time_in + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p") if sess and sess.time_in else None,
                 "orders": [],
                 "food_total": 0.0,
@@ -189,6 +190,7 @@ class OrderService:
             "session_id": session_id,
             "customer_name": sess.customer_name,
             "space_type": sess.space_type.name if sess.space_type else None,
+            "service_mode": sess.service_mode,
             "time_in": (sess.time_in + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p") if sess.time_in else None,
             "orders": order_list,
             "food_total": float(food_total),
@@ -221,6 +223,7 @@ class OrderService:
                     "session_id": sess.id,
                     "customer_name": sess.customer_name,
                     "space_type": sess.space_type.name if sess.space_type else "N/A",
+                    "service_mode": sess.service_mode,
                     "time_in": (sess.time_in + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p")
                     if sess.time_in
                     else "N/A",

@@ -24,20 +24,23 @@
           <hr>
 
           <div class="mb-3">
-            <p><strong>Space:</strong> {{ space_name }}</p>
+            <p><strong>{{ 'Location' if food_only else 'Space' }}:</strong> {{ space_name }}</p>
+            {% if food_only %}<p><strong>Order type:</strong> Food only</p>{% else %}
             <p><strong>Time In:</strong> {{ time_in }}</p>
             <p><strong>Time Out:</strong> {{ time_out }}</p>
             <p><strong>Duration:</strong> {{ duration_minutes }} minutes</p>
+            {% endif %}
           </div>
 
           <hr>
 
           <h5 class="mb-3">Bill Summary</h5>
+          {% if is_voided %}<p class="text-danger fw-semibold">Voided checkout — retained for history</p>{% endif %}
           <div class="mb-3">
-            <div class="d-flex justify-content-between mb-2">
+            {% if not food_only %}<div class="d-flex justify-content-between mb-2">
               <span>Time Charges:</span>
               <span>₱{{ "%.2f"|format(time_bill) }}</span>
-            </div>
+            </div>{% endif %}
             <div class="d-flex justify-content-between mb-2">
               <span>Food/Items:</span>
               <span>₱{{ "%.2f"|format(food_bill) }}</span>
@@ -72,9 +75,10 @@
 
           <div class="mb-3">
             <p><strong>Payment Method:</strong> {{ payment_method }}</p>
-            {% if amount_tendered %}
+            {% if credit_applied %}<p><strong>Credit applied:</strong> ₱{{ "%.2f"|format(credit_applied) }}</p>{% endif %}
+            {% if amount_tendered is not none %}
             <p><strong>Amount Tendered:</strong> ₱{{ "%.2f"|format(amount_tendered) }}</p>
-            <p><strong>Change:</strong> ₱{{ "%.2f"|format(amount_tendered - total_bill) }}</p>
+            <p><strong>Change:</strong> ₱{{ "%.2f"|format(change_given) }}</p>
             {% endif %}
           </div>
 

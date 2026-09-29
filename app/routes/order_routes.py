@@ -82,7 +82,11 @@ def get_session_orders(session_id):
 @order_bp.route("/order/<int:session_id>")
 @login_required
 def order_page(session_id):
-    return render_template("order.html", session_id=session_id)
+    sess = OrderRepository().get_session(session_id)
+    return render_template(
+        "order.html", session_id=session_id,
+        return_url="/food-orders" if sess and sess.service_mode == "food_only" else "/dashboard",
+    )
 
 
 # ----------------------------------

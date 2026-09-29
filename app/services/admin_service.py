@@ -105,14 +105,17 @@ class AdminService:
             for order in s.orders:
                 for item in order.items:
                     ordered_items.append(f"{item.menu_item.name} x{item.quantity}")
+            food_only = s.service_mode == "food_only"
             records.append(
                 {
                     "id": s.id,
                     "name": s.customer_name,
                     "orders": ", ".join(ordered_items) if ordered_items else "No orders",
                     "room": s.space_type.name if s.space_type else "N/A",
-                    "time_in": (s.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if s.time_in else "N/A",
-                    "time_out": (s.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if s.time_out else "Active",
+                    "time_in": "Food only" if food_only else (s.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
+                    "time_out": "Food only" if food_only else (
+                        (s.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if s.time_out else "Active"
+                    ),
                 }
             )
         return records
@@ -191,6 +194,8 @@ class AdminService:
         space = self.repo.get_space(space_id)
         if not space:
             return {"error": "Space not found."}, 404
+        if space.name == "Take Out":
+            return {"error": "Take Out has no seating capacity."}, 400
         cap = int(capacity) if capacity not in (None, "", 0) else None
         space.capacity = cap
         self.repo.save()

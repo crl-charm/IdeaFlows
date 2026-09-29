@@ -1098,7 +1098,7 @@ async function submitOrder() {
 }
 
 function goBack() {
-  window.location.href = "/dashboard";
+  window.location.href = {{ return_url|tojson }};
 }
 
 // Setup search

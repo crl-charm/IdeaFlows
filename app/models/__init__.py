@@ -7,6 +7,7 @@ from .menu_item import MenuItem, MenuItemIngredient
 from .order import Order
 from .order_item import OrderItem
 from .transaction import Transaction
+from .checkout_void import CheckoutVoidRequest
 from .boardroom_booking import BoardroomBooking
 from .booking_change import BookingChange
 from .lounge_booking import LoungeBooking
@@ -36,6 +37,7 @@ __all__ = [
     'Order',
     'OrderItem',
     'Transaction',
+    'CheckoutVoidRequest',
     'BoardroomBooking',
     'BookingChange',
     'LoungeBooking',

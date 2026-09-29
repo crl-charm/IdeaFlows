@@ -89,6 +89,7 @@ class AdminRepository:
         )
         return (
             db.session.query(SpaceType, latest_history.c.last_changed)
+            .filter(SpaceType.name != "Take Out")
             .outerjoin(
                 latest_history,
                 latest_history.c.space_type_id == SpaceType.id,
@@ -123,8 +124,10 @@ class AdminRepository:
             .outerjoin(
                 CustomerSession,
                 (CustomerSession.space_type_id == SpaceType.id)
-                & (CustomerSession.status == "active"),
+                & (CustomerSession.status == "active")
+                & (CustomerSession.service_mode == "timed"),
             )
+            .filter(SpaceType.name != "Take Out")
             .group_by(SpaceType.id, SpaceType.name, SpaceType.capacity)
             .all()
         )

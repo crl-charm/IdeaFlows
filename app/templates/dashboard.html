@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Dashboard{% endblock %}
+{% block title %}{{ 'Food Orders' if food_only_view else 'Dashboard' }}{% endblock %}
 
 {% block content %}
 
@@ -9,11 +9,12 @@
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-stretch align-items-md-center gap-2 mb-3 dashboard-header-row">
 
         <div>
-            <h3 class="mb-0">Active Customer Sessions</h3>
-            <small id="session-count" class="text-muted">0 customers</small>
+            <h3 class="mb-0">{{ 'Active Food Orders' if food_only_view else 'Active Customer Sessions' }}</h3>
+            <small id="session-count" class="text-muted">{{ '0 orders' if food_only_view else '0 customers' }}</small>
         </div>
 
         {% if boardroom_view %}<a class="btn btn-warning" href="/lounge-booking">Boardroom walk-in or advance booking</a>{% endif %}
+        {% if food_only_view %}<button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#checkinModal">+ New Food Order</button>{% endif %}
 
         <input 
             type="text" 
@@ -25,7 +26,7 @@
 
     </div>
 
-    <div class="row mb-3" id="space-availability-cards">
+    {% if not food_only_view %}<div class="row mb-3" id="space-availability-cards">
       <div class="col-12 col-md-6 mb-2">
         <div class="card shadow-sm">
           <div class="card-body">
@@ -53,6 +54,7 @@
         </div>
       </div>
     </div>
+    {% endif %}
 
     <div id="sessions-cards" class="sessions-cards d-md-none" aria-live="polite">
       <p class="text-center text-muted py-4 mb-0">Loading...</p>
@@ -63,6 +65,12 @@
         <table class="table table-hover mb-0">
           <thead style="background:#f7f3c7;">
             <tr>
+              {% if food_only_view %}
+              <th>Customer</th>
+              <th>Location</th>
+              <th>Food Total</th>
+              <th class="text-end">Actions</th>
+              {% else %}
               <th>Customer</th>
               <th class="d-none d-md-table-cell">School</th>
               <th class="d-none d-md-table-cell">Course</th>
@@ -72,10 +80,11 @@
               <th class="d-none d-md-table-cell">Duration</th>
               <th class="d-none d-md-table-cell">Current Bill</th>
               <th class="text-end">Actions</th>
+              {% endif %}
             </tr>
           </thead>
           <tbody id="sessions-container">
-            <tr><td colspan="9" class="text-center text-muted py-4">Loading...</td></tr>
+            <tr><td colspan="{{ 4 if food_only_view else 9 }}" class="text-center text-muted py-4">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -139,13 +148,24 @@
     <div class="modal-content">
 
       <div class="modal-header">
-        <h5 class="modal-title">New Customer Check-in</h5>
+        <h5 class="modal-title">{{ 'New Food Order' if food_only_view else 'New Customer Check-in' }}</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
 
       <div class="modal-body">
 
-        <input type="text" id="customerName" class="form-control mb-2" placeholder="Customer Name">
+        <label for="customerName" class="form-label">Customer name</label>
+        <input type="text" id="customerName" class="form-control mb-2" placeholder="Customer Name" maxlength="100" required>
+        {% if food_only_view %}
+        <label for="spaceType" class="form-label mb-1">Location</label>
+        <select id="spaceType" class="form-select" required>
+            <option value="">Select location...</option>
+            {% for space in food_locations %}
+            <option value="{{ space.name }}">{{ space.name }}</option>
+            {% endfor %}
+        </select>
+        <small class="text-muted">Food orders have no lounge timer or seat charge.</small>
+        {% else %}
         <input type="text" id="school" class="form-control mb-2" placeholder="School">
         <input type="text" id="course" class="form-control mb-2" placeholder="Course">
         <input type="number" id="numberOfPeople" class="form-control mb-2" placeholder="Number of People" min="1" value="1">
@@ -163,18 +183,28 @@
             {% endfor %}
         </select>
         {% endif %}
+        {% endif %}
+
+        <div id="checkoutCorrectionGroup" class="mt-3 d-none">
+          <label for="checkoutCorrection" class="form-label mb-1">Correct an approved voided checkout (optional)</label>
+          <select id="checkoutCorrection" class="form-select">
+            <option value="">New customer visit</option>
+          </select>
+          <small class="text-muted">Select the old checkout to carry its food charge and any retained payment into this new visit.</small>
+        </div>
 
       </div>
 
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="checkinCustomerBtn" onclick="checkinCustomer()">Check In</button>
+        <button class="btn btn-primary" id="checkinCustomerBtn" onclick="checkinCustomer()">{{ 'Start Food Order' if food_only_view else 'Check In' }}</button>
       </div>
 
     </div>
   </div>
 </div>
 
+{% if not food_only_view %}
 <!-- FLOATING ADD BUTTON -->
 <button id="floatingAddBtn"
     class="btn btn-success"
@@ -183,6 +213,7 @@
     +
 </button>
 {% endif %}
+{% endif %}
 
 {% endblock %}
 
@@ -190,6 +221,36 @@
 {% block scripts %}
 
 <script>
+
+const foodOnlyView = {{ food_only_view|tojson }};
+
+document.getElementById("checkinModal")?.addEventListener("show.bs.modal", async () => {
+    const group = document.getElementById("checkoutCorrectionGroup");
+    const select = document.getElementById("checkoutCorrection");
+    select.replaceChildren(new Option("New customer visit", ""));
+    group.classList.add("d-none");
+    try {
+        const response = await fetch("/api/checkout-corrections", { credentials: "include" });
+        if (!response.ok) return;
+        const corrections = await response.json();
+        corrections.forEach(correction => {
+            const option = new Option(
+                `${correction.customer_name} — from ${correction.original_space}; food ₱${correction.food_bill.toFixed(2)}${correction.amount > 0 ? `; credit ₱${correction.amount.toFixed(2)} ${correction.payment_method}` : ''}`,
+                correction.request_id
+            );
+            option.dataset.customerName = correction.customer_name;
+            select.add(option);
+        });
+        group.classList.toggle("d-none", !corrections.length);
+    } catch (_) { /* New check-in still works without a correction. */ }
+});
+
+document.getElementById("checkoutCorrection")?.addEventListener("change", event => {
+    const name = document.getElementById("customerName");
+    const selected = event.target.selectedOptions[0];
+    name.readOnly = Boolean(event.target.value);
+    if (event.target.value) name.value = selected.dataset.customerName;
+});
 
 document.getElementById("receiptModal").addEventListener("hidden.bs.modal", function () {
   document.getElementById("payment-method-section").style.display = "none";
@@ -231,9 +292,7 @@ function formatTime(seconds) {
 // CHECK-IN
 async function checkinCustomer() {
 
-    let name = document.getElementById("customerName").value;
-    let school = document.getElementById("school").value;
-    let course = document.getElementById("course").value;
+    let name = document.getElementById("customerName").value.trim();
     let spaceType = document.getElementById("spaceType").value;
 
     if (!name) {
@@ -241,27 +300,32 @@ async function checkinCustomer() {
         return;
     }
     if (!spaceType) {
-        showToast("Select a space.", "error");
+        showToast(foodOnlyView ? "Select a location." : "Select a space.", "error");
         return;
     }
 
     const button = document.getElementById("checkinCustomerBtn");
     try {
         const data = await runButtonAction(button, {
-            label: "Checking in...",
-            slowLabel: "Still checking in..."
-        }, requestKey => fetchJSON("/api/checkin", {
+            label: foodOnlyView ? "Starting..." : "Checking in...",
+            slowLabel: foodOnlyView ? "Still starting..." : "Still checking in..."
+        }, requestKey => fetchJSON(foodOnlyView ? "/api/food-orders" : "/api/checkin", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "Idempotency-Key": requestKey
             },
-            body: JSON.stringify({
+            body: JSON.stringify(foodOnlyView ? {
                 customer_name: name,
-                school: school,
-                course: course,
+                location: spaceType,
+                void_request_id: document.getElementById("checkoutCorrection").value || null
+            } : {
+                customer_name: name,
+                school: document.getElementById("school").value,
+                course: document.getElementById("course").value,
                 number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
-                space_type_id: parseInt(spaceType, 10)
+                space_type_id: parseInt(spaceType, 10),
+                void_request_id: document.getElementById("checkoutCorrection").value || null
             })
         }));
         if (!data) return;
@@ -274,24 +338,31 @@ async function checkinCustomer() {
         modal.hide();
 
         document.getElementById("customerName").value = "";
-        document.getElementById("school").value = "";
-        document.getElementById("course").value = "";
-        document.getElementById("numberOfPeople").value = "1";
+        document.getElementById("customerName").readOnly = false;
+        document.getElementById("checkoutCorrection").value = "";
+        if (foodOnlyView) {
+            document.getElementById("spaceType").value = "";
+        } else {
+            document.getElementById("school").value = "";
+            document.getElementById("course").value = "";
+            document.getElementById("numberOfPeople").value = "1";
+        }
 
-        showToast("Customer checked in successfully!", "success");
+        showToast(foodOnlyView ? "Food order started." : "Customer checked in successfully!", "success");
         loadSessions();
-        loadSpaceAvailability();
+        if (!foodOnlyView) loadSpaceAvailability();
     } catch (err) {
         if (err.data && err.data.duplicate) {
-            showToast("This check-in is already being processed. The list will refresh.", "info");
+            showToast("This request is already being processed. The list will refresh.", "info");
             loadSessions();
         } else {
-            showToast(err.message || "Failed to check in customer. Please try again.", "error");
+            showToast(err.message || "Failed to start. Please try again.", "error");
         }
     }
 }
 
 function loadSpaceAvailability() {
+    if (foodOnlyView) return;
     fetch("/api/space-availability", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
@@ -362,6 +433,12 @@ function viewOrder(sessionId) {
         fetch(`/api/preview-checkout/${sessionId}`, { credentials: "include" })
         .then(res => res.json())
         .then(data => {
+            if (data.error) {
+                showToast(data.error, "error");
+                return;
+            }
+            const isFoodOnly = data.service_mode === "food_only";
+            const canCheckout = !isFoodOnly || data.food_bill > 0;
 
             let itemsHTML = "";
 
@@ -384,7 +461,10 @@ function viewOrder(sessionId) {
                 `;
             });
 
-            if (!itemsHTML) itemsHTML = "<p>No orders</p>";
+            if (!itemsHTML) itemsHTML = "<p>No new orders</p>";
+            if (data.carried_food_bill > 0) {
+                itemsHTML = `<p>Food carried from the voided checkout: ₱${data.carried_food_bill.toFixed(2)} (stock already recorded)</p>` + itemsHTML;
+            }
 
             document.getElementById("receipt-body").innerHTML = `
                 <div style="text-align:center;">
@@ -393,15 +473,18 @@ function viewOrder(sessionId) {
                 </div>
 
                 <p><strong>Customer:</strong> ${escapeHtml(data.customer_name)}</p>
-                <p><strong>Time Used:</strong> ${formatTime(Math.floor(data.minutes_used * 60))}</p>
+                ${isFoodOnly
+                    ? `<p><strong>Location:</strong> ${escapeHtml(data.space_type)} · Food only</p>`
+                    : `<p><strong>Time Used:</strong> ${formatTime(Math.floor(data.minutes_used * 60))}</p>`}
 
                 <hr>
                 <h6>Orders:</h6>
                 ${itemsHTML}
                 <hr>
 
-                <p><strong>Time Bill:</strong> ₱${data.time_bill.toFixed(2)}</p>
+                ${isFoodOnly ? "" : `<p><strong>Time Bill:</strong> ₱${data.time_bill.toFixed(2)}</p>`}
                 <p><strong>Food Bill:</strong> ₱${data.food_bill.toFixed(2)}</p>
+                ${canCheckout ? "" : '<p class="text-warning">Add food before checkout.</p>'}
 
                 <div class="mb-2">
                     <label class="form-label" for="discountType">PWD / Senior discount</label>
@@ -416,23 +499,36 @@ function viewOrder(sessionId) {
                       ${orderData.orders.map(item => `<option value="${item.id}">${escapeHtml(item.item_name)} — one × ₱${item.price.toFixed(2)}</option>`).join('')}
                     </select>
                     <small class="text-muted">Only one unit of the selected item gets 20% off, even if the quantity is more than one.</small>
-                    ` : '<small class="text-muted">With no food order, 20% is taken off the time bill.</small>'}
+                    ` : isFoodOnly ? '' : '<small class="text-muted">With no food order, 20% is taken off the time bill.</small>'}
                   </div>
                 <p id="discount-row" class="text-success" style="display:none"><strong>Discount:</strong> −₱<span id="discount-amount">0.00</span></p>
 
                 <hr>
                 <h5>Total: ₱<span id="checkout-total">${data.total_bill.toFixed(2)}</span></h5>
+                ${data.credit_balance > 0 ? `<p class="text-success mb-1">Customer credit: ₱${data.credit_balance.toFixed(2)} (${escapeHtml(data.credit_payment_method)})</p>
+                <p class="fw-semibold mb-1">Still to pay: ₱<span id="checkout-due">${data.shortfall.toFixed(2)}</span></p>
+                <p id="credit-refund-note" class="text-warning small mb-1" style="display:${data.overpayment > 0 ? 'block' : 'none'}">Refund unused credit: ₱<span id="credit-refund-amount">${data.overpayment.toFixed(2)}</span></p>` : ''}
                 <p class="text-muted small mb-0" id="selected-payment-hint">Select payment method below before checkout.</p>
             `;
 
-            document.getElementById("payment-method-section").style.display = "block";
+            document.getElementById("payment-method-section").style.display = canCheckout ? "block" : "none";
+            document.getElementById("confirmCheckoutBtn").disabled = !canCheckout;
             document.getElementById("paymentCash").checked = true;
             document.getElementById("paymentGcash").checked = false;
             document.getElementById("paymentBdo").checked = false;
             document.getElementById("paymentBpi").checked = false;
             document.getElementById("paymentQueenbank").checked = false;
+            if (data.credit_balance > 0 && data.credit_payment_method) {
+                const creditMethod = document.querySelector(`input[name="paymentMethod"][value="${data.credit_payment_method}"]`);
+                if (creditMethod) creditMethod.checked = true;
+            }
+            document.querySelectorAll('input[name="paymentMethod"]').forEach(input => {
+                input.disabled = data.credit_balance > 0 && input.value !== data.credit_payment_method;
+            });
 
             let totalBill = data.total_bill;
+            const creditBalance = data.credit_balance || 0;
+            let due = Math.max(0, Math.round((totalBill - creditBalance) * 100) / 100);
             document.getElementById("cashAmountGiven").value = "";
             document.getElementById("cashChangeDisplay").textContent = "₱0.00";
 
@@ -446,9 +542,16 @@ function viewOrder(sessionId) {
                 const base = orderData.orders.length ? item?.price : data.time_bill;
                 const discount = type && base != null ? Math.round((base * 0.20 + Number.EPSILON) * 100) / 100 : 0;
                 totalBill = Math.round((data.total_bill - discount) * 100) / 100;
+                due = Math.max(0, Math.round((totalBill - creditBalance) * 100) / 100);
                 document.getElementById('discount-amount').textContent = discount.toFixed(2);
                 document.getElementById('discount-row').style.display = discount ? 'block' : 'none';
                 document.getElementById('checkout-total').textContent = totalBill.toFixed(2);
+                if (creditBalance > 0) {
+                    document.getElementById('checkout-due').textContent = due.toFixed(2);
+                    const refund = Math.max(0, Math.round((creditBalance - totalBill) * 100) / 100);
+                    document.getElementById('credit-refund-amount').textContent = refund.toFixed(2);
+                    document.getElementById('credit-refund-note').style.display = refund > 0 ? 'block' : 'none';
+                }
                 cashInput.dispatchEvent(new Event('input'));
             }
             if (document.getElementById('discountType')) {
@@ -458,12 +561,12 @@ function viewOrder(sessionId) {
 
             cashInput.oninput = function () {
                 const given = parseFloat(cashInput.value);
-                if (isNaN(given) || given < totalBill) {
+                if (isNaN(given) || given < due) {
                     changeDisplay.textContent = "₱0.00";
                     changeDisplay.classList.remove("text-success");
                     changeDisplay.classList.add("text-danger");
                 } else {
-                    const change = given - totalBill;
+                    const change = given - due;
                     changeDisplay.textContent = "₱" + change.toFixed(2);
                     changeDisplay.classList.remove("text-danger");
                     changeDisplay.classList.add("text-success");
@@ -512,16 +615,16 @@ function viewOrder(sessionId) {
                 let amountTendered = null;
                 if (paymentMethod === "cash") {
                     const cashVal = cashInput.value.trim();
-                    if (!cashVal) {
+                    if (!cashVal && due > 0) {
                         showToast("Amount tendered is required for cash payments.", "error");
                         return;
                     }
-                    const given = parseFloat(cashVal);
-                    if (isNaN(given) || given < totalBill) {
-                        showToast("Amount tendered must be at least the total bill.", "error");
+                    const given = cashVal ? parseFloat(cashVal) : 0;
+                    if (isNaN(given) || given < due) {
+                        showToast("Amount tendered must cover the amount still to pay.", "error");
                         return;
                     }
-                    amountTendered = given;
+                    amountTendered = due > 0 ? given : null;
                 }
 
                 const classes = { cash: "btn-success", gcash: "btn-primary", bdo: "btn-danger", bpi: "btn-warning text-dark", queenbank: "btn-info" };
@@ -535,7 +638,9 @@ function viewOrder(sessionId) {
 
                 const confirmed = await showConfirmDialog({
                     title: "Confirm Checkout",
-                    message: `Complete checkout for this customer using ${paymentLabel}?`,
+                    message: creditBalance > totalBill
+                        ? `Complete checkout using ${paymentLabel} credit and refund ₱${(creditBalance - totalBill).toFixed(2)} through ${paymentLabel}? Confirm only after returning the money.`
+                        : `Complete checkout for this customer using ${paymentLabel}${creditBalance > 0 ? ` credit; collect ₱${due.toFixed(2)} more` : ''}?`,
                     confirmText: `Pay with ${paymentLabel}`,
                     confirmClass: classes[paymentMethod] || "btn-success",
                     iconType: paymentMethod,
@@ -614,6 +719,19 @@ function escapeHtml(text) {
 }
 
 function buildSessionTableRow(session) {
+    if (foodOnlyView) {
+        return `
+            <tr>
+                <td>${escapeHtml(session.customer_name)}</td>
+                <td>${escapeHtml(session.space_type)}</td>
+                <td>₱${session.food_total.toFixed(2)}</td>
+                <td class="text-end">
+                    <button class="btn btn-primary btn-sm py-2 me-1" onclick="goToOrder(${session.session_id})">Add Order</button>
+                    <button class="btn btn-warning btn-sm py-2" onclick="viewOrder(${session.session_id})">View Order</button>
+                </td>
+            </tr>
+        `;
+    }
     const purpose = session.space_type === "Boardroom" ? (session.purpose || "N/A") : "—";
     return `
         <tr>
@@ -640,6 +758,23 @@ function buildSessionTableRow(session) {
 }
 
 function buildSessionMobileCard(session) {
+    if (foodOnlyView) {
+        return `
+            <article class="mobile-session-card card shadow-sm mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+                        <div class="mobile-session-name">${escapeHtml(session.customer_name)}</div>
+                        <span class="badge text-bg-secondary">${escapeHtml(session.space_type)}</span>
+                    </div>
+                    <div class="fw-semibold mb-3">Food Total: ₱${session.food_total.toFixed(2)}</div>
+                    <div class="mobile-session-actions">
+                        <button type="button" class="btn btn-primary" onclick="goToOrder(${session.session_id})">Add Order</button>
+                        <button type="button" class="btn btn-warning" onclick="viewOrder(${session.session_id})">View Order</button>
+                    </div>
+                </div>
+            </article>
+        `;
+    }
     const schoolLine = [session.school, session.course].filter(Boolean).join(" · ");
     const purposeLine = session.space_type === "Boardroom" && session.purpose
         ? `<div class="mobile-session-purpose text-muted small mb-2">Purpose: ${escapeHtml(session.purpose)}</div>`
@@ -687,7 +822,7 @@ function buildSessionMobileCard(session) {
 // LOAD SESSIONS
 function loadSessions() {
 
-    fetch("/api/active-sessions", { credentials: "include" })
+    fetch(foodOnlyView ? "/api/food-orders" : "/api/active-sessions", { credentials: "include" })
     .then(res => res.json())
     .then(data => {
         if (!Array.isArray(data)) {
@@ -717,11 +852,12 @@ function loadSessions() {
             cardsHtml += buildSessionMobileCard(session);
         });
 
-        document.getElementById("session-count").innerText = `${visibleCount} customer(s)`;
+        document.getElementById("session-count").innerText = foodOnlyView
+            ? `${visibleCount} food order(s)` : `${visibleCount} customer(s)`;
 
         if (visibleCount === 0) {
-            const emptyMsg = "There is no customer at the moment.";
-            tableContainer.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">${emptyMsg}</td></tr>`;
+            const emptyMsg = foodOnlyView ? "No active food orders." : "There is no customer at the moment.";
+            tableContainer.innerHTML = `<tr><td colspan="${foodOnlyView ? 4 : 9}" class="text-center text-muted py-4">${emptyMsg}</td></tr>`;
             if (cardsContainer) {
                 cardsContainer.innerHTML = `<p class="text-center text-muted py-4 mb-0">${emptyMsg}</p>`;
             }
@@ -735,7 +871,7 @@ function loadSessions() {
     .catch(() => {
         const errMsg = "Failed to load sessions. Please refresh the page.";
         document.getElementById("sessions-container").innerHTML =
-            `<tr><td colspan="9" class="text-center text-danger py-4">${errMsg}</td></tr>`;
+            `<tr><td colspan="${foodOnlyView ? 4 : 9}" class="text-center text-danger py-4">${errMsg}</td></tr>`;
         const cardsContainer = document.getElementById("sessions-cards");
         if (cardsContainer) {
             cardsContainer.innerHTML = `<p class="text-center text-danger py-4 mb-0">${errMsg}</p>`;
@@ -749,11 +885,10 @@ function loadSessions() {
 
 // INIT
 loadSessions();
-loadSpaceAvailability();
+if (!foodOnlyView) loadSpaceAvailability();
 window.createSmartPoller(loadSessions, 10000, { runImmediately: false });
-window.createSmartPoller(loadSpaceAvailability, 15000, { runImmediately: false });
+if (!foodOnlyView) window.createSmartPoller(loadSpaceAvailability, 15000, { runImmediately: false });
 
 </script>
 
 {% endblock %}
-

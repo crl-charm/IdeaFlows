@@ -61,7 +61,7 @@ function loadOrders() {
     .then(data => {
       const subtitle = document.getElementById("orders-subtitle");
       subtitle.innerText = data.customer_name
-        ? `${data.customer_name} • ${data.space_type || "N/A"} • ${data.time_in || ""}`
+        ? `${data.customer_name} • ${data.space_type || "N/A"} • ${data.service_mode === "food_only" ? "Food only" : data.time_in || ""}`
         : `Session ${sessionId}`;
 
       const container = document.getElementById("orders-view-container");

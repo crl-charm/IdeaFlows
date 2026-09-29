@@ -17,6 +17,7 @@ ACCOUNT_TABLES = {"admins", "users"}
 RESET_TABLES = {
     "boardroom_bookings",
     "booking_changes",
+    "checkout_void_requests",
     "customer_sessions",
     "daily_sales_reports",
     "expenses",
@@ -81,6 +82,7 @@ def reset_operational_data(expected_database: str) -> None:
                 SpaceType(name="Premium Lounge", rate_per_minute=Decimal("0.3333"), capacity=30),
                 SpaceType(name="Boardroom", rate_per_minute=Decimal("4.1667")),
                 SpaceType(name="Whole Hub", rate_per_minute=Decimal("8.3333")),
+                SpaceType(name="Take Out", rate_per_minute=Decimal("0.0000")),
                 FinanceBudget(_name="Main Budget", _total_budget=Decimal("0.00"), _allocated=Decimal("0.00")),
                 MenuCategory(name="Main Dish"),
                 MenuCategory(name="Snack"),

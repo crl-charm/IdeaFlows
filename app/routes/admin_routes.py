@@ -241,6 +241,8 @@ def update_space_price(space_id):
     space = SpaceType.query.get(space_id)
     if not space:
         return jsonify({"error": "Space not found"}), 404
+    if space.name == "Take Out":
+        return jsonify({"error": "Take Out has no hourly rate"}), 400
     
     # Convert hourly rate to rate per minute
     rate_per_minute = hourly_rate / 60

@@ -9,7 +9,16 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models import BoardroomBooking, BookingChange, CustomerSession, Order, OrderItem, SpaceType, Transaction
+from app.models import (
+    BoardroomBooking,
+    BookingChange,
+    CheckoutVoidRequest,
+    CustomerSession,
+    Order,
+    OrderItem,
+    SpaceType,
+    Transaction,
+)
 from app.utils.dates import manila_day_bounds
 from app.utils.payment import VALID_PAYMENT_METHODS
 
@@ -34,7 +43,15 @@ class SessionRepository:
     def get_active_sessions(self) -> list[CustomerSession]:
         return (
             CustomerSession.query.options(selectinload(CustomerSession.space_type))
-            .filter_by(status="active")
+            .filter_by(status="active", service_mode="timed")
+            .order_by(CustomerSession.time_in.desc())
+            .all()
+        )
+
+    def get_active_food_orders(self) -> list[CustomerSession]:
+        return (
+            CustomerSession.query.options(selectinload(CustomerSession.space_type))
+            .filter_by(status="active", service_mode="food_only")
             .order_by(CustomerSession.time_in.desc())
             .all()
         )
@@ -52,13 +69,16 @@ class SessionRepository:
     def sum_active_occupancy(self, space_type_id: int) -> int:
         occupied = (
             db.session.query(func.coalesce(func.sum(CustomerSession.number_of_people), 0))
-            .filter_by(space_type_id=space_type_id, status="active")
+            .filter_by(space_type_id=space_type_id, status="active", service_mode="timed")
             .scalar()
         ) or 0
         return int(occupied)
 
     def get_space_type(self, space_type_id: int) -> Optional[SpaceType]:
         return SpaceType.query.get(space_type_id)
+
+    def get_space_type_by_name(self, name: str) -> Optional[SpaceType]:
+        return SpaceType.query.filter_by(name=name).first()
 
     def blocking_booking_at(self, local_now: datetime, *, whole_hub_only: bool = False) -> Optional[BoardroomBooking]:
         query = BoardroomBooking.query.filter(
@@ -117,6 +137,17 @@ class SessionRepository:
         ) or 0
         return float(total)
 
+    def food_totals_for_sessions(self, session_ids: list[int]) -> dict[int, float]:
+        if not session_ids:
+            return {}
+        return dict(
+            db.session.query(Order.customer_session_id, func.sum(OrderItem.quantity * OrderItem.price))
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .filter(Order.customer_session_id.in_(session_ids))
+            .group_by(Order.customer_session_id)
+            .all()
+        )
+
     def get_order_item_for_session(self, session_id: int, item_id: int) -> Optional[OrderItem]:
         return (OrderItem.query.join(Order, OrderItem.order_id == Order.id)
                 .filter(Order.customer_session_id == session_id, OrderItem.id == item_id).first())
@@ -124,7 +155,8 @@ class SessionRepository:
     def list_transactions(self) -> list[Transaction]:
         return (
             Transaction.query.options(
-                selectinload(Transaction.session).selectinload(CustomerSession.space_type)
+                selectinload(Transaction.session).selectinload(CustomerSession.space_type),
+                selectinload(Transaction.void_requests),
             )
             .order_by(Transaction.created_at.desc())
             .all()
@@ -133,7 +165,8 @@ class SessionRepository:
     def list_transactions_paginated(self, page: int, per_page: int, *, date_from=None, date_to=None,
                                     payment_method: str = ""):
         query = Transaction.query.options(
-            selectinload(Transaction.session).selectinload(CustomerSession.space_type)
+            selectinload(Transaction.session).selectinload(CustomerSession.space_type),
+            selectinload(Transaction.void_requests),
         )
         if date_from:
             query = query.filter(Transaction.created_at >= manila_day_bounds(date_from)[0])
@@ -156,12 +189,25 @@ class SessionRepository:
     def get_all_spaces(self) -> list[SpaceType]:
         return SpaceType.query.all()
 
+    def get_transaction(self, transaction_id: int) -> Optional[Transaction]:
+        return Transaction.query.get(transaction_id)
+
+    def get_transaction_for_update(self, transaction_id: int) -> Optional[Transaction]:
+        return Transaction.query.filter_by(id=transaction_id).with_for_update().first()
+
     def get_transaction_for_session(self, session_id: int) -> Optional[Transaction]:
+        """Returns the active (non-voided) transaction for this session."""
         return (
-            Transaction.query.filter_by(session_id=session_id)
+            Transaction.query.filter_by(session_id=session_id, is_voided=False)
             .order_by(Transaction.created_at.desc())
             .first()
         )
+
+    def get_latest_transaction_for_session(self, session_id: int, *, include_voided: bool = False) -> Optional[Transaction]:
+        query = Transaction.query.filter_by(session_id=session_id)
+        if not include_voided:
+            query = query.filter_by(is_voided=False)
+        return query.order_by(Transaction.created_at.desc()).first()
 
     def get_orders_for_session(self, session_id: int) -> list[dict[str, Any]]:
         orders = (
@@ -180,4 +226,3 @@ class SessionRepository:
                     "price": float(item.price),
                 })
         return items_list
-

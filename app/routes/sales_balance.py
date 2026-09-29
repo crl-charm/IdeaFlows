@@ -178,8 +178,10 @@ def api_today_stats() -> tuple:
             .all()
         )
     for sess in active_sessions:
-        minutes_used = (now - sess.time_in).total_seconds() / 60
-        time_bill = calculate_time_bill(sess.space_type, minutes_used, booking=bookings.get(sess.id), now_utc=now)
+        time_bill = Decimal("0.00") if sess.service_mode == "food_only" else calculate_time_bill(
+            sess.space_type, (now - sess.time_in).total_seconds() / 60,
+            booking=bookings.get(sess.id), now_utc=now,
+        )
         
         food_total = food_totals.get(sess.id, Decimal("0.00"))
         

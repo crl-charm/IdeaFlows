@@ -7,11 +7,13 @@ from typing import Optional
 from decimal import Decimal
 
 from sqlalchemy import and_, case, func, or_, text
+from sqlalchemy.orm import selectinload
 
 from app import db
 from app.models import (
     Transaction, DailySalesReport, Order, CustomerSession, Expense,
     SoftBalanceEntry, ReceivablePayment, PayablePayment, FinanceTransaction,
+    CheckoutVoidRequest,
 )
 from app.utils.dates import manila_day_bounds, inclusive_manila_bounds, manila_date
 from app.utils.payment import VALID_PAYMENT_METHODS
@@ -46,10 +48,18 @@ class SalesRepository:
         if not daily:
             return Decimal("0")
         return sum((
-            Decimal(str(daily[f"{bucket}_methods"][method])).quantize(Decimal("0.01")) * sign
-            for bucket, sign in (("checkout", 1), ("collection", 1),
-                                 ("adjustment_income", 1), ("expense", -1),
-                                 ("payable", -1), ("adjustment_expense", -1))
+            Decimal(str(daily.get(f"{bucket}_methods", {}).get(method, 0))).quantize(Decimal("0.01")) * sign
+            for bucket, sign in (
+                ("checkout", 1),
+                ("credit_received", 1),
+                ("credit_applied", -1),
+                ("collection", 1),
+                ("adjustment_income", 1),
+                ("expense", -1),
+                ("payable", -1),
+                ("adjustment_expense", -1),
+                ("refund", -1),
+            )
         ), Decimal("0"))
 
     def summary_for_range(self, start_date: date, end_date: date):
@@ -69,6 +79,13 @@ class SalesRepository:
             )
             .filter(Transaction.created_at >= start_at)
             .filter(Transaction.created_at < end_at)
+            .filter(or_(
+                Transaction.is_voided.is_(False),
+                Transaction.void_requests.any(and_(
+                    CheckoutVoidRequest.status == "approved",
+                    CheckoutVoidRequest.money_treatment == "refund",
+                )),
+            ))
             .first()
         )
 
@@ -95,6 +112,7 @@ class SalesRepository:
         total_sessions: int,
         generated_by: int,
         notes: Optional[str],
+        total_refunds: Decimal = Decimal("0.00"),
     ) -> DailySalesReport:
         report = DailySalesReport(
             report_date=report_date,
@@ -110,6 +128,8 @@ class SalesRepository:
             generated_by=generated_by,
             notes=notes,
         )
+        if hasattr(report, "total_refunds"):
+            report.total_refunds = total_refunds
         db.session.add(report)
         db.session.flush()
         return report
@@ -131,6 +151,10 @@ class SalesRepository:
                 rows[day] = {
                     "checkout_methods": {m: Decimal("0") for m in METHODS},
                     "checkout_counts": {m: 0 for m in METHODS},
+                    "refund_methods": {m: Decimal("0") for m in METHODS},
+                    "refund_counts": {m: 0 for m in METHODS},
+                    "credit_received_methods": {m: Decimal("0") for m in METHODS},
+                    "credit_applied_methods": {m: Decimal("0") for m in METHODS},
                     "collection_methods": {m: Decimal("0") for m in METHODS},
                     "expense_methods": {m: Decimal("0") for m in METHODS},
                     "external_expense_methods": {m: Decimal("0") for m in METHODS},
@@ -148,12 +172,71 @@ class SalesRepository:
         def method(value: str | None) -> str:
             return value if value in VALID_PAYMENT_METHODS else "unclassified"
 
-        for tx in self._dated(Transaction.query, Transaction.created_at, start_date, end_date).all():
-            daily = row(manila_date(tx.created_at))
-            bucket = method(tx.payment_method)
-            daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
-            daily["checkout_counts"][bucket] += 1
-            daily["session_ids"].add(tx.session_id)
+        # 1. Transactions & checkouts
+        for tx in self._dated(
+            Transaction.query.options(
+                selectinload(Transaction.session),
+                selectinload(Transaction.void_requests),
+            ),
+            Transaction.created_at, start_date, end_date,
+        ).all():
+            void_req = tx.active_void_request
+            is_approved_void = void_req and void_req.status == "approved"
+            treatment = void_req.money_treatment if is_approved_void else None
+
+            # Pending and rejected voids do not alter totals: counted as normal checkouts.
+            # Only approved voids alter totals.
+            if is_approved_void:
+                if treatment == "false_entry":
+                    # Removed completely from original business day
+                    continue
+                elif treatment == "retained_credit":
+                    # Sale reversed on original day, but cash remains received as credit liability
+                    daily = row(manila_date(tx.created_at))
+                    bucket = method(tx.payment_method)
+                    daily["credit_received_methods"][bucket] += Decimal(str(tx.total_bill or 0))
+                    continue
+                elif treatment == "refund":
+                    # Sale history preserved on original day; refund event recorded on decision day
+                    daily = row(manila_date(tx.created_at))
+                    bucket = method(tx.payment_method)
+                    daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
+                    daily["checkout_counts"][bucket] += 1
+                    if tx.session and tx.session.service_mode != "food_only":
+                        daily["session_ids"].add(tx.session_id)
+            else:
+                # Normal checkout (including replacement checkouts)
+                daily = row(manila_date(tx.created_at))
+                bucket = method(tx.payment_method)
+                daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
+                daily["checkout_counts"][bucket] += 1
+                if tx.session and tx.session.service_mode != "food_only":
+                    daily["session_ids"].add(tx.session_id)
+
+                if getattr(tx, "credit_applied", None) and tx.credit_applied > 0:
+                    daily["credit_applied_methods"][bucket] += Decimal(str(tx.credit_applied))
+                if getattr(tx, "credit_refunded", None) and tx.credit_refunded > 0:
+                    daily["refund_methods"][bucket] += Decimal(str(tx.credit_refunded))
+                    daily["refund_counts"][bucket] += 1
+
+        # 2. Approved void refunds on their decision business day
+        approved_refunds = CheckoutVoidRequest.query.filter(
+            CheckoutVoidRequest.status == "approved",
+            CheckoutVoidRequest.money_treatment == "refund",
+            CheckoutVoidRequest.refund_amount > 0,
+        )
+        if start_date:
+            approved_refunds = approved_refunds.filter(CheckoutVoidRequest.decided_at >= manila_day_bounds(start_date)[0])
+        if end_date:
+            approved_refunds = approved_refunds.filter(CheckoutVoidRequest.decided_at < manila_day_bounds(end_date)[1])
+
+        for req in approved_refunds.all():
+            dec_day = req.decision_business_date or manila_date(req.decided_at)
+            if (not start_date or dec_day >= start_date) and (not end_date or dec_day <= end_date):
+                daily = row(dec_day)
+                bucket = method(req.original_payment_method)
+                daily["refund_methods"][bucket] += Decimal(str(req.refund_amount))
+                daily["refund_counts"][bucket] += 1
 
         for payment in self._dated(ReceivablePayment.query, ReceivablePayment.received_at, start_date, end_date).all():
             daily = row(manila_date(payment.received_at))
@@ -212,6 +295,9 @@ class SalesRepository:
         result = {}
         for day, daily in rows.items():
             checkout = daily["checkout_methods"]
+            refund = daily["refund_methods"]
+            credit_received = daily["credit_received_methods"]
+            credit_applied = daily["credit_applied_methods"]
             collection = daily["collection_methods"]
             expense = daily["expense_methods"]
             external_expense = daily["external_expense_methods"]
@@ -219,9 +305,25 @@ class SalesRepository:
             external_payable = daily["external_payable_methods"]
             other_income = daily["adjustment_income_methods"]
             budget_spend = daily["adjustment_expense_methods"]
+
+            tot_rev = float(sum(checkout.values()))
+            tot_ref = float(sum(refund.values()))
+            net_bal = float(
+                sum(checkout.values()) - sum(credit_applied.values()) + sum(credit_received.values())
+                + sum(collection.values()) + sum(other_income.values())
+                - sum(expense.values()) - sum(payable.values()) - sum(budget_spend.values()) - sum(refund.values())
+            )
+            cash_hand = float(
+                checkout["cash"] - credit_applied["cash"] + credit_received["cash"]
+                + collection["cash"] + other_income["cash"]
+                - expense["cash"] - payable["cash"] - budget_spend["cash"] - refund["cash"]
+            )
+
             result[day] = {
                 "report_date": day.isoformat(),
-                "total_revenue": float(sum(checkout.values())),
+                "total_revenue": tot_rev,
+                "total_refunds": tot_ref,
+                "net_revenue": tot_rev - tot_ref,
                 "total_collections": float(sum(collection.values())),
                 "total_expenses": float(sum(expense.values()) + sum(external_expense.values())),
                 "total_business_expenses": float(sum(expense.values())),
@@ -231,12 +333,16 @@ class SalesRepository:
                 "total_external_payables_paid": float(sum(external_payable.values())),
                 "total_other_income": float(sum(other_income.values())),
                 "total_budget_spend": float(sum(budget_spend.values())),
-                "net_balance": float(sum(checkout.values()) + sum(collection.values()) + sum(other_income.values()) - sum(expense.values()) - sum(payable.values()) - sum(budget_spend.values())),
-                "cash_on_hand": float(checkout["cash"] + collection["cash"] + other_income["cash"] - expense["cash"] - payable["cash"] - budget_spend["cash"]),
+                "net_balance": net_bal,
+                "cash_on_hand": cash_hand,
                 "collection_count": len(daily["collection_groups"]),
                 "total_orders": daily["total_orders"],
                 "total_sessions": len(daily["session_ids"]),
                 "checkout_methods": {m: float(v) for m, v in checkout.items()},
+                "refund_methods": {m: float(v) for m, v in refund.items()},
+                "refund_counts": {m: daily["refund_counts"][m] for m in METHODS},
+                "credit_received_methods": {m: float(v) for m, v in credit_received.items()},
+                "credit_applied_methods": {m: float(v) for m, v in credit_applied.items()},
                 "collection_methods": {m: float(v) for m, v in collection.items()},
                 "expense_methods": {m: float(v) for m, v in expense.items()},
                 "external_expense_methods": {m: float(v) for m, v in external_expense.items()},
@@ -249,6 +355,7 @@ class SalesRepository:
                 "adjustment_expense_methods": {m: float(v) for m, v in budget_spend.items()},
                 **{f"{m}_total": float(checkout[m]) for m in METHODS},
                 **{f"{m}_count": daily["checkout_counts"][m] for m in METHODS},
+                **{f"{m}_refund": float(refund[m]) for m in METHODS},
             }
         return result
 
@@ -256,6 +363,7 @@ class SalesRepository:
     def daily_ledger_empty(day: date) -> dict:
         return {
             "report_date": day.isoformat(), "total_revenue": 0.0,
+            "total_refunds": 0.0, "net_revenue": 0.0,
             "total_collections": 0.0, "total_expenses": 0.0,
             "total_payables_paid": 0.0, "net_balance": 0.0,
             "total_other_income": 0.0, "total_budget_spend": 0.0,
@@ -265,10 +373,12 @@ class SalesRepository:
             "total_orders": 0, "total_sessions": 0,
             **{f"{m}_total": 0.0 for m in METHODS},
             **{f"{m}_count": 0 for m in METHODS},
+            **{f"{m}_refund": 0.0 for m in METHODS},
             **{f"{bucket}_methods": {m: 0.0 for m in METHODS}
                for bucket in ("checkout", "collection", "expense", "external_expense", "expense_paid",
                               "expense_void", "payable", "external_payable", "payable_paid",
-                              "adjustment_income", "adjustment_expense")},
+                              "adjustment_income", "adjustment_expense", "refund",
+                              "credit_received", "credit_applied")},
         }
 
     def payment_totals_by_dates(self, dates: list[date]) -> dict[date, dict[str, float | int]]:
@@ -334,6 +444,7 @@ class SalesRepository:
         net_balance: Decimal,
         generated_by: int,
         notes: Optional[str],
+        total_refunds: Decimal = Decimal("0.00"),
     ) -> SoftBalanceEntry:
         entry = SoftBalanceEntry(
             balance_date=balance_date,
@@ -348,6 +459,8 @@ class SalesRepository:
             generated_by=generated_by,
             notes=notes,
         )
+        if hasattr(entry, "total_refunds"):
+            entry.total_refunds = total_refunds
         db.session.add(entry)
         db.session.flush()
         return entry

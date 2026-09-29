@@ -24,7 +24,7 @@ SETUP_TABLES = {
     "menu_items", "space_price_history", "space_types",
 }
 ACTIVITY_TABLES = {
-    "boardroom_bookings", "booking_changes", "customer_sessions", "daily_sales_reports",
+    "boardroom_bookings", "booking_changes", "checkout_void_requests", "customer_sessions", "daily_sales_reports",
     "expenses", "finance_transactions", "inventory_actions", "inventory_logs",
     "lounge_bookings", "order_inventory_allocations", "order_items", "orders",
     "payables", "payable_payments", "receivables", "receivable_payments",

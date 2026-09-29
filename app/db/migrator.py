@@ -7,6 +7,7 @@ from app.models.soft_balance import SoftBalanceEntry
 from app.models.space_price_history import SpacePriceHistory
 from app.models.payable import Payable
 from app.models.menu_category import MenuCategory
+from app.models.checkout_void import CheckoutVoidRequest
 
 
 class SchemaMigrator:
@@ -18,7 +19,7 @@ class SchemaMigrator:
 
     def run(self) -> None:
         db = self._db
-        _ = (FinanceBudget, FinanceTransaction, SoftBalanceEntry, SpacePriceHistory, Payable, MenuCategory)
+        _ = (FinanceBudget, FinanceTransaction, SoftBalanceEntry, SpacePriceHistory, Payable, MenuCategory, CheckoutVoidRequest)
         try:
             db.create_all()
             # Phase 3: Drop the obsolete reservations table if it exists
@@ -81,6 +82,11 @@ class SchemaMigrator:
                 "number_of_people",
                 "ALTER TABLE customer_sessions ADD COLUMN number_of_people INT NOT NULL DEFAULT 1",
             ),
+            (
+                "customer_sessions",
+                "service_mode",
+                "ALTER TABLE customer_sessions ADD COLUMN service_mode VARCHAR(16) NOT NULL DEFAULT 'timed'",
+            ),
             ("boardroom_bookings", "session_id", "ALTER TABLE boardroom_bookings ADD COLUMN session_id INT NULL"),
             ("boardroom_bookings", "started_at", "ALTER TABLE boardroom_bookings ADD COLUMN started_at DATETIME NULL"),
             (
@@ -137,8 +143,6 @@ class SchemaMigrator:
                 "updated_at",
                 "ALTER TABLE menu_items ADD COLUMN updated_at DATETIME NULL",
             ),
-
-
             (
                 "staff_performance_logs",
                 "customers_served",
@@ -181,10 +185,12 @@ class SchemaMigrator:
             ("daily_sales_reports", "total_payables_paid", "ALTER TABLE daily_sales_reports ADD COLUMN total_payables_paid DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("daily_sales_reports", "total_other_income", "ALTER TABLE daily_sales_reports ADD COLUMN total_other_income DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("daily_sales_reports", "total_budget_spend", "ALTER TABLE daily_sales_reports ADD COLUMN total_budget_spend DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("daily_sales_reports", "total_refunds", "ALTER TABLE daily_sales_reports ADD COLUMN total_refunds DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_collections", "ALTER TABLE soft_balance_entries ADD COLUMN total_collections DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_payables_paid", "ALTER TABLE soft_balance_entries ADD COLUMN total_payables_paid DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_other_income", "ALTER TABLE soft_balance_entries ADD COLUMN total_other_income DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_budget_spend", "ALTER TABLE soft_balance_entries ADD COLUMN total_budget_spend DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("soft_balance_entries", "total_refunds", "ALTER TABLE soft_balance_entries ADD COLUMN total_refunds DECIMAL(12,2) NOT NULL DEFAULT 0"),
             (
                 "menu_item_ingredients",
                 "unit",
@@ -195,6 +201,21 @@ class SchemaMigrator:
                 "conversion_ratio",
                 "ALTER TABLE menu_item_ingredients ADD COLUMN conversion_ratio DECIMAL(10,4) NOT NULL DEFAULT 1.0000",
             ),
+            # Checkout records snapshots, void status, and retained credit
+            ("transactions", "billing_start_at", "ALTER TABLE transactions ADD COLUMN billing_start_at DATETIME NULL"),
+            ("transactions", "billing_end_at", "ALTER TABLE transactions ADD COLUMN billing_end_at DATETIME NULL"),
+            ("transactions", "customer_name_snapshot", "ALTER TABLE transactions ADD COLUMN customer_name_snapshot VARCHAR(100) NULL"),
+            ("transactions", "space_name_snapshot", "ALTER TABLE transactions ADD COLUMN space_name_snapshot VARCHAR(100) NULL"),
+            ("transactions", "service_mode_snapshot", "ALTER TABLE transactions ADD COLUMN service_mode_snapshot VARCHAR(16) NULL"),
+            ("transactions", "number_of_people_snapshot", "ALTER TABLE transactions ADD COLUMN number_of_people_snapshot INT NULL"),
+            ("transactions", "change_given", "ALTER TABLE transactions ADD COLUMN change_given DECIMAL(10,2) NULL"),
+            ("transactions", "is_voided", "ALTER TABLE transactions ADD COLUMN is_voided BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("transactions", "credit_applied", "ALTER TABLE transactions ADD COLUMN credit_applied DECIMAL(10,2) NOT NULL DEFAULT 0.00"),
+            ("transactions", "credit_refunded", "ALTER TABLE transactions ADD COLUMN credit_refunded DECIMAL(10,2) NOT NULL DEFAULT 0.00"),
+            ("customer_sessions", "credit_balance", "ALTER TABLE customer_sessions ADD COLUMN credit_balance DECIMAL(10,2) NOT NULL DEFAULT 0.00"),
+            ("customer_sessions", "credit_payment_method", "ALTER TABLE customer_sessions ADD COLUMN credit_payment_method VARCHAR(50) NULL"),
+            ("customer_sessions", "retained_time_bill", "ALTER TABLE customer_sessions ADD COLUMN retained_time_bill DECIMAL(10,2) NULL"),
+            ("customer_sessions", "voided_transaction_id", "ALTER TABLE customer_sessions ADD COLUMN voided_transaction_id INT NULL"),
         ]
 
         # Cache existing columns to minimize database queries
@@ -298,6 +319,16 @@ class SchemaMigrator:
                 "inventory_logs",
                 "idx_inventory_logs_item_created",
                 "CREATE INDEX idx_inventory_logs_item_created ON inventory_logs (inventory_item_id, created_at)",
+            ),
+            (
+                "checkout_void_requests",
+                "uq_checkout_void_requests_key",
+                "CREATE UNIQUE INDEX uq_checkout_void_requests_key ON checkout_void_requests (request_key)",
+            ),
+            (
+                "checkout_void_requests",
+                "idx_checkout_void_requests_tx",
+                "CREATE INDEX idx_checkout_void_requests_tx ON checkout_void_requests (transaction_id)",
             ),
         ]
 

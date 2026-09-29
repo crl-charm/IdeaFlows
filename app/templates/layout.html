@@ -425,8 +425,13 @@
         <i class="bi bi-grid me-2"></i>Dashboard
       </button>
 
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/checkout-records'">
-        <i class="bi bi-receipt me-2"></i>Checkout Records
+      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn d-flex align-items-center justify-content-between" onclick="window.location.href='/checkout-records'">
+        <span><i class="bi bi-receipt me-2"></i>Checkout Records</span>
+        <span id="void-badge" class="badge rounded-pill bg-warning text-dark" style="display:none; font-size: 0.75rem;"></span>
+      </button>
+
+      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/food-orders'">
+        <i class="bi bi-cup-hot me-2"></i>Food Orders
       </button>
 
 
@@ -1239,6 +1244,28 @@
       });
     });
     window.createSmartPoller(updateOrdersBadge, 15000);
+
+    async function updateVoidBadge() {
+      const badge = document.getElementById("void-badge");
+      const badgeMobile = document.getElementById("void-badge-mobile");
+      if (!badge && !badgeMobile) return;
+      try {
+        const res = await fetch("/api/checkout-records/void-requests?status=pending", { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const count = Array.isArray(data) ? data.length : 0;
+        [badge, badgeMobile].forEach(el => {
+          if (!el) return;
+          if (count > 0) {
+            el.textContent = String(count);
+            el.style.display = "inline-block";
+          } else {
+            el.style.display = "none";
+          }
+        });
+      } catch (_) { }
+    }
+    window.createSmartPoller(updateVoidBadge, 30000);
   </script>
 
   <script>

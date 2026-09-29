@@ -29,12 +29,17 @@ class DatabaseSeeder:
                     SpaceType(name="Premium Lounge", rate_per_minute=Decimal("0.3333")),
                     SpaceType(name="Boardroom", rate_per_minute=Decimal("4.1667")),
                     SpaceType(name="Whole Hub", rate_per_minute=Decimal("8.3333")),
+                    SpaceType(name="Take Out", rate_per_minute=Decimal("0.0000")),
                 ]
             )
             db.session.commit()
 
         if not SpaceType.query.filter_by(name="Whole Hub").first():
             db.session.add(SpaceType(name="Whole Hub", rate_per_minute=Decimal("8.3333")))
+            db.session.commit()
+
+        if not SpaceType.query.filter_by(name="Take Out").first():
+            db.session.add(SpaceType(name="Take Out", rate_per_minute=Decimal("0.0000")))
             db.session.commit()
 
         default_caps = {"Regular Lounge": 30, "Premium Lounge": 30}

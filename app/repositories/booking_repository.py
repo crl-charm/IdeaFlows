@@ -72,7 +72,7 @@ class BookingRepository:
         return SpaceType.query.filter_by(name="Whole Hub").first()
 
     def has_active_sessions(self) -> bool:
-        return CustomerSession.query.filter_by(status="active").first() is not None
+        return CustomerSession.query.filter_by(status="active", service_mode="timed").first() is not None
 
     def sum_active_boardroom_occupancy(self, boardroom_space_id: int) -> int:
         occupied = (
@@ -80,6 +80,7 @@ class BookingRepository:
             .filter(
                 CustomerSession.space_type_id == boardroom_space_id,
                 CustomerSession.status == "active",
+                CustomerSession.service_mode == "timed",
             )
             .scalar()
         ) or 0

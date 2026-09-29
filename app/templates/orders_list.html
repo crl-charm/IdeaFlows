@@ -18,7 +18,7 @@
           <tr>
             <th>Customer</th>
             <th>Space</th>
-            <th class="d-none d-md-table-cell">Time In</th>
+            <th class="d-none d-md-table-cell">Started</th>
             <th>Items</th>
             <th>Status</th>
             <th class="d-none d-md-table-cell">Food Total</th>
@@ -36,6 +36,12 @@
 
 {% block scripts %}
 <script>
+function escapeOrderText(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[char]);
+}
+
 function loadOrdersList() {
   fetch("/api/orders-list", { credentials: "include" })
     .then(res => res.json())
@@ -56,9 +62,9 @@ function loadOrdersList() {
 
       container.innerHTML = data.map(r => `
         <tr>
-          <td>${r.customer_name}</td>
-          <td>${r.space_type}</td>
-          <td class="d-none d-md-table-cell">${r.time_in}</td>
+          <td>${escapeOrderText(r.customer_name)}</td>
+          <td>${escapeOrderText(r.space_type)}</td>
+          <td class="d-none d-md-table-cell">${r.service_mode === "food_only" ? "Food only" : escapeOrderText(r.time_in)}</td>
           <td>${r.orders_count}</td>
           <td>${r.active_order_status === "preparin" ? "preparing" : (r.active_order_status || "preparing")}</td>
           <td class="d-none d-md-table-cell">₱${r.food_total.toFixed(2)}</td>

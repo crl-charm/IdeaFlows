@@ -19,7 +19,7 @@ def test_model_imports():
     try:
         from app.models import (
             User, SpaceType, SpacePriceHistory, CustomerSession,
-            MenuItem, Order, OrderItem, Transaction, BoardroomBooking,
+            MenuItem, Order, OrderItem, Transaction, CheckoutVoidRequest, BoardroomBooking,
             LoungeBooking, StaffAttendance, InventoryItem, InventoryLog,
             Receivable, Expense, StaffPerformanceLog, DailySalesReport,
             SoftBalanceEntry, BaseModel, UserRole,
