@@ -12,7 +12,7 @@ from app.utils.inventory_helpers import is_ingredient_category
 
 def kitchen_access(user_id):
     user = db.session.get(User, user_id) if user_id else None
-    return bool(user and (user.role == "admin" or (user.is_active and user.job_role == "cook")))
+    return bool(user and (user.role == "admin" or (user.role == "staff" and user.is_active)))
 
 
 def action_key(key, actor):
@@ -91,12 +91,20 @@ def change_stock(menu_id, data, actor, key, *, admin=False, commit=True):
         record_action(item, "setup", quantity, f"{previous} → {mode}: {reason}", actor, key)
     else:
         mode = availability.mode(item)
-        if mode not in {"prepared", "direct"} or (not admin and mode != "prepared"):
+        if mode not in {"prepared", "recipe", "direct", "untracked"} or (not admin and mode == "direct"):
             raise StockError("This action is only available for counted stock.", "INVALID_MODE", 400)
-        if row is None:
-            raise StockError("Ask the owner to set the starting stock first.", "INVENTORY_CONFIGURATION")
+        if mode == "untracked" and action != "add":
+            raise StockError("Add the first serving batch before correcting its count.", "INVALID_MODE", 400)
         if action not in {"add", "waste", "sold_out", "count"}:
             raise StockError("Choose a valid stock action.", "INVALID_ACTION", 400)
+        if row is None:
+            if action != "add" or mode == "direct":
+                raise StockError("Add the first serving batch before changing this stock.", "INVENTORY_CONFIGURATION")
+            row = InventoryItem(menu_item_id=menu_id, stock_qty=0, unit="servings")
+            db.session.add(row)
+            db.session.flush()
+        if row.unit != ("pieces" if mode == "direct" else "servings"):
+            raise StockError("This stock has the wrong unit. Ask the owner to reconcile it.", "INVENTORY_CONFIGURATION")
         if action == "count" and not admin:
             raise StockError("Only the owner can correct a stock count.", "FORBIDDEN", 403)
         if action in {"waste", "sold_out", "count"} and not reason:
@@ -108,6 +116,8 @@ def change_stock(menu_id, data, actor, key, *, admin=False, commit=True):
         ).values(stock_qty=InventoryItem.stock_qty + delta), execution_options={"synchronize_session": False})
         if result.rowcount != 1:
             raise StockError("There is not enough stock for that change.")
+        if mode == "untracked":
+            item.inventory_mode = "prepared"
         db.session.add(InventoryLog(inventory_item_id=row.id, change_qty=delta,
             reason=(f"{action.replace('_', ' ').title()}: {reason or 'New stock'}")[:100], changed_by=actor))
         record_action(item, action, delta, reason or "New stock", actor, key)

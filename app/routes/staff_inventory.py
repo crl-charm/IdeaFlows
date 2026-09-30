@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+import re
+
 from flask import Blueprint, jsonify, render_template, request, session
 
 from app.repositories.inventory_repository import InventoryRepository
 from app.services.inventory_service import InventoryService
 from app.utils.auth import login_required
 from app.core.idempotency import idempotent_request
+from app.utils.dates import manila_date
 
 staff_inventory_bp = Blueprint("staff_inventory", __name__, url_prefix="/inventory")
 
 _service = InventoryService(repo=InventoryRepository())
+
+
+def _audit_date():
+    value = request.args.get("date")
+    today = manila_date(datetime.utcnow())
+    if value is None:
+        return today
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return None
+    try:
+        selected = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return selected if date(1970, 1, 1) <= selected <= today else None
 
 
 @staff_inventory_bp.route("", methods=["GET"])
@@ -42,10 +60,13 @@ def stock_action(menu_id):
     from app.core.socketio_handlers import emit_inventory_update
     actor = session.get("user_id")
     if not kitchen_access(actor):
-        return jsonify(error="Only the owner or a cook can change kitchen stock."), 403
+        return jsonify(error="Inventory access required."), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="Enter a valid stock action."), 400
     try:
-        result = change_stock(menu_id, request.get_json(silent=True) or {}, actor,
-            request.headers.get("Idempotency-Key"), admin=session.get("role") == "admin")
+        result = change_stock(menu_id, data, actor,
+            request.headers.get("Idempotency-Key"), admin=True)
     except StockError as exc:
         db.session.rollback()
         return jsonify(error=exc.code, message=str(exc)), exc.status
@@ -65,7 +86,7 @@ def set_ingredient_stock(menu_id):
     from app.utils.inventory_helpers import is_ingredient_category
 
     if not kitchen_access(session.get("user_id")):
-        return jsonify(error="Only the owner or a cook can update ingredients."), 403
+        return jsonify(error="Inventory access required."), 403
     ingredient = db.session.get(MenuItem, menu_id)
     if not ingredient or ingredient.status == "deleted" or not is_ingredient_category(ingredient.category):
         return jsonify(error="Ingredient not found."), 404
@@ -94,7 +115,7 @@ def stock_history():
     if not kitchen_access(session.get("user_id")):
         return jsonify(error="Forbidden"), 403
     from app import db
-    rows = db.session.query(InventoryAction, User.full_name).outerjoin(User, User.id == InventoryAction.changed_by).order_by(InventoryAction.id.desc()).limit(100).all()
+    rows = db.session.query(InventoryAction, User.full_name).outerjoin(User, User.id == InventoryAction.changed_by).order_by(InventoryAction.created_at.desc(), InventoryAction.id.desc()).limit(100).all()
     return jsonify(data=[dict(item=a.item_name, menu_item_id=a.menu_item_id, action=a.action, quantity=float(a.quantity),
         reason=a.reason, actor=name or "System", at=a.created_at.isoformat()+"Z") for a, name in rows])
 
@@ -150,6 +171,39 @@ def meal_history(menu_id):
         data.append(dict(action=action, quantity=float(row["quantity"]), reason=reason,
             actor=actors.get(row["actor_id"], "System"), at=row["at"].isoformat() + "Z"))
     return jsonify(data=data, next_page=page + 1 if len(rows) > 30 else None)
+
+
+@staff_inventory_bp.route("/api/meal-day-summary", methods=["GET"])
+@login_required
+def meal_day_summary():
+    from app.services.meal_daily_audit import meal_day_summaries
+    from app.services.stock_management import kitchen_access
+    if not kitchen_access(session.get("user_id")):
+        return jsonify(error="Forbidden"), 403
+    day = _audit_date()
+    if day is None:
+        return jsonify(error="Choose a valid date up to today."), 400
+    return jsonify(date=day.isoformat(), data=list(meal_day_summaries(day).values()))
+
+
+@staff_inventory_bp.route("/api/menu-items/<int:menu_id>/daily-audit", methods=["GET"])
+@login_required
+def meal_daily_audit(menu_id):
+    from app.services.meal_daily_audit import meal_day_detail
+    from app.services.stock_management import kitchen_access
+    if not kitchen_access(session.get("user_id")):
+        return jsonify(error="Forbidden"), 403
+    day = _audit_date()
+    if day is None:
+        return jsonify(error="Choose a valid date up to today."), 400
+    try:
+        page = int(request.args.get("page", "1"))
+        if not 1 <= page <= 10000:
+            raise ValueError
+    except ValueError:
+        return jsonify(error="Choose a valid page."), 400
+    result = meal_day_detail(menu_id, day, page)
+    return (jsonify(result), 200) if result else (jsonify(error="Meal not found."), 404)
 
 
 @staff_inventory_bp.route("/api/menu-items/<int:menu_id>/last-batch", methods=["GET"])

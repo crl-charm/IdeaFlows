@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request, session
 from datetime import datetime
-from app.utils.auth import login_required, admin_required
+from app.utils.auth import login_required, admin_required, staff_or_admin_required
 
 from app.core import get_notifier
 from app.core.clock import SystemClock
@@ -27,14 +27,15 @@ _service = SessionService(
 @login_required
 @idempotent_request("customer-checkin")
 def checkin():
-
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter valid check-in details."}), 400
     payload, status = _service.checkin(
         customer_name=data.get("customer_name"),
         school=data.get("school"),
         course=data.get("course"),
         space_type_id=data.get("space_type_id"),
-        number_of_people=int(data.get("number_of_people", 1) or 1),
+        number_of_people=data.get("number_of_people", 1),
         void_request_id=data.get("void_request_id"),
     )
     return jsonify(payload), status
@@ -48,6 +49,27 @@ def checkin():
 @login_required
 def get_active_sessions():
     return jsonify(_service.get_active_sessions_view())
+
+
+@session_bp.route("/api/sessions/<int:session_id>/cancel", methods=["POST"])
+@staff_or_admin_required
+@idempotent_request("cancel-mistaken-checkin")
+def cancel_mistaken_checkin(session_id: int):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter a cancellation reason."}), 400
+    payload, status = _service.cancel_unused_checkin(
+        session_id, data.get("reason"), session["user_id"],
+        session.get("username") or "Staff", session.get("role") or "staff",
+    )
+    return jsonify(payload), status
+
+
+@session_bp.route("/api/sessions/cancellations", methods=["GET"])
+@staff_or_admin_required
+def cancelled_checkins():
+    page = max(request.args.get("page", 1, type=int) or 1, 1)
+    return jsonify(_service.cancelled_checkins(page))
 
 
 # -----------------------------

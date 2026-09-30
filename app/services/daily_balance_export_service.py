@@ -48,6 +48,8 @@ class DailyBalanceExportService(ExportService):
         for method in DailyBalanceExportService.METHODS:
             values = {flow: sum(r.get(f"{flow}_methods", {}).get(method, 0) for r in reports)
                       for flow in DailyBalanceExportService.FLOWS}
+            if method == "unclassified" and not any(values.values()):
+                continue
             net = (
                 values["checkout"] - values.get("credit_applied", 0) + values.get("credit_received", 0)
                 + values["collection"] + values["adjustment_income"]

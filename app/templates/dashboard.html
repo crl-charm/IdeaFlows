@@ -15,6 +15,7 @@
 
         {% if boardroom_view %}<a class="btn btn-warning" href="/lounge-booking">Boardroom walk-in or advance booking</a>{% endif %}
         {% if food_only_view %}<button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#checkinModal">+ New Food Order</button>{% endif %}
+        {% if not food_only_view %}<button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#cancelledCheckinsModal" onclick="loadCancelledCheckins(1)">Cancelled Time Ins</button>{% endif %}
 
         <input 
             type="text" 
@@ -92,6 +93,51 @@
 
 </div>
 
+{% if not food_only_view %}
+<div class="modal fade" id="cancelCheckinModal" tabindex="-1" aria-labelledby="cancelCheckinTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
+    <form class="modal-content" id="cancelCheckinForm">
+      <div class="modal-header">
+        <h5 class="modal-title" id="cancelCheckinTitle">Cancel mistaken Time In</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="cancelCheckinDetails" class="mb-2"></p>
+        <p class="text-muted small">Only an unused Time In can be cancelled. Its seat will become available; the entry stays in cancellation history. No payment is recorded.</p>
+        <label for="cancelCheckinReason" class="form-label">Reason</label>
+        <textarea id="cancelCheckinReason" class="form-control" rows="2" maxlength="500" required></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Time In</button>
+        <button type="submit" class="btn btn-danger" id="confirmCancelCheckin">Cancel Time In</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="cancelledCheckinsModal" tabindex="-1" aria-labelledby="cancelledCheckinsTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="cancelledCheckinsTitle">Cancelled Time Ins</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Customer / Space</th><th>Time In / Cancelled</th><th>Staff / Reason</th><th class="text-end">Uncollected time</th></tr></thead>
+          <tbody id="cancelledCheckinsRows"><tr><td colspan="4">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button type="button" class="btn btn-outline-secondary" id="cancelHistoryPrev" onclick="loadCancelledCheckins(cancelHistoryPage - 1)">Previous</button>
+        <span id="cancelHistoryPage" aria-live="polite"></span>
+        <button type="button" class="btn btn-outline-secondary" id="cancelHistoryNext" onclick="loadCancelledCheckins(cancelHistoryPage + 1)">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- RECEIPT MODAL -->
 <div class="modal fade" id="receiptModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
@@ -168,7 +214,7 @@
         {% else %}
         <input type="text" id="school" class="form-control mb-2" placeholder="School">
         <input type="text" id="course" class="form-control mb-2" placeholder="Course">
-        <input type="number" id="numberOfPeople" class="form-control mb-2" placeholder="Number of People" min="1" value="1">
+        <small class="text-muted d-block mb-2">One check-in per person.</small>
 
         {% if selected_space %}
         <label class="form-label mb-1">Space</label>
@@ -223,6 +269,62 @@
 <script>
 
 const foodOnlyView = {{ food_only_view|tojson }};
+const sessionsById = new Map();
+let cancelSessionId = null;
+let cancelHistoryPage = 1;
+
+function openCancelCheckin(sessionId) {
+    const customer = sessionsById.get(sessionId);
+    if (!customer) return;
+    cancelSessionId = sessionId;
+    document.getElementById("cancelCheckinDetails").textContent = `${customer.customer_name} — ${customer.space_type}`;
+    document.getElementById("cancelCheckinReason").value = "";
+    bootstrap.Modal.getOrCreateInstance(document.getElementById("cancelCheckinModal")).show();
+}
+
+document.getElementById("cancelCheckinForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const reason = document.getElementById("cancelCheckinReason").value.trim();
+    if (!reason || !cancelSessionId) return;
+    const button = document.getElementById("confirmCancelCheckin");
+    try {
+        const result = await runButtonAction(button, {label: "Cancelling..."}, key => fetchJSON(
+            `/api/sessions/${cancelSessionId}/cancel`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json", "Idempotency-Key": key},
+                body: JSON.stringify({reason})
+            }
+        ));
+        bootstrap.Modal.getInstance(document.getElementById("cancelCheckinModal")).hide();
+        showToast(result.message, "success");
+        loadSessions();
+        loadSpaceAvailability();
+    } catch (error) {
+        showToast(error.message || "Could not cancel this Time In.", "error");
+        if (error.status === 409) { loadSessions(); loadSpaceAvailability(); }
+    }
+});
+
+async function loadCancelledCheckins(page) {
+    if (page < 1) return;
+    const body = document.getElementById("cancelledCheckinsRows");
+    try {
+        const result = await fetchJSON(`/api/sessions/cancellations?page=${page}`);
+        cancelHistoryPage = result.page;
+        body.innerHTML = result.data.length ? result.data.map(row => `
+            <tr>
+              <td>${escapeHtml(row.customer_name)}<br><small>${escapeHtml(row.space_name)}</small></td>
+              <td>${escapeHtml(row.time_in)}<br><small>Cancelled ${escapeHtml(row.cancelled_at)}</small></td>
+              <td>${escapeHtml(row.actor || "Unknown")}<br><small>${escapeHtml(row.reason || "")}</small></td>
+              <td class="text-end">₱${row.uncollected_time_charge.toFixed(2)}</td>
+            </tr>`).join("") : '<tr><td colspan="4" class="text-center">No cancelled Time Ins.</td></tr>';
+        document.getElementById("cancelHistoryPage").textContent = `Page ${page} of ${Math.max(1, result.pages)}`;
+        document.getElementById("cancelHistoryPrev").disabled = page <= 1;
+        document.getElementById("cancelHistoryNext").disabled = page >= result.pages;
+    } catch (error) {
+        body.innerHTML = '<tr><td colspan="4" class="text-danger">Could not load cancellation history.</td></tr>';
+    }
+}
 
 document.getElementById("checkinModal")?.addEventListener("show.bs.modal", async () => {
     const group = document.getElementById("checkoutCorrectionGroup");
@@ -243,6 +345,10 @@ document.getElementById("checkinModal")?.addEventListener("show.bs.modal", async
         });
         group.classList.toggle("d-none", !corrections.length);
     } catch (_) { /* New check-in still works without a correction. */ }
+});
+
+document.getElementById("checkinModal")?.addEventListener("hide.bs.modal", event => {
+    if (event.target.contains(document.activeElement)) document.activeElement.blur();
 });
 
 document.getElementById("checkoutCorrection")?.addEventListener("change", event => {
@@ -323,7 +429,7 @@ async function checkinCustomer() {
                 customer_name: name,
                 school: document.getElementById("school").value,
                 course: document.getElementById("course").value,
-                number_of_people: parseInt(document.getElementById("numberOfPeople").value || "1", 10),
+                number_of_people: 1,
                 space_type_id: parseInt(spaceType, 10),
                 void_request_id: document.getElementById("checkoutCorrection").value || null
             })
@@ -345,7 +451,6 @@ async function checkinCustomer() {
         } else {
             document.getElementById("school").value = "";
             document.getElementById("course").value = "";
-            document.getElementById("numberOfPeople").value = "1";
         }
 
         showToast(foodOnlyView ? "Food order started." : "Customer checked in successfully!", "success");
@@ -733,6 +838,8 @@ function buildSessionTableRow(session) {
         `;
     }
     const purpose = session.space_type === "Boardroom" ? (session.purpose || "N/A") : "—";
+    const cancelButton = ["Regular Lounge", "Premium Lounge"].includes(session.space_type)
+        ? `<button type="button" class="btn btn-outline-danger btn-sm py-2 ms-1" onclick="openCancelCheckin(${session.session_id})" title="Cancel mistaken Time In" aria-label="Cancel mistaken Time In for ${escapeHtml(session.customer_name)}"><i class="bi bi-trash3" aria-hidden="true"></i></button>` : "";
     return `
         <tr>
             <td>${escapeHtml(session.customer_name)}</td>
@@ -752,6 +859,7 @@ function buildSessionTableRow(session) {
                     onclick="viewOrder(${session.session_id})">
                     View Order
                 </button>
+                ${cancelButton}
             </td>
         </tr>
     `;
@@ -779,6 +887,8 @@ function buildSessionMobileCard(session) {
     const purposeLine = session.space_type === "Boardroom" && session.purpose
         ? `<div class="mobile-session-purpose text-muted small mb-2">Purpose: ${escapeHtml(session.purpose)}</div>`
         : "";
+    const cancelButton = ["Regular Lounge", "Premium Lounge"].includes(session.space_type)
+        ? `<button type="button" class="btn btn-outline-danger" onclick="openCancelCheckin(${session.session_id})" aria-label="Cancel mistaken Time In for ${escapeHtml(session.customer_name)}"><i class="bi bi-trash3" aria-hidden="true"></i></button>` : "";
     return `
         <article class="mobile-session-card card shadow-sm mb-2">
             <div class="card-body">
@@ -804,7 +914,7 @@ function buildSessionMobileCard(session) {
                         <span class="fw-semibold">₱${session.current_bill.toFixed(2)}</span>
                     </div>
                 </div>
-                <div class="mobile-session-actions">
+                <div class="mobile-session-actions${cancelButton ? " with-cancel" : ""}">
                     <button type="button" class="btn btn-primary"
                         onclick="goToOrder(${session.session_id})">
                         Add Order
@@ -813,6 +923,7 @@ function buildSessionMobileCard(session) {
                         onclick="viewOrder(${session.session_id})">
                         View Order
                     </button>
+                    ${cancelButton}
                 </div>
             </div>
         </article>
@@ -829,6 +940,8 @@ function loadSessions() {
             showToast("Failed to load sessions. Please refresh the page.", "error");
             return;
         }
+        sessionsById.clear();
+        data.forEach(customer => sessionsById.set(customer.session_id, customer));
 
         const tableContainer = document.getElementById("sessions-container");
         const cardsContainer = document.getElementById("sessions-cards");

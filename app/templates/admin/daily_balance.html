@@ -29,7 +29,7 @@
       <button class="btn btn-info btn-sm" onclick="exportCSV()">
         <i class="bi bi-download"></i> <span class="d-none d-sm-inline">Export CSV</span>
       </button>
-      {% if session.get("role") == "admin" %}<button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal">
+      {% if session.get("role") in ("admin", "staff") %}<button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal">
         <i class="bi bi-plus"></i> <span class="d-none d-sm-inline">Generate Report</span>
       </button>{% endif %}
     </div>
@@ -277,8 +277,8 @@
   </div>
 </div>
 
-{% if session.get("role") == "admin" %}
-<!-- Generate Report Modal -->
+{% if session.get("role") in ("admin", "staff") %}
+<!-- Balance snapshot modal -->
 <div class="modal fade" id="generateReportModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -305,7 +305,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-        <button type="button" class="btn btn-warning" onclick="generateReport()">Generate</button>
+        <button type="button" id="generateBalanceButton" class="btn btn-warning" onclick="generateReport()">Generate</button>
       </div>
     </div>
   </div>
@@ -327,6 +327,7 @@ document.addEventListener('DOMContentLoaded', function() {
   lastManilaToday = todayStr;
   document.getElementById('filterStartDate').value = todayStr;
   document.getElementById('filterEndDate').value = todayStr;
+  document.getElementById('reportDate')?.setAttribute('value', todayStr);
 
   loadReports();
   loadSoftBalances();
@@ -383,7 +384,7 @@ function loadReports() {
   const end = document.getElementById('filterEndDate').value;
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
-  fetch(`/admin/daily-balance/api/reports?${params}`, { credentials: 'include' }).then(r => {
+  fetch(`${window.managementBase}/daily-balance/api/reports?${params}`, { credentials: 'include' }).then(r => {
     if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Reports unavailable');
     return r.json();
   }).then(data => {
@@ -395,7 +396,7 @@ function loadReports() {
   }).catch(() => showToast('Could not refresh Daily Balance', 'error'));
 
   // Load today's live stats immediately
-  fetch('/admin/daily-balance/api/today-stats', { credentials: 'include' }).then(r => {
+  fetch(`${window.managementBase}/daily-balance/api/today-stats`, { credentials: 'include' }).then(r => {
     if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Today totals unavailable');
     return r.json();
   }).then(res => {
@@ -503,17 +504,19 @@ function renderFilteredReports() {
   document.getElementById('bpi-count').textContent = bpiCount;
   document.getElementById('queenbank-count').textContent = queenbankCount;
 
-  document.getElementById('method-reconciliation-body').innerHTML = methods.map(m => {
+  document.getElementById('method-reconciliation-body').innerHTML = methods.filter(m =>
+    m !== 'unclassified' || flows.some(flow => methodTotals[m][flow] !== 0)
+  ).map(m => {
     const v = methodTotals[m];
     const net = v.checkout + v.collection + v.adjustment_income - v.expense - v.payable - v.adjustment_expense;
-    return `<tr><th>${m === 'unclassified' ? 'Unclassified (legacy)' : m.toUpperCase()}</th><td>₱${v.checkout.toFixed(2)}</td><td>₱${v.collection.toFixed(2)}</td><td>₱${v.adjustment_income.toFixed(2)}</td><td>₱${v.expense.toFixed(2)}</td><td>₱${v.external_expense.toFixed(2)}</td><td>₱${v.payable.toFixed(2)}</td><td>₱${v.external_payable.toFixed(2)}</td><td>₱${v.adjustment_expense.toFixed(2)}</td><td>₱${net.toFixed(2)}</td></tr>`;
+    return `<tr><th>${m === 'unclassified' ? 'Older records (method unknown)' : m.toUpperCase()}</th><td>₱${v.checkout.toFixed(2)}</td><td>₱${v.collection.toFixed(2)}</td><td>₱${v.adjustment_income.toFixed(2)}</td><td>₱${v.expense.toFixed(2)}</td><td>₱${v.external_expense.toFixed(2)}</td><td>₱${v.payable.toFixed(2)}</td><td>₱${v.external_payable.toFixed(2)}</td><td>₱${v.adjustment_expense.toFixed(2)}</td><td>₱${net.toFixed(2)}</td></tr>`;
   }).join('');
 
   renderFilteredSoftBalances(startDateVal, endDateVal);
 }
 
 function loadSoftBalances() {
-  fetch('/admin/daily-balance/api/soft-balances', { credentials: 'include' }).then(r => r.json()).then(data => {
+  fetch(`${window.managementBase}/daily-balance/api/soft-balances`, { credentials: 'include' }).then(r => r.json()).then(data => {
     if (data.success) {
       softBalancesCache = data.data;
       // Trigger soft balances filter rendering
@@ -557,55 +560,66 @@ function renderFilteredSoftBalances(startDate, endDate) {
   }
 }
 
-function generateReport() {
-  const payload = {
-    report_date: document.getElementById('reportDate').value,
-    notes: document.getElementById('notes').value,
-  };
+let balanceSubmitPending = false;
 
-  csrfFetch('/admin/daily-balance/api/reports', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).then(r => r.json()).then(data => {
-    if (data.success) {
-      showToast('Report generated', 'success');
-      bootstrap.Modal.getInstance(document.getElementById('generateReportModal')).hide();
-      document.getElementById('reportDate').value = '';
-      document.getElementById('notes').value = '';
-      loadReports();
-    } else {
-      showToast('Error generating report', 'error');
+async function saveBalanceSnapshot(generateDailyReport) {
+  if (balanceSubmitPending) return;
+  const dateInput = document.getElementById('reportDate');
+  if (!dateInput.reportValidity()) return;
+  const date = dateInput.value;
+  const period = document.getElementById('balancePeriod').value;
+  const notes = document.getElementById('notes').value;
+  const button = document.getElementById('generateBalanceButton');
+  balanceSubmitPending = true;
+  button.disabled = true;
+  let reportSaved = false;
+  try {
+    async function post(url, payload) {
+      const response = await csrfFetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Could not save balance.');
     }
-  });
-
-  csrfFetch('/admin/daily-balance/api/soft-balances', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      balance_date: document.getElementById('reportDate').value,
-      period: document.getElementById('balancePeriod').value,
-      notes: document.getElementById('notes').value
-    })
-  }).then(() => loadSoftBalances());
+    if (generateDailyReport) {
+      await post(`${window.managementBase}/daily-balance/api/reports`, { report_date: date, notes });
+      reportSaved = true;
+    }
+    await post(`${window.managementBase}/daily-balance/api/soft-balances`, { balance_date: date, period, notes });
+    showToast(generateDailyReport ? 'Report and soft balance generated' : 'Soft balance generated', 'success');
+    bootstrap.Modal.getInstance(document.getElementById('generateReportModal')).hide();
+    dateInput.value = manilaToday();
+    document.getElementById('notes').value = '';
+    loadReports();
+    loadSoftBalances();
+  } catch (error) {
+    showToast(reportSaved ? `Report saved, but soft balance failed: ${error.message}` : error.message, 'error');
+  } finally {
+    balanceSubmitPending = false;
+    button.disabled = false;
+  }
 }
+
+function generateReport() { return saveBalanceSnapshot(true); }
+function generateSoftBalance() { return saveBalanceSnapshot(false); }
 
 function exportPDF() {
   const start = document.getElementById('filterStartDate').value;
   const end = document.getElementById('filterEndDate').value;
-  window.location.href = `/admin/daily-balance/api/reports/export-pdf?start_date=${start}&end_date=${end}`;
+  window.location.href = `${window.managementBase}/daily-balance/api/reports/export-pdf?start_date=${start}&end_date=${end}`;
 }
 
 function exportCSV() {
   const start = document.getElementById('filterStartDate').value;
   const end = document.getElementById('filterEndDate').value;
-  window.location.href = `/admin/daily-balance/api/reports/export-csv?start_date=${start}&end_date=${end}`;
+  window.location.href = `${window.managementBase}/daily-balance/api/reports/export-csv?start_date=${start}&end_date=${end}`;
 }
 
 function exportExcel() {
   const start = document.getElementById('filterStartDate').value;
   const end = document.getElementById('filterEndDate').value;
-  window.location.href = `/admin/daily-balance/api/reports/export-excel?start_date=${start}&end_date=${end}`;
+  window.location.href = `${window.managementBase}/daily-balance/api/reports/export-excel?start_date=${start}&end_date=${end}`;
 }
 </script>
 {% endblock %}

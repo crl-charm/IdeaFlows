@@ -45,6 +45,38 @@ def _set_auth_session(client, role: str = "staff", user_id: int = 1):
         sess["last_activity"] = datetime.now(UTC).timestamp()
 
 
+def test_admin_login_can_set_servings_with_inactive_shadow_user(app, client):
+    app.config["SINGLE_SESSION_ENABLED"] = False
+    with app.app_context():
+        owner = Admin(full_name="Owner", username="owner_servings")
+        owner.set_password("TestPassword123!")
+        meal = MenuItem(name="Corned Beef Silog", price=80, category="Main Dish",
+                        inventory_mode="prepared", is_available=True)
+        db.session.add_all([owner, meal])
+        db.session.flush()
+        stock = InventoryItem(menu_item_id=meal.id, stock_qty=4, unit="servings")
+        db.session.add(stock)
+        db.session.commit()
+        meal_id, stock_id = meal.id, stock.id
+
+    login = client.post("/api/login", json={"username": "owner_servings", "password": "TestPassword123!"})
+    assert login.status_code == 200
+    with client.session_transaction() as current:
+        owner_user_id = current["user_id"]
+        assert current["role"] == "admin"
+    with app.app_context():
+        assert db.session.get(User, owner_user_id).is_active is False
+
+    saved = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+                        json={"action": "servings", "quantity": 5},
+                        headers={"Idempotency-Key": "owner-servings-5"})
+    assert saved.status_code == 200, saved.get_json()
+    with app.app_context():
+        assert db.session.get(InventoryItem, stock_id).stock_qty == 5
+        assert InventoryLog.query.filter_by(inventory_item_id=stock_id, changed_by=owner_user_id).count() == 1
+        assert InventoryAction.query.filter_by(menu_item_id=meal_id, changed_by=owner_user_id).count() == 1
+
+
 def test_menu_setup_and_inventory_dashboard_share_availability(app):
     with app.app_context():
         service = MenuService(MenuRepository())
@@ -213,12 +245,12 @@ def test_cook_sets_servings_and_updates_raw_stock_independently(app, client):
         json={"action": "servings", "quantity": "1.5"}, headers={"Idempotency-Key": "cook-bad-count"})
     assert bad.status_code == 400
     _set_auth_session(client, "staff", cashier_id)
-    denied = client.post(f"/inventory/api/menu-items/{meal_id}/action",
+    cashier_count = client.post(f"/inventory/api/menu-items/{meal_id}/action",
         json={"action": "servings", "quantity": 5}, headers={"Idempotency-Key": "cashier-count"})
-    assert denied.status_code == 403
-    denied_raw = client.patch(f"/inventory/api/ingredients/{ingredient_id}/stock",
+    assert cashier_count.status_code == 200
+    cashier_raw = client.patch(f"/inventory/api/ingredients/{ingredient_id}/stock",
         json={"quantity": 5}, headers={"Idempotency-Key": "cashier-raw-count"})
-    assert denied_raw.status_code == 403
+    assert cashier_raw.status_code == 200
 
 
 def test_owner_and_cook_can_enter_ingredient_stock_in_selected_units(app, client):
@@ -335,7 +367,7 @@ def test_meal_history_is_scoped_paged_and_restricted(app, client):
         db.session.commit()
         owner_id, meal_id = owner.id, meal.id
     _set_auth_session(client, "staff", 1)
-    assert client.get(f"/inventory/api/menu-items/{meal_id}/history").status_code == 403
+    assert client.get(f"/inventory/api/menu-items/{meal_id}/history").status_code == 200
     _set_auth_session(client, "admin", owner_id)
     first = client.get(f"/inventory/api/menu-items/{meal_id}/history").get_json()
     second = client.get(f"/inventory/api/menu-items/{meal_id}/history?page=2").get_json()

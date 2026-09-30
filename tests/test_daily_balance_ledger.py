@@ -26,6 +26,12 @@ def app():
     return application
 
 
+def test_pdf_hides_empty_unknown_method_without_losing_older_amounts():
+    assert all(row["method"] != "unclassified" for row in DailyBalanceExportService._method_rows([{}]))
+    rows = DailyBalanceExportService._method_rows([{"expense_methods": {"unclassified": 5}}])
+    assert next(row for row in rows if row["method"] == "unclassified")["expense"] == 5
+
+
 def test_live_ledger_reconciles_midnight_payments_and_export(app):
     first_day = date(2026, 9, 23)
     business_day = date(2026, 9, 24)
@@ -123,6 +129,7 @@ def test_live_ledger_reconciles_midnight_payments_and_export(app):
         context = DailyBalanceExportService(db).build_pdf_context([day], [])
         assert context["total_collections"] == 50
         assert context["method_rows"][0]["net"] == 20
+        assert next(row for row in context["method_rows"] if row["method"] == "unclassified")["expense"] == 5
 
     export = client.get("/admin/daily-balance/api/reports/export-csv?start_date=2026-09-24&end_date=2026-09-24")
     assert export.status_code == 200

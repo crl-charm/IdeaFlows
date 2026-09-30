@@ -27,7 +27,7 @@ ACTIVITY_TABLES = {
     "boardroom_bookings", "booking_changes", "checkout_void_requests", "customer_sessions", "daily_sales_reports",
     "expenses", "finance_transactions", "inventory_actions", "inventory_logs",
     "lounge_bookings", "order_inventory_allocations", "order_items", "orders",
-    "payables", "payable_payments", "receivables", "receivable_payments",
+    "payables", "payable_payments", "receivables", "receivable_payments", "receivable_tabs",
     "soft_balance_entries", "staff_attendance", "staff_shifts", "staff_performance_logs",
     "transactions",
 }

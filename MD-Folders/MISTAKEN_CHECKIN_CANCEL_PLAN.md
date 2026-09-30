@@ -1,6 +1,6 @@
 # Cancel an unused mistaken Time In
 
-**Status:** Plan only. This is the delete icon beside Add Order and View Order.
+**Status:** Implemented locally; production deployment pending. This is the delete icon beside Add Order and View Order.
 
 ## Confirmed rule
 
@@ -34,3 +34,10 @@ Staff may cancel a wrong Regular/Premium Time In (for example, a customer was en
 ## Done when
 
 An unused mistaken Time In can be safely cancelled without deleting evidence or disturbing a used session. Run focused session/order tests and inspect the diff.
+
+## Implemented
+
+- Regular/Premium desktop rows and mobile cards show a labelled trash icon. The confirmation modal requires a reason and the dashboard offers paginated cancellation history.
+- `POST /api/sessions/<id>/cancel` locks the session, checks for any order, payment, receivable, customer credit, or linked booking, then marks it `cancelled`. The session row keeps the original Time In and space plus actor, reason, cancellation time, and estimated **uncollected** time charge. No sale, refund, or inventory change is written.
+- Order placement and session-linked receivable creation lock the same session row. Existing checkout already locks it. A stale or repeated cancellation returns a conflict without changing money or stock.
+- `GET /api/sessions/cancellations` exposes the audit to authenticated staff/admin, 25 records per page. A cancelled Time In disappears from active lists and seat occupancy, and direct checkout/order calls reject it.

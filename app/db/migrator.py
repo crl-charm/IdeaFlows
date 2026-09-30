@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from sqlalchemy import text, inspect
-from app.models import Admin
+from datetime import datetime
+from decimal import Decimal
+
+from sqlalchemy import text, inspect, case, func
+from app.models import Admin, Receivable, ReceivablePayment, ReceivableTab
+from app.utils.dates import manila_date
 from app.models.finance import FinanceBudget, FinanceTransaction
 from app.models.soft_balance import SoftBalanceEntry
 from app.models.space_price_history import SpacePriceHistory
@@ -52,6 +56,15 @@ class SchemaMigrator:
             ("staff_attendance", "last_activity_at", "ALTER TABLE staff_attendance ADD COLUMN last_activity_at DATETIME NULL"),
             ("staff_attendance", "show_in_history", "ALTER TABLE staff_attendance ADD COLUMN show_in_history BOOLEAN NOT NULL DEFAULT TRUE"),
             ("menu_items", "inventory_mode", "ALTER TABLE menu_items ADD COLUMN inventory_mode VARCHAR(16) NULL"),
+            ("menu_items", "can_remove_rice", "ALTER TABLE menu_items ADD COLUMN can_remove_rice BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("menu_items", "can_remove_egg", "ALTER TABLE menu_items ADD COLUMN can_remove_egg BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("order_items", "name_snapshot", "ALTER TABLE order_items ADD COLUMN name_snapshot VARCHAR(100) NULL"),
+            ("order_items", "base_price", "ALTER TABLE order_items ADD COLUMN base_price DECIMAL(10,2) NULL"),
+            ("order_items", "no_rice", "ALTER TABLE order_items ADD COLUMN no_rice BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("order_items", "no_egg", "ALTER TABLE order_items ADD COLUMN no_egg BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("order_items", "unit_deduction", "ALTER TABLE order_items ADD COLUMN unit_deduction DECIMAL(10,2) NOT NULL DEFAULT 0"),
+            ("orders", "food_total_before", "ALTER TABLE orders ADD COLUMN food_total_before DECIMAL(10,2) NULL"),
+            ("orders", "food_total_after", "ALTER TABLE orders ADD COLUMN food_total_after DECIMAL(10,2) NULL"),
             ("order_inventory_allocations", "menu_item_id", "ALTER TABLE order_inventory_allocations ADD COLUMN menu_item_id INTEGER NULL"),
             ("order_inventory_allocations", "ordered_units", "ALTER TABLE order_inventory_allocations ADD COLUMN ordered_units INTEGER NULL"),
             ("order_inventory_allocations", "updated_at", "ALTER TABLE order_inventory_allocations ADD COLUMN updated_at DATETIME NULL"),
@@ -87,6 +100,13 @@ class SchemaMigrator:
                 "service_mode",
                 "ALTER TABLE customer_sessions ADD COLUMN service_mode VARCHAR(16) NOT NULL DEFAULT 'timed'",
             ),
+            ("customer_sessions", "cancelled_at", "ALTER TABLE customer_sessions ADD COLUMN cancelled_at DATETIME NULL"),
+            ("customer_sessions", "cancelled_by_id", "ALTER TABLE customer_sessions ADD COLUMN cancelled_by_id INT NULL"),
+            ("customer_sessions", "cancelled_by_role", "ALTER TABLE customer_sessions ADD COLUMN cancelled_by_role VARCHAR(20) NULL"),
+            ("customer_sessions", "cancelled_by_name", "ALTER TABLE customer_sessions ADD COLUMN cancelled_by_name VARCHAR(100) NULL"),
+            ("customer_sessions", "cancel_reason", "ALTER TABLE customer_sessions ADD COLUMN cancel_reason VARCHAR(500) NULL"),
+            ("customer_sessions", "cancelled_space_name", "ALTER TABLE customer_sessions ADD COLUMN cancelled_space_name VARCHAR(100) NULL"),
+            ("customer_sessions", "cancelled_uncollected_amount", "ALTER TABLE customer_sessions ADD COLUMN cancelled_uncollected_amount DECIMAL(10,2) NULL"),
             ("boardroom_bookings", "session_id", "ALTER TABLE boardroom_bookings ADD COLUMN session_id INT NULL"),
             ("boardroom_bookings", "started_at", "ALTER TABLE boardroom_bookings ADD COLUMN started_at DATETIME NULL"),
             (
@@ -164,6 +184,7 @@ class SchemaMigrator:
                 "ALTER TABLE receivables ADD COLUMN incurred_date DATE NULL",
             ),
             ("receivables", "notes", "ALTER TABLE receivables ADD COLUMN notes TEXT NULL"),
+            ("receivables", "tab_id", "ALTER TABLE receivables ADD COLUMN tab_id INTEGER NULL"),
             ("receivable_payments", "payment_group_id", "ALTER TABLE receivable_payments ADD COLUMN payment_group_id VARCHAR(32) NULL"),
             ("expenses", "payment_method", "ALTER TABLE expenses ADD COLUMN payment_method VARCHAR(50) NULL"),
             ("expenses", "voided_at", "ALTER TABLE expenses ADD COLUMN voided_at DATETIME NULL"),
@@ -241,6 +262,75 @@ class SchemaMigrator:
                 print(f"[WARNING] Column {column_name} on {table_name} skipped/failed: {e}")
 
         self._ensure_indexes(db, inspector)
+        self._backfill_receivable_tabs()
+        if db.engine.dialect.name == "mysql" and not any(
+            "tab_id" in fk.get("constrained_columns", [])
+            for fk in inspect(db.engine).get_foreign_keys("receivables")
+        ):
+            db.session.execute(text(
+                "ALTER TABLE receivables ADD CONSTRAINT fk_receivables_tab "
+                "FOREIGN KEY (tab_id) REFERENCES receivable_tabs(id)"
+            ))
+            db.session.commit()
+
+    def _backfill_receivable_tabs(self) -> None:
+        """Attach legacy debts without changing amounts or payment history."""
+        db = self._db
+        rows = Receivable.query.filter(
+            (Receivable.tab_id.is_(None)) | (Receivable.incurred_date.is_(None))
+        ).order_by(Receivable.id).all()
+        if not rows:
+            return
+        before = (
+            db.session.query(db.func.sum(Receivable.amount_owed)).scalar() or Decimal("0"),
+            db.session.query(db.func.sum(Receivable.partial_paid)).scalar() or Decimal("0"),
+            db.session.query(db.func.sum(ReceivablePayment.amount)).scalar() or Decimal("0"),
+            db.session.query(func.sum(case((Receivable.paid.is_(False),
+                                            Receivable.amount_owed - Receivable.partial_paid), else_=0))).scalar() or Decimal("0"),
+        )
+        open_tabs = {}
+        try:
+            for row in rows:
+                if row.incurred_date is None:
+                    row.incurred_date = manila_date(row.created_at) if row.created_at else manila_date(datetime.utcnow())
+                if row.tab_id is not None:
+                    continue
+                name, contact, key = ReceivableTab.identity(row.customer_name, row.customer_contact)
+                if not row.paid and row.amount_owed > row.partial_paid:
+                    identity = (name, contact)
+                    tab = open_tabs.get(identity)
+                    if tab is None:
+                        tab = ReceivableTab.query.filter_by(active_key=key).first() if key else None
+                        if tab is None:
+                            tab = ReceivableTab(customer_name=row.customer_name, customer_contact=row.customer_contact,
+                                                normalized_name=name, normalized_contact=contact, active_key=key,
+                                                opened_at=row.created_at or datetime.utcnow())
+                            db.session.add(tab)
+                            db.session.flush()
+                        open_tabs[identity] = tab
+                else:
+                    # Old settled cycles cannot be reconstructed reliably; retain each as history.
+                    tab = ReceivableTab(customer_name=row.customer_name, customer_contact=row.customer_contact,
+                                        normalized_name=name, normalized_contact=contact,
+                                        opened_at=row.created_at or datetime.utcnow(),
+                                        closed_at=row.paid_at or row.created_at or datetime.utcnow())
+                    db.session.add(tab)
+                    db.session.flush()
+                row.tab_id = tab.id
+            db.session.flush()
+            after = (
+                db.session.query(db.func.sum(Receivable.amount_owed)).scalar() or Decimal("0"),
+                db.session.query(db.func.sum(Receivable.partial_paid)).scalar() or Decimal("0"),
+                db.session.query(db.func.sum(ReceivablePayment.amount)).scalar() or Decimal("0"),
+                db.session.query(func.sum(case((Receivable.paid.is_(False),
+                                                Receivable.amount_owed - Receivable.partial_paid), else_=0))).scalar() or Decimal("0"),
+            )
+            if before != after:
+                raise RuntimeError("Receivable money totals changed during tab backfill")
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
     def _ensure_indexes(self, db, inspector) -> None:
         """Create performance indexes idempotently (MySQL/SQLite)."""
@@ -299,6 +389,16 @@ class SchemaMigrator:
                 "receivables",
                 "idx_receivables_paid_paid_at",
                 "CREATE INDEX idx_receivables_paid_paid_at ON receivables (paid, paid_at)",
+            ),
+            (
+                "receivables",
+                "idx_receivables_tab_date_id",
+                "CREATE INDEX idx_receivables_tab_date_id ON receivables (tab_id, incurred_date, id)",
+            ),
+            (
+                "receivables",
+                "idx_receivables_incurred_id",
+                "CREATE INDEX idx_receivables_incurred_id ON receivables (incurred_date, id)",
             ),
             (
                 "expenses",

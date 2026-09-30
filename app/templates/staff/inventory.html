@@ -329,6 +329,7 @@ function loadInventory() {
         }
         renderDirectStockTable();
         renderRecipeTable();
+        InventoryUI.refreshDailySummaries(renderRecipeTable);
       }
     })
     .catch(error => {

@@ -1,0 +1,63 @@
+<div class="container-fluid" id="receivables-workspace" data-api-base="{{ receivables_base }}">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div><h1 class="h3 mb-0">Receivables / Customer Utang</h1><small id="receivables-count" class="text-muted">Loading records…</small></div>
+    <button type="button" class="btn btn-warning" id="new-receivable">+ New Receivable</button>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-sm-4"><div class="card h-100"><div class="card-body"><small>All dates still owed</small><div class="h5 mb-0">₱<span id="total-receivables">0.00</span></div></div></div></div>
+    <div class="col-sm-4"><div class="card h-100"><div class="card-body"><small id="selected-taken-label">Selected date: debt taken</small><div class="h5 mb-0">₱<span id="selected-taken">0.00</span></div></div></div></div>
+    <div class="col-sm-4"><div class="card h-100"><div class="card-body"><small id="selected-owed-label">Selected date: still owed</small><div class="h5 mb-0">₱<span id="selected-owed">0.00</span></div></div></div></div>
+  </div>
+
+  {% include "partials/receivable_collection_cards.html" %}
+
+  <div class="card mb-3"><div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-sm-auto"><label class="form-label" for="debt-date">Date Taken</label><input type="date" id="debt-date" class="form-control"></div>
+      <div class="col-sm-auto"><button type="button" id="debt-today" class="btn btn-outline-secondary">Today</button> <button type="button" id="debt-all" class="btn btn-outline-secondary">Show All Utang</button></div>
+      <div class="col-sm"><label class="form-label" for="debt-search">Search name, contact, or items</label><div class="input-group"><input id="debt-search" type="search" class="form-control" maxlength="100"><button type="button" id="debt-clear" class="btn btn-outline-secondary">Clear</button></div></div>
+      <div class="col-sm-auto"><label class="form-label" for="debt-status">Status</label><select id="debt-status" class="form-select"><option value="">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select></div>
+    </div>
+    <p class="small text-muted mb-0 mt-2">Date Taken filters debts. Collections above use payment dates. Customer tab payments apply to the whole open tab, oldest unpaid debt first.</p>
+  </div></div>
+
+  <div class="card mb-3"><div class="card-header d-flex justify-content-between"><h2 class="h5 mb-0">Customer tabs</h2><span id="open-tabs-count" class="small text-muted"></span></div>
+    <div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>Customer</th><th>Contact</th><th id="tabs-date-heading">Debt taken on selected date</th><th>Tab orders</th><th>Tab paid</th><th>All-date still owed</th><th>Action</th></tr></thead><tbody id="customer-tabs-body"><tr><td colspan="7">Loading tabs…</td></tr></tbody></table></div>
+    <div class="card-footer d-flex justify-content-between align-items-center"><button type="button" id="tabs-prev" class="btn btn-sm btn-outline-secondary">Previous</button><span id="tabs-page" class="small"></span><button type="button" id="tabs-next" class="btn btn-sm btn-outline-secondary">Next</button></div>
+  </div>
+
+  <div class="card"><div class="card-header"><h2 class="h5 mb-0">Receivable Records / Date Taken <span id="records-date-label" class="small text-muted"></span></h2></div>
+    <div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>Customer</th><th>Contact</th><th>Items</th><th>Notes</th><th>Original</th><th>Paid</th><th>Still owed</th><th>Date Taken</th><th>Due</th><th>Status</th><th>Recorded by</th><th>History</th></tr></thead><tbody id="receivables-table-body"><tr><td colspan="12">Loading debts…</td></tr></tbody></table></div>
+    <div class="card-footer d-flex justify-content-between align-items-center"><button type="button" id="records-prev" class="btn btn-sm btn-outline-secondary">Previous</button><span id="records-page" class="small"></span><button type="button" id="records-next" class="btn btn-sm btn-outline-secondary">Next</button></div>
+  </div>
+</div>
+
+<div class="modal fade" id="addReceivableModal" tabindex="-1" aria-labelledby="addReceivableModalLabel"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title h5" id="addReceivableModalLabel">Add Receivable</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+  <form id="receivable-form"><div class="modal-body">
+    <div class="mb-2"><label class="form-label" for="customerName">Customer name *</label><input id="customerName" name="customer_name" class="form-control" maxlength="100" required></div>
+    <div class="mb-2"><label class="form-label" for="customerContact">Contact</label><input id="customerContact" name="customer_contact" class="form-control" maxlength="100"></div>
+    <div class="mb-2"><label class="form-label" for="matchingTabs">Open customer tab</label><select id="matchingTabs" class="form-select"><option value="">Create a new tab</option></select><div class="form-text">Choose an existing tab to add to it. With a contact number, a matching open tab is reused automatically.</div></div>
+    <div class="mb-2"><label class="form-label" for="itemsDesc">Items taken *</label><textarea id="itemsDesc" name="items_description" class="form-control" required></textarea></div>
+    <div class="mb-2"><label class="form-label" for="receivableNotes">Borrowed utensils / notes</label><textarea id="receivableNotes" name="notes" class="form-control" maxlength="2000"></textarea></div>
+    <div class="mb-2"><label class="form-label" for="amountOwed">Amount owed (₱) *</label><input id="amountOwed" name="amount_owed" type="number" min="0.01" step="0.01" class="form-control" required></div>
+    <div class="mb-2"><label class="form-label" for="approvedByStaff">Approved by staff</label><input id="approvedByStaff" name="approved_by_staff" class="form-control" maxlength="100"></div>
+    <div class="mb-2"><label class="form-label" for="incurredDate">Date Taken *</label><input id="incurredDate" name="incurred_date" type="date" class="form-control" required></div>
+    <div class="mb-2"><label class="form-label" for="dueDate">Due date *</label><input id="dueDate" name="due_date" type="date" class="form-control" required></div>
+  </div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" id="save-receivable" class="btn btn-warning">Save debt</button></div></form>
+</div></div></div>
+
+<div class="modal fade" id="viewOrderModal" tabindex="-1" aria-labelledby="viewOrderModalLabel"><div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title h5" id="viewOrderModalLabel">Customer tab: <span id="viewCustomerName"></span></h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+  <div class="modal-body"><p id="tab-contact" class="small text-muted"></p>
+    <div class="row g-2 mb-3"><div class="col-4">Orders total<br><strong id="viewOrdersTotal">₱0.00</strong></div><div class="col-4">Paid so far<br><strong id="viewPaidTotal">₱0.00</strong></div><div class="col-4">All-date still owed<br><strong id="viewOutstandingBalance">₱0.00</strong></div></div>
+    <h3 class="h6">Orders in this debt cycle</h3><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date Taken</th><th>Items</th><th>Notes</th><th>Original</th><th>Paid</th><th>Still owed</th><th>Due</th><th>Recorded by</th></tr></thead><tbody id="view-order-table-body"></tbody></table></div>
+    <div id="customerPaymentControls" class="border rounded p-3 mt-3"><h3 class="h6">Record payment for the whole tab</h3><p class="small text-muted">Payment applies to oldest unpaid orders first, across all dates.</p><div class="row g-2 align-items-end">
+      <div class="col-sm-4"><label for="customerPaymentAmount" class="form-label">Amount (₱)</label><input id="customerPaymentAmount" type="number" min="0.01" step="0.01" class="form-control"></div>
+      <div class="col-sm-3"><label for="customerPaymentMethod" class="form-label">Method</label><select id="customerPaymentMethod" class="form-select"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bdo">BDO</option><option value="bpi">BPI</option><option value="queenbank">QueenBank</option></select></div>
+      <div class="col-sm-5"><button type="button" id="payment-full" class="btn btn-outline-success">Use full balance</button> <button type="button" id="recordCustomerPaymentBtn" class="btn btn-success">Record</button></div>
+    </div></div>
+    <h3 class="h6 mt-4">Payment history</h3><div class="table-responsive"><table class="table table-sm"><thead><tr><th>When</th><th>Amount / allocation</th><th>Method</th><th>Recorded by</th></tr></thead><tbody id="customerPaymentHistory"></tbody></table></div>
+  </div>
+</div></div></div>

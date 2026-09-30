@@ -18,6 +18,13 @@ class CustomerSession(db.Model):
     time_in = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     time_out = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(20), default="active", nullable=False)
+    cancelled_at = db.Column(db.DateTime, nullable=True)
+    cancelled_by_id = db.Column(db.Integer, nullable=True)
+    cancelled_by_role = db.Column(db.String(20), nullable=True)
+    cancelled_by_name = db.Column(db.String(100), nullable=True)
+    cancel_reason = db.Column(db.String(500), nullable=True)
+    cancelled_space_name = db.Column(db.String(100), nullable=True)
+    cancelled_uncollected_amount = db.Column(db.Numeric(10, 2), nullable=True)
     payment_method = db.Column(db.String(50), nullable=False, default="cash")
     amount_tendered = db.Column(db.Numeric(10, 2), nullable=True)
 

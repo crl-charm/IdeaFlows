@@ -1,6 +1,6 @@
 from flask import Flask, request, g, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from app.utils.auth import register_admin_blueprint, enforce_admin_access, is_admin_path
+from app.utils.auth import register_admin_blueprint, enforce_admin_access, enforce_staff_management_access, is_admin_path
 from flask_socketio import SocketIO
 from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
@@ -79,17 +79,6 @@ def create_app():
         x_host=app.config["PROXY_FIX_X_HOST"],
     )
     
-    # CSRF exemptions (documented):
-    # - POST /api/login (auth_routes @csrf.exempt)
-    # - /admin/menu/api/* (multipart menu uploads; see custom_protect below)
-    original_protect = csrf.protect
-
-    def custom_protect(*args, **kwargs):
-        if request.path.startswith("/admin/menu/api/"):
-            return None
-        return original_protect(*args, **kwargs)
-
-    csrf.protect = custom_protect
     csrf.init_app(app)
     limiter.init_app(app)
 
@@ -168,8 +157,10 @@ def create_app():
     from app.routes.staff_menu import staff_menu_bp
     from app.routes.staff_inventory import staff_inventory_bp
 
-    register_admin_blueprint(app, menu_bp)
-    register_admin_blueprint(app, inventory_bp)
+    app.register_blueprint(menu_bp)
+    app.register_blueprint(menu_bp, name="menu_staff", url_prefix="/staff/menu")
+    app.register_blueprint(inventory_bp)
+    app.register_blueprint(inventory_bp, name="inventory_staff", url_prefix="/staff/inventory")
     app.register_blueprint(staff_menu_bp)
     app.register_blueprint(staff_inventory_bp)
 
@@ -188,11 +179,13 @@ def create_app():
 
     register_admin_blueprint(app, sales_bp)
     app.register_blueprint(sales_balance_bp)
+    app.register_blueprint(sales_balance_bp, name="sales_staff", url_prefix="/staff/daily-balance")
     register_admin_blueprint(app, expenses_bp)
     app.register_blueprint(staff_expenses_bp)
     register_admin_blueprint(app, receivables_bp)
     app.register_blueprint(staff_receivables_bp)
-    register_admin_blueprint(app, payables_bp)
+    app.register_blueprint(payables_bp)
+    app.register_blueprint(payables_bp, name="payables_staff", url_prefix="/staff/payables")
     register_admin_blueprint(app, staff_performance_bp)
     register_admin_blueprint(app, analytics_bp)
 
@@ -325,17 +318,8 @@ def register_security_middleware(app):
             return None
         if path.startswith("/static/"):
             return None
-        staff_balance_reads = {
-            "/admin/daily-balance",
-            "/admin/daily-balance/api/reports",
-            "/admin/daily-balance/api/soft-balances",
-            "/admin/daily-balance/api/today-stats",
-            "/admin/daily-balance/api/reports/export-csv",
-            "/admin/daily-balance/api/reports/export-pdf",
-            "/admin/daily-balance/api/reports/export-excel",
-        }
-        if request.method == "GET" and path in staff_balance_reads:
-            return None
+        if path.startswith("/staff/"):
+            return enforce_staff_management_access()
         if not is_admin_path(path):
             return None
         denied = enforce_admin_access()

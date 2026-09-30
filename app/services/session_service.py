@@ -8,7 +8,10 @@ from typing import Any, Optional
 from app import db
 from app.utils.billing import calculate_time_bill
 from app.core.interfaces import Clock, Notifier
-from app.models import CustomerSession, Transaction, CheckoutVoidRequest
+from app.models import (
+    BoardroomBooking, BookingChange, CheckoutVoidRequest, CustomerSession,
+    Order, Receivable, Transaction,
+)
 from app.repositories.session_repository import SessionRepository
 from app.repositories.sales_repository import SalesRepository
 from app.utils.dates import manila_date
@@ -53,14 +56,29 @@ class SessionService:
         school: Optional[str],
         course: Optional[str],
         space_type_id: Optional[int],
-        number_of_people: int,
+        number_of_people: Any,
         void_request_id: Any = None,
     ) -> dict[str, Any]:
         name = customer_name.strip() if isinstance(customer_name, str) else ""
         if not name or len(name) > 100:
             return {"error": "Enter a customer name of up to 100 characters."}, 400
-        if number_of_people <= 0:
-            return {"error": "Number of people must be at least 1."}, 400
+        if (isinstance(space_type_id, bool) or not isinstance(space_type_id, (int, str))
+                or not str(space_type_id).isdigit() or len(str(space_type_id)) > 10):
+            return {"error": "Please select a valid space."}, 400
+        space = self.repo.get_space_type(int(space_type_id), lock=True)
+        if not space:
+            return {"error": "Please select a valid space."}, 400
+        if space.name not in {"Regular Lounge", "Premium Lounge", "Boardroom"}:
+            return {"error": "Choose a timed lounge or start a Boardroom booking."}, 400
+        if space.name in {"Regular Lounge", "Premium Lounge"}:
+            if type(number_of_people) is not int or number_of_people != 1:
+                return {"error": "Check in one person at a time for Regular or Premium."}, 400
+        else:
+            if (isinstance(number_of_people, bool) or not isinstance(number_of_people, (int, str))
+                    or not str(number_of_people).isdigit() or len(str(number_of_people)) > 9
+                    or int(number_of_people) < 1):
+                return {"error": "Number of people must be at least 1."}, 400
+            number_of_people = int(number_of_people)
 
         now = self.clock.now()
         sess = CustomerSession(
@@ -68,21 +86,15 @@ class SessionService:
             school=school,
             course=course,
             number_of_people=number_of_people,
-            space_type_id=space_type_id,
+            space_type_id=space.id,
             time_in=now,
             status="active",
             service_mode="timed",
         )
-
-        space = self.repo.get_space_type(space_type_id) if space_type_id else None
-        if not space:
-            return {"error": "Please select a valid space."}, 400
-        if space.name not in {"Regular Lounge", "Premium Lounge", "Boardroom"}:
-            return {"error": "Choose a timed lounge or start a Boardroom booking."}, 400
         blocking = self.repo.blocking_booking_at(now + timedelta(hours=8), whole_hub_only=space.name != "Boardroom")
         if blocking:
             return {"error": "This space is reserved for a booking right now."}, 409
-        occupied = self.repo.sum_active_occupancy(space_type_id)
+        occupied = self.repo.sum_active_occupancy(space.id, lock=True)
         if space.name == "Boardroom" and occupied:
             return {"error": "Boardroom is currently occupied.", "full": True}, 409
         if space.capacity:
@@ -211,6 +223,70 @@ class SessionService:
             )
 
         return result
+
+    def cancel_unused_checkin(self, session_id: int, reason: str, actor_id: int,
+                              actor_name: str, actor_role: str) -> tuple[dict[str, Any], int]:
+        clean_reason = reason.strip() if isinstance(reason, str) else ""
+        if not clean_reason or len(clean_reason) > 500:
+            return {"error": "Enter a cancellation reason of up to 500 characters."}, 400
+
+        sess = self.repo.get_session_for_update(session_id)
+        if not sess:
+            return {"error": "Time In not found."}, 404
+        if sess.status != "active":
+            return {"error": "This Time In is no longer active."}, 409
+        if sess.service_mode != "timed" or sess.space_type.name not in {"Regular Lounge", "Premium Lounge"}:
+            return {"error": "Only Regular and Premium Time Ins can be cancelled here."}, 409
+        if (sess.voided_transaction_id is not None or sess.retained_time_bill is not None
+                or Decimal(str(sess.credit_balance or 0)) != 0):
+            return {"error": "This Time In carries an earlier checkout or payment."}, 409
+        if db.session.query(Order.id).filter_by(customer_session_id=session_id).first():
+            return {"error": "This Time In has a placed order and cannot be cancelled."}, 409
+        if (db.session.query(Transaction.id).filter_by(session_id=session_id).first()
+                or db.session.query(Receivable.id).filter_by(session_id=session_id).first()):
+            return {"error": "This Time In has a payment or customer debt and cannot be cancelled."}, 409
+        if (db.session.query(BoardroomBooking.id).filter_by(session_id=session_id).first()
+                or db.session.query(BookingChange.id).filter_by(session_id=session_id).first()):
+            return {"error": "This Time In is linked to a booking. Use Space Bookings."}, 409
+
+        now = self.clock.now()
+        uncollected = calculate_time_bill(sess.space_type, (now - sess.time_in).total_seconds() / 60)
+        sess.status = "cancelled"
+        sess.time_out = now
+        sess.cancelled_at = now
+        sess.cancelled_by_id = actor_id
+        sess.cancelled_by_role = actor_role
+        sess.cancelled_by_name = actor_name[:100]
+        sess.cancel_reason = clean_reason
+        sess.cancelled_space_name = sess.space_type.name
+        sess.cancelled_uncollected_amount = uncollected
+        try:
+            self.repo.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        return {"message": "Mistaken Time In cancelled. The seat is available again.",
+                "uncollected_time_charge": float(uncollected)}, 200
+
+    def cancelled_checkins(self, page: int) -> dict[str, Any]:
+        history = (CustomerSession.query.filter_by(status="cancelled")
+                   .order_by(CustomerSession.cancelled_at.desc(), CustomerSession.id.desc())
+                   .paginate(page=page, per_page=25, error_out=False))
+        return {
+            "data": [{
+                "session_id": row.id,
+                "customer_name": row.customer_name,
+                "space_name": row.cancelled_space_name or row.space_type.name,
+                "time_in": (row.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
+                "cancelled_at": (row.cancelled_at + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
+                "business_date": manila_date(row.cancelled_at).isoformat(),
+                "actor": row.cancelled_by_name,
+                "reason": row.cancel_reason,
+                "uncollected_time_charge": float(row.cancelled_uncollected_amount or 0),
+            } for row in history.items],
+            "page": page,
+            "pages": history.pages,
+        }
 
     def _food_bill(self, sess: CustomerSession) -> tuple[Decimal, Decimal]:
         current = Decimal(str(self.repo.sum_food_total_for_session(sess.id))).quantize(Decimal("0.01"))

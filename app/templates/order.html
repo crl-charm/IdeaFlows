@@ -186,6 +186,7 @@
   font-weight: 600;
   color: var(--text);
   flex: 1;
+  min-width: 0;
 }
 
 .cart-item-qty-price {
@@ -193,6 +194,8 @@
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .cart-item-quantity {
@@ -229,6 +232,9 @@
 .cart-item-remove:hover {
   background: #fecaca;
 }
+
+.cart-item-edit { background: #dbeafe; color: #1d4ed8; }
+.cart-item-edit:hover { background: #bfdbfe; }
 
 .cart-footer {
   border-top: 1px solid var(--border);
@@ -715,6 +721,33 @@
   </div>
 </div>
 
+<div class="modal fade" id="cartModifierModal" tabindex="-1" aria-labelledby="cartModifierTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="cartModifierTitle">Edit meal</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="modifierQuantity" class="form-label">Servings to change</label>
+          <input type="number" class="form-control" id="modifierQuantity" min="1" step="1" oninput="updateModifierPreview()">
+          <small class="text-muted">Choose fewer servings to keep the rest unchanged.</small>
+        </div>
+        <label class="form-check mb-2" id="noRiceOption"><input class="form-check-input" type="checkbox" id="modifierNoRice" onchange="updateModifierPreview()"> No rice (−₱18 per serving)</label>
+        <label class="form-check mb-3" id="noEggOption"><input class="form-check-input" type="checkbox" id="modifierNoEgg" onchange="updateModifierPreview()"> No egg (−₱18 per serving)</label>
+        <p class="mb-1">Menu price: ₱<span id="modifierBasePrice">0.00</span></p>
+        <p class="mb-1">Deduction per serving: −₱<span id="modifierDeduction">0.00</span></p>
+        <p class="fw-semibold mb-0">New price: ₱<span id="modifierUnitPrice">0.00</span> each · ₱<span id="modifierLineTotal">0.00</span> total</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveModifierEdit()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -727,6 +760,13 @@ let menuById = {};
 let allMenuData = [];
 let activeCategory = "All";
 let searchTerm = "";
+let editCartIndex = null;
+
+function escapeOrderHtml(value) {
+  const span = document.createElement('span');
+  span.textContent = String(value ?? '');
+  return span.innerHTML;
+}
 
 const refreshOrderMenu = window.createDebouncedRefresh(loadMenu, 150);
 if (socket) socket.on('menu_update', refreshOrderMenu);
@@ -762,7 +802,7 @@ function parseCategory(category) {
 }
 
 function buildCategoryFilters() {
-  fetch('/admin/menu/api/categories', { credentials: 'include' })
+  fetch(`${window.managementBase}/menu/api/categories`, { credentials: 'include' })
     .then(res => res.json())
     .then(data => {
       if (data.success) {
@@ -872,6 +912,8 @@ function loadMenu() {
         menuById[item.id] = {
           name: item.name,
           price: item.price,
+          can_remove_rice: !!item.can_remove_rice,
+          can_remove_egg: !!item.can_remove_egg,
           available_quantity: item.available_quantity,
           is_available: item.is_available !== false
         };
@@ -903,7 +945,7 @@ function loadCurrentOrders() {
         li.className = "order-item";
         li.innerHTML = `
           <div class="order-item-info">
-            <div class="order-item-name">${item.item_name}</div>
+            <div class="order-item-name">${escapeOrderHtml(item.item_name)}</div>
             <div class="order-item-meta">Qty: ${item.quantity}</div>
           </div>
           <div class="order-item-price">₱${item.total.toFixed(2)}</div>
@@ -993,18 +1035,90 @@ function addToCart(id) {
     showUnavailable(meta.name);
     return;
   }
-  const existing = cart.find(item => item.id === id);
-  if (meta.available_quantity != null && (existing?.quantity || 0) >= meta.available_quantity) {
+  if (cart.some(item => item.id === id && cartLineIsStale(item))) {
+    showToast('Menu changed. Remove the old line before adding this meal again.', 'error');
+    return;
+  }
+  const existing = cart.find(item => item.id === id && !item.no_rice && !item.no_egg);
+  if (meta.available_quantity != null && cartQuantityFor(id) >= meta.available_quantity) {
     showToast(`Only ${meta.available_quantity} ${meta.name} left.`, 'error');
     return;
   }
   if (existing) {
     existing.quantity += 1;
   } else {
-    cart.push({ id, name: meta.name, price: meta.price, quantity: 1 });
+    cart.push({ id, name: meta.name, base_price: meta.price, price: meta.price,
+                no_rice: false, no_egg: false, quantity: 1 });
   }
   renderCart();
   showToast(`${meta.name} added!`, "success");
+}
+
+function cartQuantityFor(id) {
+  return cart.reduce((sum, row) => sum + (row.id === id ? row.quantity : 0), 0);
+}
+
+function cartLineIsStale(row) {
+  const meta = menuById[row.id];
+  return !meta || !meta.is_available || Number(meta.price) !== Number(row.base_price) ||
+    (row.no_rice && !meta.can_remove_rice) || (row.no_egg && !meta.can_remove_egg);
+}
+
+function openModifierEditor(index) {
+  const row = cart[index];
+  if (!row || cartLineIsStale(row)) return showToast('Menu changed. Remove this line and add it again.', 'error');
+  const meta = menuById[row.id];
+  if (!meta.can_remove_rice && !meta.can_remove_egg) return;
+  editCartIndex = index;
+  document.getElementById('cartModifierTitle').textContent = `Edit ${row.name}`;
+  const quantity = document.getElementById('modifierQuantity');
+  quantity.max = row.quantity;
+  quantity.value = row.quantity;
+  document.getElementById('noRiceOption').classList.toggle('d-none', !meta.can_remove_rice);
+  document.getElementById('noEggOption').classList.toggle('d-none', !meta.can_remove_egg);
+  document.getElementById('modifierNoRice').checked = !!row.no_rice;
+  document.getElementById('modifierNoEgg').checked = !!row.no_egg;
+  updateModifierPreview();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('cartModifierModal')).show();
+}
+
+function updateModifierPreview() {
+  const row = cart[editCartIndex];
+  if (!row) return;
+  const quantity = Number(document.getElementById('modifierQuantity').value) || 0;
+  const deduction = 18 * (Number(document.getElementById('modifierNoRice').checked) +
+                          Number(document.getElementById('modifierNoEgg').checked));
+  const unitPrice = Number(row.base_price) - deduction;
+  document.getElementById('modifierBasePrice').textContent = Number(row.base_price).toFixed(2);
+  document.getElementById('modifierDeduction').textContent = deduction.toFixed(2);
+  document.getElementById('modifierUnitPrice').textContent = unitPrice.toFixed(2);
+  document.getElementById('modifierLineTotal').textContent = (unitPrice * quantity).toFixed(2);
+}
+
+function saveModifierEdit() {
+  const row = cart[editCartIndex];
+  if (!row || cartLineIsStale(row)) return showToast('Menu changed. Remove this line and add it again.', 'error');
+  const quantity = Number(document.getElementById('modifierQuantity').value);
+  const noRice = document.getElementById('modifierNoRice').checked;
+  const noEgg = document.getElementById('modifierNoEgg').checked;
+  const meta = menuById[row.id];
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > row.quantity ||
+      (noRice && !meta.can_remove_rice) || (noEgg && !meta.can_remove_egg) ||
+      Number(row.base_price) - 18 * (Number(noRice) + Number(noEgg)) <= 0) {
+    return showToast('Check the servings and meal options.', 'error');
+  }
+  if (noRice !== row.no_rice || noEgg !== row.no_egg) {
+    const changed = {...row, quantity, no_rice: noRice, no_egg: noEgg,
+                     price: Number(row.base_price) - 18 * (Number(noRice) + Number(noEgg))};
+    row.quantity -= quantity;
+    if (!row.quantity) cart.splice(editCartIndex, 1);
+    const matching = cart.find(item => item.id === changed.id && item.no_rice === noRice && item.no_egg === noEgg);
+    if (matching) matching.quantity += quantity;
+    else cart.push(changed);
+  }
+  bootstrap.Modal.getInstance(document.getElementById('cartModifierModal')).hide();
+  editCartIndex = null;
+  renderCart();
 }
 
 function renderCart() {
@@ -1019,24 +1133,30 @@ function renderCart() {
   }
   document.getElementById("submit-btn").disabled = cart.some(item => {
     const meta = menuById[item.id];
-    return !meta?.is_available || (meta.available_quantity != null && item.quantity > meta.available_quantity);
+    return cartLineIsStale(item) || (meta.available_quantity != null && cartQuantityFor(item.id) > meta.available_quantity);
   });
   list.innerHTML = "";
-  cart.forEach(item => {
+  cart.forEach((item, index) => {
     const itemTotal = item.price * item.quantity;
     total += itemTotal;
     const available = menuById[item.id]?.available_quantity;
-    const tooMany = available != null && item.quantity > available;
+    const tooMany = available != null && cartQuantityFor(item.id) > available;
+    const stale = cartLineIsStale(item);
+    const options = [item.no_rice ? 'No rice' : '', item.no_egg ? 'No egg' : ''].filter(Boolean).join(', ');
+    const canEdit = menuById[item.id]?.can_remove_rice || menuById[item.id]?.can_remove_egg;
     const li = document.createElement("div");
     li.className = "cart-item";
     li.innerHTML = `
-      <div class="cart-item-name">${item.name}</div>
+      <div class="cart-item-name">${escapeOrderHtml(item.name)}${options ? `<small class="d-block text-muted">${options}</small>` : ''}
+        <small class="d-block text-muted">₱${Number(item.price).toFixed(2)} each</small></div>
       <div class="cart-item-qty-price">
         <div class="cart-item-quantity">x${item.quantity}</div>
         ${tooMany ? `<small class="text-danger">Only ${available} left</small>` : ''}
+        ${stale ? '<small class="text-danger">Menu changed; remove and add again</small>' : ''}
         <div class="cart-item-price">₱${itemTotal.toFixed(2)}</div>
-        ${item.quantity > 1 ? `<button class="cart-item-remove" aria-label="Remove one" onclick="decreaseCart(${item.id})">−</button>` : ''}
-        <button class="cart-item-remove" onclick="removeFromCart(${item.id})">×</button>
+        ${canEdit && !stale ? `<button type="button" class="cart-item-remove cart-item-edit" aria-label="Edit options on cart line ${index + 1}" onclick="openModifierEditor(${index})"><i class="bi bi-pencil-square"></i></button>` : ''}
+        ${item.quantity > 1 ? `<button type="button" class="cart-item-remove" aria-label="Remove one serving from cart line ${index + 1}" onclick="decreaseCart(${index})">−</button>` : ''}
+        <button type="button" class="cart-item-remove" aria-label="Remove cart line ${index + 1}" onclick="removeFromCart(${index})">×</button>
       </div>
     `;
     list.appendChild(li);
@@ -1045,13 +1165,13 @@ function renderCart() {
   updateMobileCartBadge();
 }
 
-function removeFromCart(id) {
-  cart = cart.filter(item => item.id !== id);
+function removeFromCart(index) {
+  cart.splice(index, 1);
   renderCart();
 }
 
-function decreaseCart(id) {
-  const item = cart.find(row => row.id === id);
+function decreaseCart(index) {
+  const item = cart[index];
   if (item) item.quantity = Math.max(1, item.quantity - 1);
   renderCart();
 }
@@ -1064,7 +1184,10 @@ async function submitOrder() {
   const submitBtn = document.getElementById("submit-btn");
   const items = cart.map(item => ({
     menu_item_id: item.id,
-    quantity: item.quantity
+    quantity: item.quantity,
+    no_rice: item.no_rice,
+    no_egg: item.no_egg,
+    expected_base_price: item.base_price
   }));
   try {
     const data = await runButtonAction(submitBtn, {

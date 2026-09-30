@@ -32,23 +32,22 @@ def _set_session(client, role: str, user_id: int = 1):
 
 
 class TestAdminRBAC:
-    def test_staff_denied_admin_inventory_page(self, client):
+    def test_staff_allowed_inventory_management_page(self, client):
         _set_session(client, "staff")
-        response = client.get("/admin/inventory")
-        assert response.status_code in (302, 403)
-        if response.status_code == 302:
-            assert "/dashboard" in response.headers.get("Location", "")
+        response = client.get("/staff/inventory")
+        assert response.status_code == 200
+        assert b'Update stock' in response.data
 
-    def test_staff_denied_admin_inventory_api(self, client):
+    def test_staff_allowed_inventory_management_api(self, client):
         _set_session(client, "staff")
         response = client.get(
-            "/admin/inventory/api/dashboard-items",
+            "/staff/inventory/api/dashboard-items",
             headers={"Accept": "application/json"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 200
         data = response.get_json()
         assert data is not None
-        assert data.get("success") is False
+        assert data.get("success") is True
 
     def test_admin_allowed_admin_inventory_page(self, client):
         _set_session(client, "admin")
@@ -113,11 +112,11 @@ class TestAdminRBAC:
         assert response.status_code == 302
         assert "/login" in response.headers.get("Location", "")
 
-    def test_staff_daily_sales_redirects_to_dashboard(self, client):
+    def test_staff_daily_sales_redirects_to_staff_balance(self, client):
         _set_session(client, "staff")
         response = client.get("/daily-sales")
         assert response.status_code == 302
-        assert "/dashboard" in response.headers.get("Location", "")
+        assert "/staff/daily-balance" in response.headers.get("Location", "")
 
     def test_admin_daily_sales_redirects_to_admin_balance(self, client):
         _set_session(client, "admin")

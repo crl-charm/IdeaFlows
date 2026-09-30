@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, jsonify, request, render_template, session
 
 from app.core import get_notifier
 from app.repositories.inventory_repository import InventoryRepository
 from app.services.inventory_service import InventoryService
-from app.utils.auth import admin_required
+from app.utils.auth import staff_or_admin_required
 from app.utils.inventory_helpers import is_ingredient_category
 from app.models.menu_item import MenuItem
-from app import db, csrf
+from app import db
 from app.core.socketio_handlers import emit_inventory_update
 from app.core.idempotency import idempotent_request
 
@@ -30,26 +31,51 @@ def _inventory_log_user_id(session_user_id: int | None) -> int | None:
 
 
 @inventory_bp.route("", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def list_items() -> str:
     return render_template("admin/inventory.html")
 
 
 @inventory_bp.route("/api/items", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def api_list_items() -> tuple:
     items = _service.list_all()
     return jsonify({"success": True, "data": items}), 200
 
 
 @inventory_bp.route("/api/items", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-create-inventory-item")
 def api_create_item() -> tuple:
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Enter a valid inventory item."}), 400
+    try:
+        stock_qty = Decimal(str(data.get("stock_qty", 0)))
+        threshold = int(data.get("low_stock_threshold", 10))
+        if (not stock_qty.is_finite() or not 0 <= stock_qty <= 999999
+                or stock_qty != stock_qty.quantize(Decimal("0.01"))
+                or not 0 <= threshold <= 999999):
+            raise ValueError
+    except (InvalidOperation, TypeError, ValueError):
+        return jsonify({"success": False, "error": "Enter valid stock and reminder quantities."}), 400
+    unit = data.get("unit", "pieces")
+    if not isinstance(unit, str) or unit not in {"pieces", "grams", "klg", "trays", "packs", "liters", "ml", "servings"}:
+        return jsonify({"success": False, "error": "Select a valid unit."}), 400
+    if unit in {"pieces", "trays", "packs", "servings"} and stock_qty != stock_qty.to_integral_value():
+        return jsonify({"success": False, "error": "Enter a whole-number stock quantity."}), 400
     menu_item_id = data.get("menu_item_id")
-    ingredient_name = (data.get("ingredient_name") or "").strip()
+    if menu_item_id is not None:
+        try:
+            menu_item_id = int(menu_item_id)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Select a valid menu item."}), 400
+    ingredient_name = data.get("ingredient_name") or ""
+    if not isinstance(ingredient_name, str):
+        return jsonify({"success": False, "error": "Enter a valid ingredient name."}), 400
+    ingredient_name = ingredient_name.strip()
+    if len(ingredient_name) > 100:
+        return jsonify({"success": False, "error": "Ingredient name is too long."}), 400
     if not menu_item_id and ingredient_name:
         # Only match existing items if they are categorized as raw ingredients
         existing_items = MenuItem.query.filter(MenuItem.status != "deleted", MenuItem.name.ilike(ingredient_name)).all()
@@ -68,20 +94,25 @@ def api_create_item() -> tuple:
             menu_item_id = created.id
     if not menu_item_id:
         return jsonify({"success": False, "error": "Select an item or provide ingredient_name"}), 400
+    if not MenuItem.query.filter_by(id=menu_item_id).filter(MenuItem.status != "deleted").first():
+        return jsonify({"success": False, "error": "Menu item not found."}), 404
     result = _service.create(
         menu_item_id=menu_item_id,
-        stock_qty=float(data.get("stock_qty", 0)),
-        low_stock_threshold=int(data.get("low_stock_threshold", 10)),
-        unit=data.get("unit", "pieces"),
+        stock_qty=stock_qty,
+        low_stock_threshold=threshold,
+        unit=unit,
+        user_id=session.get("user_id"),
     )
+    if isinstance(result, tuple):
+        db.session.rollback()
+        return jsonify(result[0]), result[1]
     if result.get("success"):
         emit_inventory_update('create', result.get("data", {}))
     return jsonify(result), 201
 
 
 @inventory_bp.route("/api/items/<int:item_id>/stock", methods=["PATCH"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-update-inventory-stock")
 def api_update_stock(item_id: int) -> tuple:
     data = request.get_json(silent=True)
@@ -106,8 +137,7 @@ def api_update_stock(item_id: int) -> tuple:
 
 
 @inventory_bp.route("/api/menu-items/<int:menu_item_id>/stock", methods=["PATCH"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-update-menu-item-stock")
 def api_update_stock_by_menu_item(menu_item_id: int) -> tuple:
     data = request.get_json(silent=True)
@@ -134,25 +164,24 @@ def api_update_stock_by_menu_item(menu_item_id: int) -> tuple:
 
 
 @inventory_bp.route("/api/items/<int:item_id>/logs", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def api_get_logs(item_id: int) -> tuple:
     logs = _service.get_logs(item_id)
     return jsonify({"success": True, "data": logs}), 200
 
 
 @inventory_bp.route("/api/low-stock", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def api_low_stock() -> tuple:
     items = _service.get_low_stock()
     return jsonify({"success": True, "data": items}), 200
 
 
 @inventory_bp.route("/api/items/<int:item_id>", methods=["DELETE"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-delete-inventory-item")
 def api_delete_item(item_id: int) -> tuple:
-    result = _service.delete(item_id)
+    result = _service.delete(item_id, session.get("user_id"))
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
@@ -161,37 +190,38 @@ def api_delete_item(item_id: int) -> tuple:
 
 
 @inventory_bp.route("/api/direct-stock", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def api_direct_stock() -> tuple:
     return jsonify({"success": True, "data": _service.build_direct_stock_items()}), 200
 
 
 @inventory_bp.route("/api/recipe-inventory", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def api_recipe_inventory() -> tuple:
     return jsonify({"success": True, "data": _service.build_recipe_inventory_items()}), 200
 
 
 @inventory_bp.route("/api/dashboard-items", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def api_dashboard_items() -> tuple:
     return jsonify({"success": True, **_service.build_dashboard_snapshot()}), 200
 
 
 @inventory_bp.route("/api/recipes/<int:menu_item_id>", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def get_recipe(menu_item_id: int) -> tuple:
     return jsonify({"success": True, "data": _service.build_recipe_detail(menu_item_id)}), 200
 
 
 @inventory_bp.route("/api/recipes", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-add-recipe-ingredient")
 def add_recipe_ingredient() -> tuple:
     from app.models.menu_item import MenuItemIngredient
 
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Enter a valid recipe ingredient."}), 400
     menu_item_id = data.get("menu_item_id")
     ingredient_item_id = data.get("ingredient_item_id")
 
@@ -372,16 +402,23 @@ def add_recipe_ingredient() -> tuple:
 
 
 @inventory_bp.route("/api/recipes/<int:recipe_id>", methods=["DELETE"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-delete-recipe-ingredient")
 def delete_recipe_ingredient(recipe_id: int) -> tuple:
     from app.models.menu_item import MenuItemIngredient
+    from app.models.inventory import InventoryItem, InventoryLog
 
     mapping = MenuItemIngredient.query.get(recipe_id)
     if not mapping:
         return jsonify({"success": False, "error": "Recipe component not found"}), 404
     try:
+        ingredient_stock = InventoryItem.query.filter_by(menu_item_id=mapping.ingredient_item_id).first()
+        if ingredient_stock:
+            db.session.add(InventoryLog(
+                inventory_item_id=ingredient_stock.id, change_qty=0,
+                reason=f"Unlinked from {mapping.menu_item.name}"[:100],
+                changed_by=_inventory_log_user_id(session.get("user_id")),
+            ))
         db.session.delete(mapping)
         db.session.commit()
         return jsonify({"success": True}), 200
@@ -391,11 +428,10 @@ def delete_recipe_ingredient(recipe_id: int) -> tuple:
 
 
 @inventory_bp.route("/api/ingredients/<int:menu_item_id>", methods=["DELETE"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-delete-raw-ingredient")
 def api_delete_ingredient(menu_item_id: int) -> tuple:
-    result = _service.delete_raw_ingredient(menu_item_id)
+    result = _service.delete_raw_ingredient(menu_item_id, session.get("user_id"))
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if result.get("success"):
@@ -404,7 +440,7 @@ def api_delete_ingredient(menu_item_id: int) -> tuple:
 
 
 @inventory_bp.route("/api/ingredients", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def list_ingredients() -> tuple:
     q = request.args.get("q")
     data = _service.list_ingredients_for_picker(q)
@@ -412,7 +448,7 @@ def list_ingredients() -> tuple:
 
 
 @inventory_bp.route("/api/meals", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def list_meals() -> tuple:
     q = request.args.get("q", "").strip()
     query = MenuItem.query.filter(MenuItem.status != "deleted")

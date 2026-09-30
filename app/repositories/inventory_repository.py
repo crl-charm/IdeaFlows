@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
+from uuid import uuid4
 
 from app import db
-from app.models.inventory import InventoryItem, InventoryLog
+from app.models.inventory import InventoryAction, InventoryItem, InventoryLog
 
 
 class InventoryRepository:
@@ -95,13 +96,26 @@ class InventoryRepository:
             .all()
         )
 
-    def delete(self, item_id: int) -> bool:
+    def delete(self, item_id: int, actor_id: Optional[int] = None) -> bool:
         item = self.get_item(item_id)
         if not item:
             return False
-        # Delete all associated logs first
+        name = item.menu_item.name if item.menu_item else f"Inventory item {item_id}"
+        for log in InventoryLog.query.filter_by(inventory_item_id=item_id).all():
+            db.session.add(InventoryAction(
+                request_key=f"archived-inventory-log:{uuid4()}",
+                menu_item_id=item.menu_item_id, item_name=name,
+                action="archived_log", quantity=log.change_qty,
+                reason=log.reason, changed_by=log.changed_by,
+                created_at=log.created_at or datetime.utcnow(),
+            ))
+        db.session.add(InventoryAction(
+            request_key=f"inventory-delete:{uuid4()}", menu_item_id=item.menu_item_id,
+            item_name=name, action="delete", quantity=-item.stock_qty,
+            reason=f"Inventory stock record removed: {item.stock_qty} {item.unit}",
+            changed_by=actor_id,
+        ))
         InventoryLog.query.filter_by(inventory_item_id=item_id).delete()
-        # Then delete the item
         db.session.delete(item)
         return True
 

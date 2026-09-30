@@ -16,7 +16,7 @@
     if (start) params.set('start_date', start);
     if (end) params.set('end_date', end);
     try {
-      const response = await fetch(`/admin/daily-balance/api/reports?${params}`, { credentials: 'include' });
+      const response = await fetch(`${window.managementBase}/daily-balance/api/reports?${params}`, { credentials: 'include' });
       if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) throw new Error('Collections unavailable');
       const result = await response.json();
       if (!result.success || !Array.isArray(result.data)) throw new Error('Collections unavailable');

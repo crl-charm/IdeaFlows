@@ -11,6 +11,7 @@ import logging
 security_logger = logging.getLogger('security')
 
 ADMIN_ROLES = frozenset({"admin"})
+STAFF_MANAGEMENT_ROLES = frozenset({"admin", "staff"})
 
 ADMIN_PATH_PREFIXES = (
     "/api/admin/",
@@ -259,6 +260,15 @@ def enforce_admin_access() -> Optional[Tuple]:
     return None
 
 
+def enforce_staff_management_access() -> Optional[Tuple]:
+    auth_error = _check_session_auth()
+    if auth_error is not None:
+        return auth_error
+    if (session.get("role") or "").lower() not in STAFF_MANAGEMENT_ROLES:
+        return _deny_access("Forbidden", 403)
+    return None
+
+
 def register_admin_blueprint(app: Flask, blueprint: Blueprint) -> None:
     """Register a blueprint and enforce admin RBAC on every route in it."""
     if not blueprint._got_registered_once:
@@ -286,6 +296,17 @@ def admin_required(view_func):
     @wraps(view_func)
     def wrapper(*args, **kwargs):
         denied = enforce_admin_access()
+        if denied is not None:
+            return denied
+        return view_func(*args, **kwargs)
+
+    return wrapper
+
+
+def staff_or_admin_required(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        denied = enforce_staff_management_access()
         if denied is not None:
             return denied
         return view_func(*args, **kwargs)

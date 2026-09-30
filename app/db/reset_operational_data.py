@@ -37,6 +37,7 @@ RESET_TABLES = {
     "payable_payments",
     "receivables",
     "receivable_payments",
+    "receivable_tabs",
     "soft_balance_entries",
     "space_price_history",
     "space_types",

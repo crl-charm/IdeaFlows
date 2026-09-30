@@ -10,17 +10,12 @@ import logging
 
 from app.repositories.menu_repository import MenuRepository
 from app.services.menu_service import MenuService
-from app.utils.auth import admin_required
+from app.utils.auth import staff_or_admin_required
 from app.utils.uploads import validate_and_save_image, delete_old_image
 from app.core.socketio_handlers import emit_menu_update
 from app.core.idempotency import idempotent_request
 from app.core.cache import get_or_set_json, invalidate_menu_cache
 from functools import wraps
-
-# Import CSRF protection from app module
-from app import csrf
-
-csrf_exempt = csrf.exempt
 
 menu_bp = Blueprint("menu", __name__, url_prefix="/admin/menu")
 
@@ -38,6 +33,18 @@ def _recipe_from_request(data):
     except (ValueError, TypeError):
         from app.services.menu_availability import StockError
         raise StockError("Check the ingredient list and try again.", "INVALID_RECIPE", 400)
+
+
+def _modifier_flag(data, name):
+    from app.services.menu_availability import StockError
+    value = data.get(name)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    raise StockError("Choose valid meal options.", "INVALID_MODIFIER", 400)
 
 def get_valid_categories():
     try:
@@ -68,37 +75,33 @@ def _delete_image_if_unreferenced(image_url):
 
 
 @menu_bp.route("", methods=["GET"])
-@admin_required
+@staff_or_admin_required
 def menu_page() -> str:
     return render_template("admin/menu.html")
 
 
 @menu_bp.route("/api/items", methods=["GET"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 def api_list_items() -> tuple:
     items = _service.list_available()
     return jsonify({"success": True, "data": items}), 200
 
 
 @menu_bp.route("/api/items/all", methods=["GET"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 def api_all_items() -> tuple:
     items = _service.list_all()
     return jsonify({"success": True, "data": items}), 200
 
 
 @menu_bp.route("/api/categories", methods=["GET"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 def api_get_categories() -> tuple:
     return jsonify({"success": True, "data": get_valid_categories()}), 200
 
 
 @menu_bp.route("/api/categories", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-create-menu-category")
 def api_create_category() -> tuple:
     if request.is_json:
@@ -133,8 +136,7 @@ def api_create_category() -> tuple:
 
 
 @menu_bp.route("/api/items", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-create-menu-item")
 def api_create_item() -> tuple:
     from app.services.menu_availability import StockError
@@ -174,6 +176,8 @@ def api_create_item() -> tuple:
         recipe_ingredients = _recipe_from_request(data)
         if recipe_ingredients is not None and not isinstance(recipe_ingredients, list):
             raise StockError("Ingredients must be a list.", "INVALID_RECIPE", 400)
+        can_remove_rice = _modifier_flag(data, "can_remove_rice")
+        can_remove_egg = _modifier_flag(data, "can_remove_egg")
     except StockError as exc:
         return jsonify({"success": False, "error": str(exc)}), exc.status
 
@@ -197,6 +201,8 @@ def api_create_item() -> tuple:
             stock_threshold=data.get("stock_threshold", 3),
             actor=session.get("user_id"),
             recipe_ingredients=recipe_ingredients,
+            can_remove_rice=bool(can_remove_rice),
+            can_remove_egg=bool(can_remove_egg),
         )
     except StockError as exc:
         from app import db
@@ -215,8 +221,7 @@ def api_create_item() -> tuple:
 
 
 @menu_bp.route("/api/items/variants", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-create-menu-variants")
 def api_create_item_variants() -> tuple:
     """
@@ -300,8 +305,7 @@ def api_create_item_variants() -> tuple:
 
 
 @menu_bp.route("/api/items/<int:item_id>", methods=["PATCH"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-update-menu-item")
 def api_update_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
@@ -311,6 +315,8 @@ def api_update_item(item_id: int) -> tuple:
         recipe_ingredients = _recipe_from_request(request.form)
         if recipe_ingredients is not None and not isinstance(recipe_ingredients, list):
             raise StockError("Ingredients must be a list.", "INVALID_RECIPE", 400)
+        can_remove_rice = _modifier_flag(request.form, "can_remove_rice")
+        can_remove_egg = _modifier_flag(request.form, "can_remove_egg")
     except StockError as exc:
         return jsonify({"success": False, "error": str(exc)}), exc.status
     
@@ -360,6 +366,8 @@ def api_update_item(item_id: int) -> tuple:
             actor=session.get("user_id"),
             recipe_ingredients=recipe_ingredients,
             confirm_recipe_switch=request.form.get("confirm_recipe_switch") == "true",
+            can_remove_rice=can_remove_rice,
+            can_remove_egg=can_remove_egg,
         )
     except StockError as exc:
         db.session.rollback()
@@ -380,8 +388,7 @@ def api_update_item(item_id: int) -> tuple:
 
 
 @menu_bp.route("/api/items/<int:item_id>/availability", methods=["PATCH"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-toggle-menu-availability")
 def api_toggle_availability(item_id: int) -> tuple:
     result = _service.toggle_availability(item_id)
@@ -393,8 +400,7 @@ def api_toggle_availability(item_id: int) -> tuple:
 
 
 @menu_bp.route("/api/items/<int:item_id>", methods=["DELETE"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-delete-menu-item")
 def api_delete_item(item_id: int) -> tuple:
     from app.models.menu_item import MenuItem
@@ -426,8 +432,7 @@ def api_delete_item(item_id: int) -> tuple:
 
 
 @menu_bp.route("/api/menu-items", methods=["GET"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 def api_menu_items_alias() -> tuple:
     items = _service.list_all()
     return jsonify({"success": True, "data": items}), 200

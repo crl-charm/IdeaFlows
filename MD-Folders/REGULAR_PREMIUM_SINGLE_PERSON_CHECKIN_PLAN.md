@@ -1,6 +1,6 @@
 # Regular and Premium: one person per Time In
 
-**Status:** Plan only. Implement and verify before deployment.
+**Status:** Implemented locally and verified; deployment pending.
 
 ## Decision and result
 
@@ -35,3 +35,10 @@ Every Time In on the Regular or Premium dashboard represents **one person**. Rem
 ## Done when
 
 The form has no people-count choice, every new Regular/Premium session has one occupant even for direct API requests, and existing bookings and old records remain correct. Run the smallest relevant session/dashboard tests and inspect the final diff.
+
+## Implementation and verification
+
+- Removed the people-count field from the check-in form. Regular and Premium submit one person per check-in.
+- The server resolves the space and rejects any Regular/Premium people count other than integer `1` with HTTP 400, including malformed JSON values. Boardroom group sizes and historical group sessions remain supported; Take Out remains food-only.
+- Capacity checks lock the space and read current occupancy within the check-in transaction to prevent two concurrent check-ins from claiming the last seat.
+- Verified with `tests/test_single_person_checkin.py` and the related cancellation, booking, and food-only tests: 18 passed locally.

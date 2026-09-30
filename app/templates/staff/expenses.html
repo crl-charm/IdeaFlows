@@ -179,7 +179,7 @@ function loadExpenses() {
   if (end) params.set('end_date', end);
   Promise.all([
     fetch('/expenses-view/api/expenses').then(r => r.json()),
-    fetch(`/admin/daily-balance/api/reports?${params}`).then(r => r.json())
+    fetch(`${window.managementBase}/daily-balance/api/reports?${params}`).then(r => r.json())
   ]).then(([expenses, reports]) => {
     if (requestId !== expenseLoadId) return;
     if (!expenses.success || !reports.success) throw new Error('Could not load expenses');

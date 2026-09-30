@@ -108,7 +108,7 @@ def test_food_checkout_reconciles_cash_gcash_and_daily_balance(app, client):
 
     assert client.get("/api/active-sessions").get_json() == []
     assert {row["food_total"] for row in client.get("/api/food-orders").get_json()} == {80}
-    stats = client.get("/admin/daily-balance/api/today-stats")
+    stats = client.get("/staff/daily-balance/api/today-stats")
     assert stats.status_code == 200
     assert stats.get_json()["data"]["expected_to_collect"] == 160
 
@@ -143,14 +143,14 @@ def test_food_checkout_reconciles_cash_gcash_and_daily_balance(app, client):
         assert ledger["total_sessions"] == 0
         assert ledger["total_orders"] == 2
 
-    report = client.get(f"/admin/daily-balance/api/reports?start_date={day}&end_date={day}")
+    report = client.get(f"/staff/daily-balance/api/reports?start_date={day}&end_date={day}")
     assert report.status_code == 200
     row = report.get_json()["data"][0]
     assert row["cash_total"] == 80
     assert row["gcash_total"] == 64
     assert row["total_revenue"] == 144
     assert row["total_sessions"] == 0
-    csv = client.get(f"/admin/daily-balance/api/reports/export-csv?start_date={day}&end_date={day}")
+    csv = client.get(f"/staff/daily-balance/api/reports/export-csv?start_date={day}&end_date={day}")
     assert csv.status_code == 200
     assert "₱144.00" in csv.data.decode("utf-8")
 
@@ -229,7 +229,7 @@ def test_every_food_payment_method_reconciles_to_total_checkout(app, client):
         txs = Transaction.query.all()
         assert len(txs) == len(methods)
         day = manila_date(txs[0].created_at)
-    report = client.get(f"/admin/daily-balance/api/reports?start_date={day}&end_date={day}")
+    report = client.get(f"/staff/daily-balance/api/reports?start_date={day}&end_date={day}")
     assert report.status_code == 200
     row = report.get_json()["data"][0]
     assert row["total_revenue"] == 400

@@ -14,7 +14,7 @@ from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
 from .staff_shift import StaffShift
 from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
-from .receivable import Receivable, ReceivablePayment
+from .receivable import Receivable, ReceivablePayment, ReceivableTab
 from .payable import Payable, PayablePayment
 from .expense import Expense
 from .staff_performance import StaffPerformanceLog

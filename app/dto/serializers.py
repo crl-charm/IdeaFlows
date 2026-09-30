@@ -30,13 +30,19 @@ def serialize_order(order):
         "status": order.status,
         "handled_by": order.handled_by,
         "created_at": order.created_at.isoformat() if order.created_at else None,
+        "food_total_before": float(order.food_total_before) if order.food_total_before is not None else None,
+        "food_total_after": float(order.food_total_after) if order.food_total_after is not None else None,
         "items": [
             {
                 "id": item.id,
                 "menu_item_id": item.menu_item_id,
-                "item_name": item.menu_item.name if item.menu_item else None,
+                "item_name": item.display_name,
                 "quantity": item.quantity,
                 "price": float(item.price),
+                "base_price": float(item.base_price if item.base_price is not None else item.price),
+                "unit_deduction": float(item.unit_deduction or 0),
+                "no_rice": bool(item.no_rice),
+                "no_egg": bool(item.no_egg),
                 "status": item.status,
             }
             for item in getattr(order, "items", [])

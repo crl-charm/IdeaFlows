@@ -6,6 +6,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from app.repositories.receivable_repository import ReceivableRepository
+from app import db
+from app.models.receivable import ReceivableTab
+from sqlalchemy.exc import IntegrityError
 from app.repositories.sales_repository import SalesRepository
 from app.utils.dates import manila_date
 from app.utils.payment import VALID_PAYMENT_METHODS
@@ -20,6 +23,7 @@ class ReceivableService:
         return [
             {
                 "id": r.id,
+                "tab_id": r.tab_id,
                 "customer_name": r.customer_name,
                 "customer_contact": r.customer_contact,
                 "items": r.items_description,
@@ -27,7 +31,7 @@ class ReceivableService:
                 "amount_owed": float(r.amount_owed),
                 "partial_paid": float(r.partial_paid),
                 "due_date": r.due_date.strftime("%Y-%m-%d"),
-                "incurred_date": (r.incurred_date or r.created_at.date()).strftime("%Y-%m-%d") if (r.incurred_date or r.created_at) else "",
+                "incurred_date": (r.incurred_date or manila_date(r.created_at)).strftime("%Y-%m-%d") if (r.incurred_date or r.created_at) else "",
                 "paid": r.paid,
                 "created_by": r.created_by_user.username if r.created_by_user else "Unknown",
                 "approved_by_staff": r.approved_by_staff or "",
@@ -44,8 +48,9 @@ class ReceivableService:
         per_page: int,
         status: str | None = None,
         search: str | None = None,
+        incurred_date: date | None = None,
     ) -> dict[str, Any]:
-        pagination = self.repo.list_paginated(page, per_page, status, search)
+        pagination = self.repo.list_paginated(page, per_page, status, search, incurred_date)
         return {
             "data": self._serialize(pagination.items),
             "pagination": {
@@ -57,6 +62,48 @@ class ReceivableService:
                 "has_prev": pagination.has_prev,
             },
         }
+
+    def totals(self, incurred_date: date | None = None) -> dict:
+        return self.repo.totals(incurred_date)
+
+    @staticmethod
+    def parse_filters(args) -> tuple[int, int, str | None, str, date | None]:
+        try:
+            page, per_page = int(args.get("page", "1")), int(args.get("per_page", "50"))
+            if page < 1 or not 1 <= per_page <= 100:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("Page must be positive and per_page must be between 1 and 100.")
+        status = args.get("status") or None
+        if status not in (None, "paid", "unpaid"):
+            raise ValueError("Invalid receivable status.")
+        search = (args.get("search") or "").strip()
+        if len(search) > 100:
+            raise ValueError("Search must be 100 characters or fewer.")
+        raw_date = args.get("date") or None
+        try:
+            chosen = date.fromisoformat(raw_date) if raw_date else None
+            if raw_date and chosen.isoformat() != raw_date:
+                raise ValueError
+        except ValueError:
+            raise ValueError("Date Taken must be YYYY-MM-DD.")
+        return page, per_page, status, search, chosen
+
+    def tabs(self, chosen: date | None, search: str, page: int = 1, per_page: int = 50) -> dict:
+        rows, pagination = self.repo.list_tabs(chosen, search, page, per_page)
+        return {"data": rows, "pagination": {"page": pagination.page, "pages": pagination.pages,
+                "total": pagination.total, "has_next": pagination.has_next, "has_prev": pagination.has_prev}}
+
+    def tab_detail(self, tab_id: int) -> dict | None:
+        tab = db.session.get(ReceivableTab, tab_id)
+        if not tab:
+            return None
+        records = self._serialize(self.repo.tab_records(tab_id))
+        return {"id": tab.id, "customer_name": tab.customer_name,
+                "customer_contact": tab.customer_contact or "", "open": tab.closed_at is None,
+                "records": records, "orders_total": sum(row["amount_owed"] for row in records),
+                "paid_total": sum(row["partial_paid"] for row in records),
+                "outstanding_balance": sum(row["amount_owed"] - row["partial_paid"] for row in records)}
 
     def list_unpaid(self) -> list[dict[str, Any]]:
         receivables = self.repo.list_unpaid()
@@ -83,18 +130,53 @@ class ReceivableService:
         approved_by_staff: Optional[str] = None,
         incurred_date: Optional[str] = None,
         notes: Optional[str] = None,
+        tab_id: Optional[int] = None,
     ) -> dict[str, Any]:
-        due = date.fromisoformat(due_date)
-        incurred = date.fromisoformat(incurred_date) if incurred_date else None
+        if not isinstance(customer_name, str) or not customer_name.strip() or len(customer_name.strip()) > 100:
+            raise ValueError("Enter a customer name up to 100 characters.")
+        if customer_contact is None:
+            customer_contact = ""
+        if not isinstance(customer_contact, str) or len(customer_contact.strip()) > 100:
+            raise ValueError("Contact must be text up to 100 characters.")
+        if not isinstance(items_description, str) or not items_description.strip():
+            raise ValueError("Items description is required.")
+        if tab_id is not None and (isinstance(tab_id, bool) or not str(tab_id).isdigit()):
+            raise ValueError("Choose a valid customer tab.")
+        try:
+            due = date.fromisoformat(due_date)
+            incurred = date.fromisoformat(incurred_date) if incurred_date else None
+        except (TypeError, ValueError):
+            raise ValueError("Enter valid Date Taken and Due Date values.")
         amount_decimal = Decimal(str(amount_owed))
+        if not amount_decimal.is_finite() or amount_decimal <= 0 or amount_decimal.as_tuple().exponent < -2:
+            raise ValueError("Enter a positive amount with up to two decimal places.")
         if notes is not None and (not isinstance(notes, str) or len(notes) > 2000):
             raise ValueError("Notes must be text up to 2,000 characters.")
+        if approved_by_staff is not None and (not isinstance(approved_by_staff, str) or len(approved_by_staff) > 100):
+            raise ValueError("Approved by staff must be text up to 100 characters.")
         clean_notes = notes.strip() if notes else ""
-        receivable = self.repo.create(
-            customer_name, customer_contact, items_description, amount_decimal, due, created_by, session_id, approved_by_staff, incurred, clean_notes
-        )
-        self.repo.save()
-        return {"success": True, "data": {"id": receivable.id}}
+        if session_id not in (None, ""):
+            from app.models import CustomerSession
+            if isinstance(session_id, bool) or not str(session_id).isdigit():
+                raise ValueError("Choose a valid customer session.")
+            linked = CustomerSession.query.filter_by(id=int(session_id)).with_for_update().first()
+            if not linked or linked.status == "cancelled":
+                raise ValueError("This customer session cannot receive a debt record.")
+            session_id = linked.id
+        for attempt in range(2):
+            try:
+                receivable = self.repo.create(
+                    customer_name.strip(), customer_contact.strip(), items_description.strip(), amount_decimal,
+                    due, created_by, session_id, approved_by_staff, incurred, clean_notes,
+                    int(tab_id) if tab_id is not None else None,
+                )
+                self.repo.save()
+                return {"success": True, "data": {"id": receivable.id, "tab_id": receivable.tab_id}}
+            except IntegrityError:
+                db.session.rollback()
+                if attempt or tab_id is not None:
+                    raise ValueError("The customer tab changed. Refresh and try again.")
+        raise ValueError("Could not create customer tab.")
 
     def mark_paid(self, receivable_id: int, amount: Any, received_by: int, payment_method: str, request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
@@ -128,10 +210,10 @@ class ReceivableService:
         emit_receivable_marked_paid(receivable_id)
         return {"success": True}
 
-    def record_customer_payment(self, customer_name: str, amount: Any, received_by: int, payment_method: str, customer_contact: str = "", request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
+    def record_customer_payment(self, customer_name: str, amount: Any, received_by: int, payment_method: str, customer_contact: str = "", request_key: str | None = None, tab_id: int | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Invalid payment method"}, 400
-        if not isinstance(customer_name, str) or not customer_name.strip():
+        if tab_id is None and (not isinstance(customer_name, str) or not customer_name.strip()):
             return {"error": "Customer name is required"}, 400
         if not isinstance(customer_contact, str):
             return {"error": "Customer contact must be text"}, 400
@@ -147,10 +229,14 @@ class ReceivableService:
                 received_at = datetime.utcnow()
                 if manila_date(received_at) != day:
                     return {"error": "The business day changed. Please retry."}, 409
-                remaining = self.repo.record_customer_payment(
-                    customer_name, payment, received_by, payment_method,
-                    customer_contact, request_key, received_at=received_at,
-                )
+                if tab_id is not None:
+                    remaining = self.repo.record_tab_payment(int(tab_id), payment, received_by,
+                                                             payment_method, request_key, received_at)
+                else:
+                    remaining = self.repo.record_customer_payment(
+                        customer_name, payment, received_by, payment_method,
+                        customer_contact, request_key, received_at=received_at,
+                    )
                 self.repo.save()
         except ValueError as exc:
             return {"error": str(exc)}, 400
@@ -158,8 +244,8 @@ class ReceivableService:
             return {"error": str(exc)}, 503
         return {"success": True, "remaining": float(remaining)}
 
-    def list_customer_payments(self, customer_name: str, customer_contact: str = "") -> list[dict[str, Any]]:
-        payments = self.repo.list_customer_payments(customer_name, customer_contact)
+    def list_customer_payments(self, customer_name: str = "", customer_contact: str = "", tab_id: int | None = None) -> list[dict[str, Any]]:
+        payments = self.repo.list_tab_payments(tab_id) if tab_id is not None else self.repo.list_customer_payments(customer_name, customer_contact)
         grouped = {}
         for payment in payments:
             key = payment.payment_group_id or f"single-{payment.id}"

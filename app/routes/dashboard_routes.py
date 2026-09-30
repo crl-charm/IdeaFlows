@@ -42,4 +42,6 @@ def checkout_records_page():
 def daily_sales_page():
     if session.get("role") == "admin":
         return redirect("/admin/daily-balance")
+    if session.get("role") == "staff":
+        return redirect("/staff/daily-balance")
     return redirect("/dashboard")

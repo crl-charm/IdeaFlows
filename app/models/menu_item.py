@@ -11,6 +11,8 @@ class MenuItem(db.Model):
     category = db.Column(db.String(50), nullable=True)
     status = db.Column(db.String(20), default="active")
     is_available = db.Column(db.Boolean, default=True, nullable=False)
+    can_remove_rice = db.Column(db.Boolean, default=False, nullable=False)
+    can_remove_egg = db.Column(db.Boolean, default=False, nullable=False)
     # NULL preserves existing recipes/direct stock until the owner reviews setup.
     inventory_mode = db.Column(db.String(16), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)

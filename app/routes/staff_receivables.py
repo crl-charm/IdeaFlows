@@ -24,17 +24,52 @@ def view_receivables() -> str:
 @staff_receivables_bp.route("/api/receivables", methods=["GET"])
 @login_required
 def api_list_receivables() -> tuple:
-    if "page" in request.args:
-        page = max(request.args.get("page", 1, type=int), 1)
-        per_page = min(max(request.args.get("per_page", 50, type=int), 1), 100)
+    if any(key in request.args for key in ("page", "date", "search", "status", "per_page")):
+        try:
+            page, per_page, status, search, chosen = _service.parse_filters(request.args)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
         result = _service.list_paginated(
-            page,
-            per_page,
-            status=request.args.get("status"),
-            search=request.args.get("search"),
+            page, per_page, status=status, search=search, incurred_date=chosen,
         )
+        result["totals"] = _service.totals(chosen)
         return jsonify({"success": True, **result}), 200
     return jsonify({"success": True, "data": _service.list_all()}), 200
+
+
+@staff_receivables_bp.get("/api/receivables/tabs")
+@login_required
+def api_tabs() -> tuple:
+    try:
+        page, per_page, _, search, chosen = _service.parse_filters(request.args)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    return jsonify({"success": True, **_service.tabs(chosen, search, page, per_page)}), 200
+
+
+@staff_receivables_bp.get("/api/receivables/tabs/<int:tab_id>")
+@login_required
+def api_tab_detail(tab_id: int) -> tuple:
+    detail = _service.tab_detail(tab_id)
+    return (jsonify({"success": True, "data": detail}), 200) if detail else (jsonify({"error": "Tab not found"}), 404)
+
+
+@staff_receivables_bp.route("/api/receivables/tabs/<int:tab_id>/payments", methods=["GET", "POST"])
+@login_required
+@idempotent_request("staff-tab-receivable-payment")
+def api_tab_payments(tab_id: int) -> tuple:
+    if request.method == "GET":
+        if not _service.tab_detail(tab_id):
+            return jsonify({"error": "Tab not found"}), 404
+        return jsonify({"success": True, "data": _service.list_customer_payments(tab_id=tab_id)}), 200
+    data = request.get_json(silent=True) or {}
+    result = _service.record_customer_payment("", data.get("amount"), session["user_id"],
+                                              data.get("payment_method", "cash"), "",
+                                              request.headers.get("Idempotency-Key"), tab_id=tab_id)
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    emit_receivables_update("mark_paid", {"tab_id": tab_id})
+    return jsonify(result), 200
 
 
 @staff_receivables_bp.route("/api/receivables/unpaid", methods=["GET"])
@@ -74,6 +109,7 @@ def api_create_receivable() -> tuple:
             approved_by_staff=data.get("approved_by_staff"),
             incurred_date=data.get("incurred_date"),
             notes=data.get("notes"),
+            tab_id=data.get("tab_id"),
         )
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400

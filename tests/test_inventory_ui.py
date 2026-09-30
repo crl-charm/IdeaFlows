@@ -60,8 +60,11 @@ def test_owner_inventory_renders_per_meal_dialogs(app):
     page = client.get("/admin/inventory")
     assert page.status_code == 200
     assert b'id="servings-meal-name"' in page.data
+    assert b'id="meal-daily-audit-dialog"' in page.data
+    assert b'New servings in this batch' in page.data
     assert b'id="meal-history-dialog"' in page.data
     assert b'<select id="servings-meal"' not in page.data
+    assert client.get('/inventory/api/meal-day-summary').status_code == 200
 
 
 def test_add_ingredient_form_uses_plain_language_and_keeps_fractional_stock():

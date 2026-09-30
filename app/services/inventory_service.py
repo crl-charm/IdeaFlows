@@ -435,17 +435,31 @@ class InventoryService:
         }
 
     def create(
-        self, menu_item_id: int, stock_qty: float | int, low_stock_threshold: int, unit: str
-    ) -> dict[str, Any]:
-        existing = self.repo.get_by_menu_item_id(menu_item_id)
+        self, menu_item_id: int, stock_qty: Decimal, low_stock_threshold: int,
+        unit: str, user_id: Optional[int] = None,
+    ) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        from app import db
+        from app.models.inventory import InventoryLog
+
+        existing = self.repo.get_by_menu_item_id_for_update(menu_item_id)
         if existing:
-            existing.stock_qty = float(stock_qty)
-            existing.low_stock_threshold = int(low_stock_threshold)
-            if unit:
-                existing.unit = unit
+            if normalize_unit(existing.unit) != normalize_unit(unit):
+                return {"error": "Use Update stock with a conversion to change this item's unit."}, 400
+            previous = Decimal(str(existing.stock_qty))
+            existing.stock_qty = stock_qty
+            existing.low_stock_threshold = low_stock_threshold
+            db.session.add(InventoryLog(
+                inventory_item_id=existing.id, change_qty=stock_qty - previous,
+                reason=f"Inventory setup: {previous} to {stock_qty} {unit}"[:100],
+                changed_by=user_id,
+            ))
             self.repo.save()
             return {"success": True, "data": {"id": existing.id}}
         item = self.repo.create(menu_item_id, stock_qty, low_stock_threshold, unit)
+        db.session.add(InventoryLog(
+            inventory_item_id=item.id, change_qty=stock_qty,
+            reason=f"Inventory created: {stock_qty} {unit}"[:100], changed_by=user_id,
+        ))
         self.repo.save()
         return {"success": True, "data": {"id": item.id}}
 
@@ -533,7 +547,7 @@ class InventoryService:
         return {"success": True, "data": {"inventory_item_id": item.id, "stock_qty": float(target_qty)}}
 
     def delete_raw_ingredient(
-        self, menu_item_id: int
+        self, menu_item_id: int, user_id: Optional[int] = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         from app.models.menu_item import MenuItem, MenuItemIngredient
 
@@ -556,18 +570,18 @@ class InventoryService:
 
         inv = self.repo.get_by_menu_item_id(menu_item_id)
         if inv:
-            self.repo.delete(inv.id)
+            self.repo.delete(inv.id, user_id)
 
         menu_item.status = "deleted"
         menu_item.is_available = False
         self.repo.save()
         return {"success": True}
 
-    def delete(self, item_id: int) -> dict[str, Any] | tuple[dict[str, Any], int]:
+    def delete(self, item_id: int, user_id: Optional[int] = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         item = self.repo.get_item(item_id)
         if not item:
             return {"error": "Inventory item not found"}, 404
-        success = self.repo.delete(item_id)
+        success = self.repo.delete(item_id, user_id)
         if success:
             self.repo.save()
             return {"success": True}

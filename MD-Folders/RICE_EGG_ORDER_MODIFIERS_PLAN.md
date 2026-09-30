@@ -1,6 +1,8 @@
 # Edit a cart item to remove rice and/or egg
 
-**Status:** Plan only. This changes prices, so verify order history against checkout and Daily Balance before deployment.
+**Status:** Implemented locally on 2026-09-30. Owner selection, cart editing, price snapshots, stock use, receipt/kitchen labels, and checkout-to-Daily-Balance reconciliation are covered by `tests/test_order_modifiers.py`. Deployment requires `python -m app.db.run_migrations` before serving the new code; production has not been updated.
+
+**Inventory finding:** Current recipe-mode sales reserve finished servings only; raw ingredient stock is tracked separately. These modifiers therefore keep the normal one-serving reservation and do not change raw stock. If raw ingredient reservation is added later, its rice/egg requirements must respect these stored options.
 
 ## Confirmed behavior
 
@@ -16,7 +18,7 @@ The owner chooses **which menu items** allow removing rice, egg, or both. On Add
 
 1. Add `can_remove_rice` and `can_remove_egg` boolean columns to `MenuItem`, default false for every existing item, with an idempotent production migration. Add two clearly labeled checkboxes to the admin Add/Edit Menu Item forms and include the fields in list/detail serializers. Existing menu items must not acquire modifier options automatically.
 2. Validate on save that a menu price remains positive for **every combination allowed**: if both flags are on, base price must exceed ₱36; if one flag is on, it must exceed ₱18. Revalidate when changing a flagged item's price. Use Decimal money arithmetic, never browser floats, for persisted totals.
-3. Check inventory mode. Prepared/direct finished-serving stock still consumes one serving per ordered serving; removing a component is a sale customization, not an automatic raw-stock restock. If a recipe-mode item's rice/egg raw consumption would become inaccurate, block enabling that modifier until those components have explicit inventory mapping and correct reservation logic. Document this limitation in the owner form rather than silently miscounting ingredients.
+3. Check inventory mode. Prepared, direct, and current recipe-mode orders consume one finished serving per ordered serving; removing a component is a sale customization, not an automatic raw-stock restock. Raw ingredient stock is currently managed separately. If automatic raw consumption is added later, make its rice/egg allocation respect these stored options.
 
 ### 2. Cart UI
 

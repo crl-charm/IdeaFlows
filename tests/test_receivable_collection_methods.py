@@ -93,7 +93,7 @@ def test_grouped_staff_collection_reconciles_across_history_and_daily_balance(ap
         assert DailyBalanceExportService(db).build_pdf_context([ledger], [])["method_rows"][
             list(DailyBalanceExportService.METHODS).index(method)]["collection"] == 40
 
-    report_url = f"/admin/daily-balance/api/reports?start_date={day}&end_date={day}"
+    report_url = f"/staff/daily-balance/api/reports?start_date={day}&end_date={day}"
     report = client.get(report_url).get_json()["data"][0]
     assert (report["total_revenue"], report["total_collections"],
             report["collection_methods"][method], report["net_balance"]) == (0, 40, 40, 40)

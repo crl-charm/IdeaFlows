@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/inventory-workflow.css', v=config['INVENTORY_JS_VERSION']) }}">
-<div id="inventory-workflow" data-admin="{{ 'true' if session.get('role') == 'admin' else 'false' }}" data-kitchen="{{ 'true' if session.get('role') == 'admin' or can_manage_kitchen|default(false) else 'false' }}"></div>
+<div id="inventory-workflow" data-admin="{{ 'true' if session.get('role') in ('admin', 'staff') else 'false' }}" data-kitchen="{{ 'true' if session.get('role') in ('admin', 'staff') else 'false' }}"></div>
 <dialog id="stock-dialog" aria-labelledby="stock-dialog-title">
   <form id="stock-form">
     <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
@@ -36,30 +36,73 @@
     </div>
   </form>
 </dialog>
-{% if session.get('role') == 'admin' or can_manage_kitchen|default(false) %}
+{% if session.get('role') in ('admin', 'staff') %}
 <dialog id="servings-dialog" aria-labelledby="servings-dialog-title">
   <form id="servings-form">
     <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
-      <h2 id="servings-dialog-title" class="h5 m-0">Set available servings</h2>
+      <h2 id="servings-dialog-title" class="h5 m-0">Add prepared servings</h2>
       <button type="button" class="btn-close" aria-label="Close" onclick="document.getElementById('servings-dialog').close()"></button>
     </div>
-    <p class="text-muted small">Enter how many servings you expect to make. Orders reduce this number; raw ingredients are updated separately.</p>
+    <p class="text-muted small">Enter the new servings in this batch. This adds to the available count and records your name and time. Orders reduce the count; raw ingredients are updated separately.</p>
     <p class="fw-semibold" id="servings-meal-name"></p>
     <input type="hidden" id="servings-meal">
     <div class="mb-3">
-      <label for="servings-count" class="form-label">Servings available now</label>
-      <input id="servings-count" class="form-control" type="number" inputmode="numeric" min="0" max="999999" step="1" required>
-      <div class="form-text">Enter 0 to show Sold out on the menu.</div>
+      <label for="servings-count" class="form-label">New servings in this batch</label>
+      <input id="servings-count" class="form-control" type="number" inputmode="numeric" min="1" max="999999" step="1" required>
+      <div id="servings-current" class="form-text"></div>
     </div>
+    <div class="mb-3"><label for="servings-note" class="form-label">Batch note (optional)</label>
+      <input id="servings-note" class="form-control" maxlength="160" placeholder="e.g. Morning preparation"></div>
     <p id="servings-error" class="text-danger small" role="alert"></p>
     <div class="d-flex justify-content-end gap-2">
       <button type="button" class="btn btn-light" onclick="document.getElementById('servings-dialog').close()">Cancel</button>
-      <button type="submit" id="servings-save" class="btn btn-warning fw-semibold">Save servings</button>
+      <button type="submit" id="servings-save" class="btn btn-warning fw-semibold">Add batch</button>
     </div>
   </form>
 </dialog>
 {% endif %}
-{% if session.get('role') == 'admin' or can_manage_kitchen|default(false) %}
+{% if session.get('role') in ('admin', 'staff') %}
+<dialog id="meal-daily-audit-dialog" aria-labelledby="meal-daily-audit-title">
+  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <h2 id="meal-daily-audit-title" class="h5 m-0">Daily servings: <span id="meal-daily-audit-name"></span></h2>
+      <p class="text-muted small mt-1 mb-0">Placed orders include customers who have not paid. This shows recorded activity; compare it with physical stock to spot missing servings.</p>
+    </div>
+    <button type="button" class="btn-close" aria-label="Close daily servings" onclick="document.getElementById('meal-daily-audit-dialog').close()"></button>
+  </div>
+  <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+    <div><label for="meal-daily-audit-date" class="form-label mb-1">Business date (Asia/Manila)</label>
+      <input id="meal-daily-audit-date" type="date" class="form-control"></div>
+    <button type="button" id="meal-daily-audit-prev" class="btn btn-outline-secondary btn-sm" aria-label="Previous date">Previous</button>
+    <button type="button" id="meal-daily-audit-next" class="btn btn-outline-secondary btn-sm" aria-label="Next date">Next</button>
+    <button type="button" id="meal-daily-audit-today" class="btn btn-outline-secondary btn-sm">Today</button>
+  </div>
+  <p id="meal-daily-audit-status" class="small" role="status" aria-live="polite"></p>
+  <div id="meal-daily-audit-summary" class="meal-daily-summary mb-3"></div>
+  <section aria-labelledby="meal-daily-batches-title" class="mb-3">
+    <h3 id="meal-daily-batches-title" class="h6">Servings added</h3>
+    <div class="table-responsive" tabindex="0" role="region" aria-label="Serving batches"><table class="table table-sm align-middle">
+      <thead><tr><th>When</th><th>Quantity</th><th>By</th><th>Reason</th></tr></thead>
+      <tbody id="meal-daily-batches"></tbody>
+    </table></div>
+  </section>
+  <section aria-labelledby="meal-daily-orders-title" class="mb-3">
+    <h3 id="meal-daily-orders-title" class="h6">Customer orders</h3>
+    <div class="table-responsive" tabindex="0" role="region" aria-label="Customer orders"><table class="table table-sm align-middle">
+      <thead><tr><th>When</th><th>Customer / location</th><th>Order</th><th>Placed</th><th>Cancelled</th><th>Net</th><th>Entered by</th><th>Checkout</th></tr></thead>
+      <tbody id="meal-daily-orders"></tbody>
+    </table></div>
+    <button type="button" id="meal-daily-more" class="btn btn-outline-secondary btn-sm" hidden>Load more orders</button>
+  </section>
+  <section aria-labelledby="meal-daily-movements-title" class="mb-3">
+    <h3 id="meal-daily-movements-title" class="h6">Other stock movements and returns</h3>
+    <div class="table-responsive" tabindex="0" role="region" aria-label="Other stock movements"><table class="table table-sm align-middle">
+      <thead><tr><th>When</th><th>Change</th><th>By</th><th>Reason</th></tr></thead>
+      <tbody id="meal-daily-movements"></tbody>
+    </table></div>
+  </section>
+  <button type="button" id="meal-daily-history" class="btn btn-outline-secondary btn-sm">View full meal history</button>
+</dialog>
 <dialog id="meal-history-dialog" aria-labelledby="meal-history-title">
   <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
     <h2 id="meal-history-title" class="h5 m-0">Meal history: <span id="meal-history-name"></span></h2>

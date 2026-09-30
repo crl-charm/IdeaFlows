@@ -446,7 +446,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function loadCategories(callback) {
-  fetch('/admin/menu/api/categories', { credentials: 'include' })
+  fetch(`${window.managementBase}/menu/api/categories`, { credentials: 'include' })
     .then(r => r.json())
     .then(data => {
       if (data.success) {

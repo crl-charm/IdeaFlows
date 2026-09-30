@@ -66,7 +66,13 @@ class SessionRepository:
         ).all()
         return {b.session_id: b for b in rows if b.session_id is not None}
 
-    def sum_active_occupancy(self, space_type_id: int) -> int:
+    def sum_active_occupancy(self, space_type_id: int, *, lock: bool = False) -> int:
+        if lock:
+            # A current read after locking the space includes check-ins committed while waiting.
+            counts = (db.session.query(CustomerSession.number_of_people)
+                      .filter_by(space_type_id=space_type_id, status="active", service_mode="timed")
+                      .with_for_update().all())
+            return sum(count or 0 for (count,) in counts)
         occupied = (
             db.session.query(func.coalesce(func.sum(CustomerSession.number_of_people), 0))
             .filter_by(space_type_id=space_type_id, status="active", service_mode="timed")
@@ -74,8 +80,9 @@ class SessionRepository:
         ) or 0
         return int(occupied)
 
-    def get_space_type(self, space_type_id: int) -> Optional[SpaceType]:
-        return SpaceType.query.get(space_type_id)
+    def get_space_type(self, space_type_id: int, *, lock: bool = False) -> Optional[SpaceType]:
+        query = SpaceType.query.filter_by(id=space_type_id)
+        return (query.with_for_update() if lock else query).first()
 
     def get_space_type_by_name(self, name: str) -> Optional[SpaceType]:
         return SpaceType.query.filter_by(name=name).first()
@@ -221,8 +228,12 @@ class SessionRepository:
         for order in orders:
             for item in order.items:
                 items_list.append({
-                    "item_name": item.menu_item.name if item.menu_item else "Unknown Item",
+                    "item_name": item.display_name,
                     "quantity": item.quantity,
                     "price": float(item.price),
+                    "base_price": float(item.base_price if item.base_price is not None else item.price),
+                    "unit_deduction": float(item.unit_deduction or 0),
+                    "no_rice": bool(item.no_rice),
+                    "no_egg": bool(item.no_egg),
                 })
         return items_list

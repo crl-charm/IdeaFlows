@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from app.core.interfaces import Notifier
@@ -47,6 +47,7 @@ class OrderService:
         return [
             dict(id=item.id, name=item.name, price=float(item.price or 0),
                  category=item.category, description=item.description, image_url=item.image_url,
+                 can_remove_rice=item.can_remove_rice, can_remove_egg=item.can_remove_egg,
                  **availability.snapshot(item), is_available=availability.snapshot(item)["can_order"])
             for item in items
         ]
@@ -61,18 +62,40 @@ class OrderService:
             if not isinstance(items, list) or not items or len(items) > 200:
                 raise StockError("Choose at least one menu item.", "INVALID_ORDER", 400)
             quantities = {}
+            variants = {}
+            expected_prices = {}
             for row in items:
                 if not isinstance(row, dict):
                     raise StockError("Invalid order item.", "INVALID_ORDER", 400)
+                if set(row) - {"menu_item_id", "quantity", "no_rice", "no_egg", "expected_base_price"}:
+                    raise StockError("Invalid meal option.", "INVALID_MODIFIER", 400)
                 item_id = whole_quantity(row.get("menu_item_id"))
-                quantities[item_id] = quantities.get(item_id, 0) + whole_quantity(row.get("quantity", 1))
+                rice, egg = row.get("no_rice", False), row.get("no_egg", False)
+                if not isinstance(rice, bool) or not isinstance(egg, bool):
+                    raise StockError("Invalid meal option.", "INVALID_MODIFIER", 400)
+                quantity = whole_quantity(row.get("quantity", 1))
+                quantities[item_id] = quantities.get(item_id, 0) + quantity
                 whole_quantity(quantities[item_id])
+                key = (item_id, rice, egg)
+                variants[key] = variants.get(key, 0) + quantity
+                if "expected_base_price" in row:
+                    try:
+                        expected = Decimal(str(row["expected_base_price"]))
+                    except (InvalidOperation, ValueError, TypeError):
+                        raise StockError("Menu price changed. Refresh your cart.", "PRICE_CHANGED", 409, [item_id])
+                    if (not expected.is_finite() or expected < 0 or expected > Decimal("99999999.99") or
+                            expected != expected.quantize(Decimal("0.01"))):
+                        raise StockError("Menu price changed. Refresh your cart.", "PRICE_CHANGED", 409, [item_id])
+                    if key in expected_prices and expected_prices[key] != expected:
+                        raise StockError("Menu price changed. Refresh your cart.", "PRICE_CHANGED", 409, [item_id])
+                    expected_prices[key] = expected
+            # Lock the same session row as cancellation and checkout before reserving stock.
+            sess = self.repo.get_session_for_update(session_id)
+            if not sess or sess.status != "active":
+                raise StockError("Choose an active customer session.", "INVALID_SESSION", 400)
             availability = MenuAvailability(sorted(quantities), lock=True)
             if len(availability.items) != len(quantities):
                 raise StockError("An item is no longer on the menu.", "INVALID_ORDER", 400)
-            sess = self.repo.get_session(session_id)
-            if not sess or sess.status != "active":
-                raise StockError("Choose an active customer session.", "INVALID_SESSION", 400)
             for item in availability.items.values():
                 snapshot = availability.snapshot(item)
                 shortage = (availability.shortage(item, quantities[item.id])
@@ -97,7 +120,25 @@ class OrderService:
                 if shortage:
                     raise StockError(f"{item.name}: Not enough {shortage} for this order.",
                         item_ids=[item.id])
-            normalized = [dict(menu_item_id=key, quantity=value) for key, value in sorted(quantities.items())]
+            normalized = []
+            for (item_id, rice, egg), quantity in sorted(variants.items()):
+                item = availability.items[item_id]
+                if (rice and not item.can_remove_rice) or (egg and not item.can_remove_egg):
+                    raise StockError(f"{item.name}: This meal option is no longer available.",
+                                     "INVALID_MODIFIER", 409, [item_id])
+                base_price = Decimal(str(item.price or 0))
+                expected = expected_prices.get((item_id, rice, egg))
+                if expected is not None and expected != base_price:
+                    raise StockError(f"{item.name}: Menu price changed. Refresh your cart.",
+                                     "PRICE_CHANGED", 409, [item_id])
+                deduction = Decimal("18.00") * (rice + egg)
+                final_price = base_price - deduction
+                if not final_price.is_finite() or final_price <= 0 or final_price != final_price.quantize(Decimal("0.01")):
+                    raise StockError(f"{item.name}: Check the menu price and meal options.",
+                                     "INVALID_PRICE", 400, [item_id])
+                normalized.append(dict(menu_item_id=item_id, quantity=quantity, name=item.name,
+                                       base_price=base_price, price=final_price, unit_deduction=deduction,
+                                       no_rice=rice, no_egg=egg))
             actor = handled_by if handled_by and db.session.get(User, handled_by) else None
             order_id = self.repo.add_order_with_items(session_id=session_id, handled_by=actor, items=normalized)
             order_items = OrderItem.query.filter_by(order_id=order_id).order_by(OrderItem.id).all()
@@ -172,12 +213,18 @@ class OrderService:
                     {
                         "id": item.id,
                         "order_id": order.id,
+                        "order_food_total_before": float(order.food_total_before) if order.food_total_before is not None else None,
+                        "order_food_total_after": float(order.food_total_after) if order.food_total_after is not None else None,
                         "order_status": order.status,
                         "item_status": item.status if item.status else "preparing",
                         "handled_by_name": order.handler.full_name if order.handler else "N/A",
-                        "item_name": item.menu_item.name,
+                        "item_name": item.display_name,
                         "quantity": item.quantity,
                         "price": float(item.price),
+                        "base_price": float(item.base_price if item.base_price is not None else item.price),
+                        "unit_deduction": float(item.unit_deduction or 0),
+                        "no_rice": bool(item.no_rice),
+                        "no_egg": bool(item.no_egg),
                         "total": float(total_price),
                     }
                 )

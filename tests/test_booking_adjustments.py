@@ -188,7 +188,7 @@ def test_staff_friend_rate_is_recorded_once_and_reconciles_with_daily_balance(ap
     records = client.get("/api/checkout-records")
     assert records.status_code == 200
     assert records.get_json()[0]["collected_by"] == "test_user"
-    stats = client.get("/admin/daily-balance/api/today-stats")
+    stats = client.get("/staff/daily-balance/api/today-stats")
     assert stats.status_code == 200
     assert stats.get_json()["data"]["cash_on_hand"] == 150
 

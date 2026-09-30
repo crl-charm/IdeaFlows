@@ -18,6 +18,22 @@ from app.core.cache import get_or_set_json, invalidate_menu_cache
 class MenuService:
     repo: MenuRepository
 
+    @staticmethod
+    def _set_modifier_options(item, can_remove_rice=None, can_remove_egg=None):
+        rice = item.can_remove_rice if can_remove_rice is None else can_remove_rice
+        egg = item.can_remove_egg if can_remove_egg is None else can_remove_egg
+        if not isinstance(rice, bool) or not isinstance(egg, bool):
+            raise StockError("Choose valid meal options.", "INVALID_MODIFIER", 400)
+        try:
+            price = Decimal(str(item.price))
+        except (InvalidOperation, TypeError):
+            raise StockError("Enter a valid menu price.", "INVALID_PRICE", 400)
+        deduction = Decimal("18.00") * (rice + egg)
+        if (not price.is_finite() or price > Decimal("99999999.99") or
+                (deduction and (price <= deduction or price != price.quantize(Decimal("0.01"))))):
+            raise StockError("The price must exceed the total ₱18 deductions and use two decimals.", "INVALID_PRICE", 400)
+        item.can_remove_rice, item.can_remove_egg = rice, egg
+
     def _set_recipe(self, item, rows):
         if not isinstance(rows, list):
             raise StockError("Ingredients must be a list.", "INVALID_RECIPE", 400)
@@ -84,6 +100,8 @@ class MenuService:
                     "price": float(item.price),
                     "category": item.category,
                     "is_available": item.is_available,
+                    "can_remove_rice": item.can_remove_rice,
+                    "can_remove_egg": item.can_remove_egg,
                     "inventory_mode": item.inventory_mode,
                     "image_url": item.image_url,
                 }
@@ -120,6 +138,8 @@ class MenuService:
                     "description": item.description,
                     "price": float(item.price),
                     "category": item.category,
+                    "can_remove_rice": item.can_remove_rice,
+                    "can_remove_egg": item.can_remove_egg,
                     "image_url": item.image_url,
                 }
                 for item in self.repo.list_available()
@@ -138,6 +158,8 @@ class MenuService:
                     "category": item.category,
                     "image_url": item.image_url,
                     "is_available": bool(item.is_available),
+                    "can_remove_rice": item.can_remove_rice,
+                    "can_remove_egg": item.can_remove_egg,
                 }
                 for item in self.repo.list_for_ordering()
             ]
@@ -146,7 +168,7 @@ class MenuService:
 
     def create(self, name: str, price: float, category: str, description: Optional[str] = None, image_url: Optional[str] = None,
                inventory_mode: str = "untracked", stock_quantity=0, stock_threshold=3, actor=None,
-               recipe_ingredients=None) -> dict[str, Any]:
+               recipe_ingredients=None, can_remove_rice=False, can_remove_egg=False) -> dict[str, Any]:
         from app.services.stock_management import change_stock
         item = self.repo.create(name, price, category)
         if description:
@@ -160,6 +182,7 @@ class MenuService:
         change_stock(item.id, {"action": "setup", "inventory_mode": inventory_mode,
             "quantity": stock_quantity, "threshold": stock_threshold, "reason": "Menu item created"},
             actor, str(uuid4()), admin=True, commit=False)
+        self._set_modifier_options(item, can_remove_rice, can_remove_egg)
         self.repo.save()
         invalidate_menu_cache()
         return {"success": True, "data": {"id": item.id}}
@@ -198,7 +221,8 @@ class MenuService:
         self, item_id: int, name: Optional[str] = None, price: Optional[float] = None, 
         category: Optional[str] = None, description: Optional[str] = None, image_url: Optional[str] = None,
         inventory_mode: Optional[str] = None, stock_quantity=0, stock_threshold=3, actor=None,
-        recipe_ingredients=None, confirm_recipe_switch=False
+        recipe_ingredients=None, confirm_recipe_switch=False,
+        can_remove_rice=None, can_remove_egg=None
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         success = self.repo.update(item_id, name, price, category)
         if not success:
@@ -227,6 +251,8 @@ class MenuService:
             change_stock(item.id, {"action": "setup", "inventory_mode": inventory_mode,
                 "quantity": stock_quantity, "threshold": stock_threshold, "reason": "Menu setup changed"},
                 actor, str(uuid4()), admin=True, commit=False)
+
+        self._set_modifier_options(item, can_remove_rice, can_remove_egg)
         
         self.repo.save()
         invalidate_menu_cache()

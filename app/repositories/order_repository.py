@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models import CustomerSession, MenuItem, Order, OrderItem
+from app.models import CustomerSession, MenuItem, Order, OrderItem, Transaction
 from app.repositories.menu_repository import MenuRepository
 
 
@@ -23,6 +24,9 @@ class OrderRepository:
             .first()
         )
 
+    def get_session_for_update(self, session_id: int) -> Optional[CustomerSession]:
+        return CustomerSession.query.filter_by(id=session_id).with_for_update().first()
+
     def get_order(self, order_id: int) -> Optional[Order]:
         return (
             Order.query.options(selectinload(Order.items).selectinload(OrderItem.menu_item))
@@ -34,23 +38,30 @@ class OrderRepository:
         return OrderItem.query.get(item_id)
 
     def add_order_with_items(self, session_id: int, handled_by: Optional[int], items: list[dict]) -> int:
-        new_order = Order(customer_session_id=session_id, status="preparing", handled_by=handled_by)
+        current = db.session.query(func.coalesce(func.sum(OrderItem.quantity * OrderItem.price), 0)).join(
+            Order, OrderItem.order_id == Order.id
+        ).filter(Order.customer_session_id == session_id).scalar() or Decimal("0.00")
+        session = db.session.get(CustomerSession, session_id)
+        original = db.session.get(Transaction, session.voided_transaction_id) if session and session.voided_transaction_id else None
+        carried = original.food_bill if original and original.is_voided and original.food_bill is not None else Decimal("0.00")
+        before = current + carried
+        after = before + sum((row["price"] * row["quantity"] for row in items), Decimal("0.00"))
+        new_order = Order(customer_session_id=session_id, status="preparing", handled_by=handled_by,
+                          food_total_before=before, food_total_after=after)
         db.session.add(new_order)
         db.session.flush()
 
         for item in items:
-            menu_item_id = item.get("menu_item_id")
-            if not menu_item_id:
-                continue
-            menu_item = MenuItem.query.get(menu_item_id)
-            if not menu_item:
-                continue
-
             order_item = OrderItem(
                 order_id=new_order.id,
-                menu_item_id=menu_item.id,
-                quantity=item.get("quantity", 1),
-                price=menu_item.price,
+                menu_item_id=item["menu_item_id"],
+                quantity=item["quantity"],
+                price=item["price"],
+                name_snapshot=item["name"],
+                base_price=item["base_price"],
+                unit_deduction=item["unit_deduction"],
+                no_rice=item["no_rice"],
+                no_egg=item["no_egg"],
             )
             db.session.add(order_item)
 

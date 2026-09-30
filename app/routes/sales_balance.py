@@ -8,12 +8,12 @@ from flask import Blueprint, request, render_template, session
 from app.dto.api_response import api_error, api_ok
 
 from app.utils.billing import calculate_time_bill
-from app import db, csrf
+from app import db
 from app.core.idempotency import idempotent_request
 from app.repositories.sales_repository import SalesRepository
 from app.services.daily_balance_export_service import DailyBalanceExportService
 from app.services.sales_service import SalesService
-from app.utils.auth import admin_required, login_required
+from app.utils.auth import login_required, staff_or_admin_required
 
 sales_bp = Blueprint("sales_admin", __name__, url_prefix="/admin/daily-balance")
 
@@ -44,12 +44,19 @@ def api_list_reports() -> tuple:
 
 
 @sales_bp.route("/api/reports", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-generate-sales-report")
 def api_generate_report() -> tuple:
-    data = request.get_json()
-    report_date = date.fromisoformat(data.get("report_date"))
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return api_error("Enter a valid daily report.", status=400)
+    try:
+        report_date = date.fromisoformat(data.get("report_date"))
+    except (TypeError, ValueError):
+        return api_error("Choose a valid report date.", status=400)
+    notes = data.get("notes")
+    if notes is not None and (not isinstance(notes, str) or len(notes) > 2000):
+        return api_error("Enter valid notes up to 2000 characters.", status=400)
     user_id = session.get("user_id")
     
     if not user_id:
@@ -58,7 +65,7 @@ def api_generate_report() -> tuple:
     result = _service.generate_report(
         report_date=report_date,
         generated_by=user_id,
-        notes=data.get("notes"),
+        notes=notes,
     )
     return api_ok(result.get("data"), status=201)
 
@@ -119,13 +126,25 @@ def api_list_soft_balances() -> tuple:
 
 
 @sales_bp.route("/api/soft-balances", methods=["POST"])
-@admin_required
-@csrf.exempt
+@staff_or_admin_required
 @idempotent_request("admin-create-soft-balance")
 def api_create_soft_balance() -> tuple:
-    data = request.get_json()
-    balance_date = date.fromisoformat(data.get("balance_date"))
-    period = (data.get("period") or "AM").upper()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return api_error("Enter a valid soft balance.", status=400)
+    try:
+        balance_date = date.fromisoformat(data.get("balance_date"))
+    except (TypeError, ValueError):
+        return api_error("Choose a valid balance date.", status=400)
+    period_value = data.get("period") or "AM"
+    if not isinstance(period_value, str):
+        return api_error("Choose AM or PM.", status=400)
+    period = period_value.upper()
+    if period not in {"AM", "PM"}:
+        return api_error("Choose AM or PM.", status=400)
+    notes = data.get("notes")
+    if notes is not None and (not isinstance(notes, str) or len(notes) > 2000):
+        return api_error("Enter valid notes up to 2000 characters.", status=400)
     user_id = session.get("user_id")
     
     if not user_id:
@@ -135,7 +154,7 @@ def api_create_soft_balance() -> tuple:
         balance_date=balance_date,
         period=period,
         generated_by=user_id,
-        notes=data.get("notes"),
+        notes=notes,
     )
     return api_ok(result.get("data"), status=201)
 

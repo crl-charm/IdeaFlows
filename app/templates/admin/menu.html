@@ -431,6 +431,12 @@
             <label class="form-label">Price (₱) *</label>
             <input type="number" id="price" class="form-control" placeholder="0.00" step="0.01" min="0" required>
           </div>
+          <fieldset class="mb-3">
+            <legend class="form-label fs-6">Optional meal changes</legend>
+            <label class="form-check"><input class="form-check-input" type="checkbox" id="canRemoveRice"> Allow no rice (−₱18)</label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" id="canRemoveEgg"> Allow no egg (−₱18)</label>
+            <small class="form-text text-muted">Orders still use one finished serving. Enter raw rice and egg stock separately in Inventory.</small>
+          </fieldset>
           <div class="mb-3">
             <label class="form-label">Description</label>
             <textarea id="description" class="form-control" placeholder="Brief description of the item"
@@ -548,6 +554,12 @@
             <label class="form-label">Price (₱) *</label>
             <input type="number" id="editPrice" class="form-control" step="0.01" min="0" required>
           </div>
+          <fieldset class="mb-3">
+            <legend class="form-label fs-6">Optional meal changes</legend>
+            <label class="form-check"><input class="form-check-input" type="checkbox" id="editCanRemoveRice"> Allow no rice (−₱18)</label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" id="editCanRemoveEgg"> Allow no egg (−₱18)</label>
+            <small class="form-text text-muted">Price must exceed the selected deductions. Raw ingredient stock stays separate from finished servings.</small>
+          </fieldset>
           <div class="mb-3">
             <label class="form-label fw-semibold">Ingredients for one order</label>
             <p class="form-text mb-2">Optional reference list. Servings and raw stock are updated separately in Inventory.</p>
@@ -624,7 +636,7 @@
   });
 
   function loadCategories(callback) {
-    fetch('/admin/menu/api/categories', { credentials: 'include' })
+    fetch(`${window.managementBase}/menu/api/categories`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
         if (data.success) {
@@ -675,7 +687,7 @@
       return;
     }
     
-    csrfFetch('/admin/menu/api/categories', {
+    csrfFetch(`${window.managementBase}/menu/api/categories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name })
@@ -771,7 +783,7 @@
   }
 
   function loadItems() {
-    fetch('/admin/menu/api/items/all', { credentials: 'include' })
+    fetch(`${window.managementBase}/menu/api/items/all`, { credentials: 'include' })
       .then(parseMenuResponse)
       .then(data => {
         allItems = data.data;
@@ -822,6 +834,7 @@
         <p class="menu-card-category">${item.category}</p>
         ${item.description ? `<p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">${item.description}</p>` : ''}
         <div class="menu-card-price">₱${parseFloat(item.price).toFixed(2)}</div>
+        ${(item.can_remove_rice || item.can_remove_egg) ? `<small class="text-muted">Optional: ${[item.can_remove_rice ? 'no rice' : '', item.can_remove_egg ? 'no egg' : ''].filter(Boolean).join(', ')}</small>` : ''}
         <div class="status-badge ${item.can_order ? 'status-available' : 'status-unavailable'}">
           ${item.availability_message || 'Unavailable'}
         </div>
@@ -869,13 +882,15 @@
     formData.append('category', document.getElementById('category').value);
     formData.append('price', document.getElementById('price').value);
     formData.append('description', document.getElementById('description').value);
+    formData.append('can_remove_rice', String(document.getElementById('canRemoveRice').checked));
+    formData.append('can_remove_egg', String(document.getElementById('canRemoveEgg').checked));
 
     const imageFile = document.getElementById('image').files[0];
     if (imageFile) {
       formData.append('image', imageFile);
     }
 
-    csrfFetch('/admin/menu/api/items', {
+    csrfFetch(`${window.managementBase}/menu/api/items`, {
       method: 'POST',
       body: formData,
       headers: { 'Accept': 'application/json' }
@@ -920,7 +935,7 @@
       formData.append('image', imageFile);
     }
 
-    csrfFetch('/admin/menu/api/items/variants', {
+    csrfFetch(`${window.managementBase}/menu/api/items/variants`, {
       method: 'POST',
       body: formData,
       headers: { 'Accept': 'application/json' }
@@ -947,13 +962,15 @@
     originalRecipeHadRows = false;
     document.getElementById('editRecipeRows').replaceChildren();
     Promise.all([
-      fetch('/admin/menu/api/items/all').then(parseMenuResponse),
-      fetch(`/admin/inventory/api/recipes/${itemId}`).then(parseMenuResponse)
+      fetch(`${window.managementBase}/menu/api/items/all`).then(parseMenuResponse),
+      fetch(`${window.managementBase}/inventory/api/recipes/${itemId}`).then(parseMenuResponse)
     ]).then(([menu, recipe]) => {
       if (currentItemId !== itemId) return;
       const item = menu.data.find(i => i.id === itemId);
       originalRecipeHadRows = recipe.data.length > 0;
       document.getElementById('editDescription').value = item?.description || '';
+      document.getElementById('editCanRemoveRice').checked = !!item?.can_remove_rice;
+      document.getElementById('editCanRemoveEgg').checked = !!item?.can_remove_egg;
       if (originalRecipeHadRows) recipe.data.forEach(ingredient => addRecipeRow('editRecipeRows', {name: ingredient.ingredient_name, ...ingredient}));
       document.getElementById('saveItemButton').disabled = false;
     }).catch(error => showToast('✗ Could not load this recipe: ' + error.message, 'error'));
@@ -987,6 +1004,8 @@
     formData.append('category', document.getElementById('editCategory').value);
     formData.append('price', document.getElementById('editPrice').value);
     formData.append('description', document.getElementById('editDescription').value);
+    formData.append('can_remove_rice', String(document.getElementById('editCanRemoveRice').checked));
+    formData.append('can_remove_egg', String(document.getElementById('editCanRemoveEgg').checked));
     if (ingredients.length || originalRecipeHadRows) {
       formData.append('recipe_ingredients', JSON.stringify(ingredients));
     }
@@ -996,7 +1015,7 @@
       formData.append('image', imageFile);
     }
 
-    csrfFetch(`/admin/menu/api/items/${currentItemId}`, {
+    csrfFetch(`${window.managementBase}/menu/api/items/${currentItemId}`, {
       method: 'PATCH',
       body: formData,
       headers: { 'Accept': 'application/json' }
@@ -1011,7 +1030,7 @@
   }
 
   function toggleAvailability(itemId) {
-    csrfFetch(`/admin/menu/api/items/${itemId}/availability`, {
+    csrfFetch(`${window.managementBase}/menu/api/items/${itemId}/availability`, {
       method: 'PATCH',
       headers: { 'Accept': 'application/json' }
     })
@@ -1037,7 +1056,7 @@
     });
     if (!confirmed) return;
 
-    csrfFetch(`/admin/menu/api/items/${itemId}`, {
+    csrfFetch(`${window.managementBase}/menu/api/items/${itemId}`, {
       method: 'DELETE',
       headers: { 'Accept': 'application/json' }
     })

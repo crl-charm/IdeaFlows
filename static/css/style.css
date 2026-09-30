@@ -863,6 +863,10 @@ input, button, select, textarea {
     gap: 8px;
   }
 
+  .mobile-session-actions.with-cancel {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+  }
+
   .mobile-session-actions .btn {
     min-height: 44px;
     font-weight: 600;

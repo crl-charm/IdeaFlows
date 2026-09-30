@@ -47,13 +47,14 @@ def test_customer_tab_payment_covers_all_orders_and_logs_one_payment(app):
     with app.app_context():
         service = ReceivableService(ReceivableRepository())
         due = (datetime.utcnow() + timedelta(days=1)).date().isoformat()
-        first_id = service.create("Carl", "", "Snack", 30, due, 1, None)["data"]["id"]
-        second_id = service.create("carl", "", "Lunch", 100, due, 1, None)["data"]["id"]
+        first = service.create("Carl", "", "Snack", 30, due, 1, None)["data"]
+        first_id, tab_id = first["id"], first["tab_id"]
+        second_id = service.create("carl", "", "Lunch", 100, due, 1, None, tab_id=tab_id)["data"]["id"]
 
     client = app.test_client()
     _auth(client, "staff")
-    payment = client.post("/receivables-view/api/receivables/customer-payment", json={
-        "customer_name": "Carl", "amount": "50", "payment_method": "cash",
+    payment = client.post(f"/receivables-view/api/receivables/tabs/{tab_id}/payments", json={
+        "amount": "50", "payment_method": "cash",
     }, headers={"Idempotency-Key": "carl-50"})
     assert payment.status_code == 200
     assert payment.get_json()["remaining"] == 80
@@ -61,8 +62,8 @@ def test_customer_tab_payment_covers_all_orders_and_logs_one_payment(app):
         "customer_name": "Carl", "amount": "1", "payment_method": "cash",
     })
     assert denied.status_code == 403
-    duplicate = client.post("/receivables-view/api/receivables/customer-payment", json={
-        "customer_name": "Carl", "amount": "50", "payment_method": "cash",
+    duplicate = client.post(f"/receivables-view/api/receivables/tabs/{tab_id}/payments", json={
+        "amount": "50", "payment_method": "cash",
     }, headers={"Idempotency-Key": "carl-50"})
     assert duplicate.status_code == 409
 
@@ -75,20 +76,20 @@ def test_customer_tab_payment_covers_all_orders_and_logs_one_payment(app):
         assert sum((p.amount for p in ReceivablePayment.query.all()), Decimal("0")) == Decimal("50.00")
         assert len({p.payment_group_id for p in ReceivablePayment.query.all()}) == 1
 
-    history = client.get("/receivables-view/api/receivables/customer-payments?customer_name=carl")
+    history = client.get(f"/receivables-view/api/receivables/tabs/{tab_id}/payments")
     assert history.status_code == 200
     assert len(history.get_json()["data"]) == 1
     assert history.get_json()["data"][0]["amount"] == 50
     assert history.get_json()["data"][0]["received_by"] == "Test User"
 
-    stats = client.get("/admin/daily-balance/api/today-stats").get_json()["data"]
+    stats = client.get("/staff/daily-balance/api/today-stats").get_json()["data"]
     assert stats["cash_on_hand"] == 50
     assert stats["expected_to_collect"] == 0
     assert stats["receivables_paid_today"] == 1
 
     _auth(client, "admin")
-    full = client.post("/admin/receivables/api/receivables/customer-payment", json={
-        "customer_name": "Carl", "amount": "80", "payment_method": "gcash",
+    full = client.post(f"/admin/receivables/api/receivables/tabs/{tab_id}/payments", json={
+        "amount": "80", "payment_method": "gcash",
     })
     assert full.status_code == 200
     assert full.get_json()["remaining"] == 0
@@ -169,12 +170,12 @@ def test_staff_daily_balance_separates_cash_expenses_and_expected_collections(ap
 
     client = app.test_client()
     _auth(client, "staff")
-    page = client.get("/admin/daily-balance")
+    page = client.get("/staff/daily-balance")
     assert page.status_code == 200
     assert b"Still to Collect" in page.data
-    assert b'data-href="/admin/daily-balance"' in page.data
-    assert b"Generate Report" not in page.data
-    response = client.get("/admin/daily-balance/api/today-stats")
+    assert b'data-href="/staff/daily-balance"' in page.data
+    assert b"Generate Report" in page.data
+    response = client.get("/staff/daily-balance/api/today-stats")
     assert response.status_code == 200
     stats = response.get_json()["data"]
     assert stats["cash_on_hand"] == 310

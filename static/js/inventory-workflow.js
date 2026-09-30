@@ -6,12 +6,20 @@ window.InventoryUI = (() => {
   const dialog = document.getElementById('stock-dialog');
   const servingsDialog = document.getElementById('servings-dialog');
   const mealHistoryDialog = document.getElementById('meal-history-dialog');
+  const dailyDialog = document.getElementById('meal-daily-audit-dialog');
   const el = id => document.getElementById(id);
   const items = new Map();
   let meals = [];
   let servingKey = null;
   let historyMealId = null;
   let historyNextPage = null;
+  let dailySummaries = new Map();
+  let summaryRequest = 0;
+  let businessToday = '';
+  let dailyMealId = null;
+  let dailyNextPage = null;
+  let dailyRequest = 0;
+  let dailyTrigger = null;
   const escape = value => { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; };
   const stockUnits = [['klg','kg'],['grams','grams'],['pieces','pieces (pcs)'],['packs','packs'],['trays','trays'],['liters','liters (L)'],['ml','milliliters (mL)']];
   const shortUnit = unit => ({klg:'kg',grams:'gram',pieces:'piece',packs:'pack',trays:'tray',liters:'liter',ml:'mL'})[unit] || unit;
@@ -82,7 +90,16 @@ window.InventoryUI = (() => {
       showToast('Stock updated.', 'success');
       window.dispatchEvent(new Event('inventory-changed'));
       if (document.querySelector('.stock-history[open]')) history();
-    } catch (error) { el('stock-error').textContent = error.message || 'Could not save. Please try again.'; }
+    } catch (error) {
+      if (error.status === 409 && error.data?.duplicate) {
+        dialog.close();
+        showToast('This change was already submitted. Check the refreshed stock before making another change.', 'warning');
+        window.dispatchEvent(new Event('inventory-changed'));
+      } else {
+        if (error.status && error.status < 500) current.key = crypto.randomUUID();
+        el('stock-error').textContent = error.message || 'Could not save. Please try again.';
+      }
+    }
     finally { button.disabled = false; }
   });
   function setMeals(rows) {
@@ -93,17 +110,37 @@ window.InventoryUI = (() => {
     const id = Number(item.id);
     items.set(id, item);
     const serving = ['prepared','recipe','untracked'].includes(item.inventory_mode);
-    const update = serving ? `<button type="button" class="btn btn-outline-warning btn-sm" onclick="InventoryUI.openServings(${id})">Set servings</button>`
+    const audit = dailySummaries.get(id);
+    const needsFirstBatch = audit && (!audit.configured || (audit.available === 0 && audit.remaining === 0 && audit.placed === 0));
+    const daily = serving ? `<button type="button" class="btn ${audit && !audit.history_complete && !needsFirstBatch ? 'btn-outline-danger' : 'btn-outline-secondary'} btn-sm" onclick="InventoryUI.${needsFirstBatch ? 'openServings' : 'openDailyAudit'}(${id})">${!audit ? 'View daily orders' : needsFirstBatch ? 'Set up servings' : !audit.history_complete ? 'Review daily servings' : `${escape(audit.ordered)} of ${escape(audit.available)} ordered today`}</button>` : '';
+    const update = serving ? `${needsFirstBatch ? '' : `<button type="button" class="btn btn-outline-warning btn-sm" onclick="InventoryUI.openServings(${id})">Add servings</button>`}${audit?.configured && !needsFirstBatch ? `<button type="button" class="btn btn-outline-secondary btn-sm" onclick="InventoryUI.open(${id}, 'count')">Correct available count</button>` : ''}`
       : admin ? `<button type="button" class="btn btn-outline-warning btn-sm" onclick="InventoryUI.open(${id}, 'count')">Update stock</button>` : '';
-    return `<div class="d-flex flex-wrap gap-2 mt-3">${update}<button type="button" class="btn btn-outline-secondary btn-sm" onclick="InventoryUI.openMealHistory(${id})">History</button></div>`;
+    return `<div class="d-flex flex-wrap gap-2 mt-3">${daily}${update}<button type="button" class="btn btn-outline-secondary btn-sm" onclick="InventoryUI.openMealHistory(${id})">History</button></div>`;
+  }
+  async function refreshDailySummaries(render) {
+    const requestId = ++summaryRequest;
+    try {
+      const result = await fetchJSON('/inventory/api/meal-day-summary');
+      if (requestId !== summaryRequest) return;
+      businessToday = result.date;
+      dailySummaries = new Map(result.data.map(row => [Number(row.meal_id), row]));
+      if (el('meal-daily-audit-date')) el('meal-daily-audit-date').max = businessToday;
+    } catch (error) {
+      if (requestId !== summaryRequest) return;
+      dailySummaries = new Map();
+      console.error('Daily serving summary could not be loaded:', error);
+    }
+    render?.();
   }
   function openServings(id) {
     const meal = meals.find(item => Number(item.id) === Number(id) && ['prepared','recipe','untracked'].includes(item.inventory_mode));
     if (!servingsDialog || !meal) return showToast('This meal cannot be counted in servings.', 'error');
+    el('servings-form').reset();
     el('servings-meal').value = meal.id;
     servingKey = crypto.randomUUID();
     el('servings-meal-name').textContent = meal.name;
-    el('servings-count').value = meal.available_quantity ?? 0;
+    el('servings-count').value = '';
+    el('servings-current').textContent = `Currently available: ${meal.available_quantity ?? 'not counted'} servings. Enter only the new batch amount.`;
     el('servings-error').textContent = '';
     servingsDialog.showModal();
   }
@@ -116,13 +153,106 @@ window.InventoryUI = (() => {
     try {
       await fetchJSON(`/inventory/api/menu-items/${id}/action`, {method:'POST',
         headers:{'Content-Type':'application/json','Idempotency-Key':servingKey},
-        body:JSON.stringify({action:'servings', quantity:el('servings-count').value})});
+        body:JSON.stringify({action:'add', quantity:el('servings-count').value, reason:el('servings-note').value})});
       servingsDialog.close();
-      showToast('Servings updated.', 'success');
+      showToast('Serving batch added.', 'success');
       window.dispatchEvent(new Event('inventory-changed'));
-    } catch (error) { el('servings-error').textContent = error.message || 'Could not save servings.'; }
+    } catch (error) {
+      if (error.status === 409 && error.data?.duplicate) {
+        servingsDialog.close();
+        showToast('This change was already submitted. Check the refreshed count before making another change.', 'warning');
+        window.dispatchEvent(new Event('inventory-changed'));
+      } else {
+        if (error.status && error.status < 500) servingKey = crypto.randomUUID();
+        el('servings-error').textContent = error.message || 'Could not save servings.';
+      }
+    }
     finally { button.disabled = false; }
   });
+  const localTime = value => new Date(value).toLocaleString('en-PH', {timeZone:'Asia/Manila', dateStyle:'medium', timeStyle:'short'});
+  const signed = value => `${Number(value) > 0 ? '+' : ''}${value}`;
+  const emptyRow = (cols, message) => `<tr><td colspan="${cols}" class="text-muted">${escape(message)}</td></tr>`;
+  function dailyRows(rows, type) {
+    if (type === 'orders') return rows.map(row => `<tr><td>${escape(localTime(row.at))}</td><td>${escape(row.customer)}<div class="small text-muted">${escape(row.location)}</div></td><td>#${escape(row.order_id)}</td><td>${escape(row.placed)}</td><td>${escape(row.cancelled)}${row.cancellations.map(entry => `<div class="small text-muted">${escape(localTime(entry.at))}: ${escape(entry.returned ? 'returned' : 'not returned')} by ${escape(entry.actor)} — ${escape(entry.reason)}</div>`).join('')}</td><td>${escape(row.ordered)}</td><td>${escape(row.handler)}</td><td>${escape(row.checkout_status)}</td></tr>`).join('');
+    return rows.map(row => `<tr><td>${escape(localTime(row.at))}</td><td>${escape(signed(row.quantity))}</td><td>${escape(row.actor)}</td><td>${escape(row.reason || '')}</td></tr>`).join('');
+  }
+  function dailySummaryHtml(row, isToday) {
+    const values = [['Opening stock',row.opening],['Added on date',row.added],['Placed',row.placed],['Cancelled',row.cancelled],['Net ordered',row.ordered],['Available on date',row.available],[isToday ? 'Remaining now' : 'Remaining at day end',row.remaining],['Other stock change',signed(row.other_change)],['Voided without return',row.not_returned]];
+    return values.map(([label, value]) => `<div><span class="small text-muted">${escape(label)}</span><strong>${escape(value)}</strong></div>`).join('');
+  }
+  function openDailyAudit(id) {
+    const meal = meals.find(item => Number(item.id) === Number(id));
+    if (!dailyDialog || !meal) return;
+    dailyTrigger = document.activeElement;
+    dailyMealId = Number(id);
+    el('meal-daily-audit-name').textContent = meal.name;
+    el('meal-daily-audit-date').value = businessToday;
+    dailyDialog.showModal();
+    loadDailyAudit(1);
+  }
+  function shiftAuditDate(days) {
+    const input = el('meal-daily-audit-date');
+    if (!input.value) return;
+    const day = new Date(`${input.value}T00:00:00Z`);
+    day.setUTCDate(day.getUTCDate() + days);
+    const candidate = day.toISOString().slice(0, 10);
+    if (businessToday && candidate > businessToday) return;
+    input.value = candidate;
+    loadDailyAudit(1);
+  }
+  async function loadDailyAudit(page = 1) {
+    if (!dailyMealId) return;
+    const id = dailyMealId;
+    const date = el('meal-daily-audit-date').value;
+    const requestId = ++dailyRequest;
+    const more = el('meal-daily-more');
+    more.disabled = true;
+    more.hidden = true;
+    if (page === 1) {
+      el('meal-daily-audit-status').textContent = 'Loading daily servings...';
+      el('meal-daily-audit-summary').replaceChildren();
+      el('meal-daily-batches').innerHTML = emptyRow(4, 'Loading...');
+      el('meal-daily-orders').innerHTML = emptyRow(8, 'Loading...');
+      el('meal-daily-movements').innerHTML = emptyRow(4, 'Loading...');
+    }
+    try {
+      const result = await fetchJSON(`/inventory/api/menu-items/${id}/daily-audit?${new URLSearchParams({...(date ? {date} : {}), page})}`);
+      if (requestId !== dailyRequest || id !== dailyMealId || !dailyDialog.open) return;
+      el('meal-daily-audit-date').value = result.date;
+      if (!businessToday || result.date > businessToday) businessToday = result.date;
+      if (page === 1) {
+        const row = result.summary;
+        el('meal-daily-audit-summary').innerHTML = dailySummaryHtml(row, result.date === businessToday);
+        const warning = !row.configured || !row.history_complete;
+        el('meal-daily-audit-status').className = warning ? 'small text-danger' : 'small text-muted';
+        const notes = [];
+        if (row.later_cancellations) notes.push(`${row.later_cancellations} cancellation(s) happened later. Net ordered reflects them; remaining stock is the count at the end of this date.`);
+        if (row.not_returned) notes.push(`${row.not_returned} cancelled serving(s) were not returned to stock on this date.`);
+        if (row.other_change) notes.push('Other stock changes affected the remaining count. Review the movements below.');
+        el('meal-daily-audit-status').textContent = !row.configured ? 'No serving count is configured for this meal. Add a batch to begin tracking.' : row.untracked_orders ? 'Some orders on this date were placed before servings were tracked. Their quantities cannot be verified here; check the order records.' : !row.history_complete ? 'Recorded stock and order history do not fully reconcile. Check the movements and full history before relying on this ratio.' : notes.join(' ') || 'Recorded stock and orders reconcile for this date.';
+        el('meal-daily-batches').innerHTML = dailyRows(result.batches, 'batches') || emptyRow(4, 'No batches recorded on this date.');
+        el('meal-daily-movements').innerHTML = dailyRows(result.movements, 'movements') || emptyRow(4, 'No other stock movements recorded on this date.');
+        el('meal-daily-orders').innerHTML = dailyRows(result.orders, 'orders') || emptyRow(8, 'No customer orders recorded on this date.');
+      } else if (result.orders.length) {
+        el('meal-daily-orders').insertAdjacentHTML('beforeend', dailyRows(result.orders, 'orders'));
+      }
+      dailyNextPage = result.next_page;
+      more.hidden = !dailyNextPage;
+    } catch (error) {
+      if (requestId === dailyRequest && id === dailyMealId) {
+        el('meal-daily-audit-status').className = 'small text-danger';
+        el('meal-daily-audit-status').textContent = error.message || 'Could not load daily servings. Try another date.';
+        if (page > 1) more.hidden = false;
+      }
+    } finally { if (requestId === dailyRequest) more.disabled = false; }
+  }
+  el('meal-daily-audit-date')?.addEventListener('change', () => loadDailyAudit(1));
+  el('meal-daily-audit-prev')?.addEventListener('click', () => shiftAuditDate(-1));
+  el('meal-daily-audit-next')?.addEventListener('click', () => shiftAuditDate(1));
+  el('meal-daily-audit-today')?.addEventListener('click', () => { el('meal-daily-audit-date').value = businessToday; loadDailyAudit(1); });
+  el('meal-daily-more')?.addEventListener('click', () => { if (dailyNextPage) loadDailyAudit(dailyNextPage); });
+  el('meal-daily-history')?.addEventListener('click', () => { const id = dailyMealId; dailyDialog.close(); openMealHistory(id); });
+  dailyDialog?.addEventListener('close', () => { dailyRequest++; dailyMealId = null; if (!mealHistoryDialog?.open) dailyTrigger?.focus(); });
   function openMealHistory(id) {
     const meal = meals.find(item => Number(item.id) === Number(id));
     if (!mealHistoryDialog || !meal) return;
@@ -170,5 +300,5 @@ window.InventoryUI = (() => {
   }
   document.querySelector('.stock-history')?.addEventListener('toggle', event => { if(event.target.open) history(); });
   document.querySelector('.prepared-summary')?.addEventListener('toggle', event => { if(event.target.open) summary(); });
-  return {actions,status,open,openServings,openMealHistory,setMeals,mealActions,stockUnits,shortUnit,unitSymbol,needsUnitConversion,escape,labels};
+  return {actions,status,open,openServings,openMealHistory,setMeals,mealActions,openDailyAudit,refreshDailySummaries,stockUnits,shortUnit,unitSymbol,needsUnitConversion,escape,labels};
 })();

@@ -461,15 +461,15 @@
       {% if session.get("role") == "staff" %}
       <div class="sidebar-section-label">Operations</div>
 
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/daily-balance'">
+      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/staff/daily-balance'">
         <i class="bi bi-cash-stack me-2"></i>Daily Balance
       </button>
 
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/inventory'">
+      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/staff/inventory'">
         <i class="bi bi-boxes me-2"></i>Inventory
       </button>
 
-      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/menu-view'">
+      <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/staff/menu'">
         <i class="bi bi-menu-button-wide me-2"></i>Menu
       </button>
 
@@ -481,6 +481,11 @@
         <i class="bi bi-people me-2"></i>Receivables
         <span id="debt-badge" class="badge bg-danger ms-1"
           style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
+      </button>
+
+      <button class="btn w-100 text-start mb-2 sidebar-btn nav-btn" onclick="window.location.href='/staff/payables'">
+        <i class="bi bi-card-checklist me-2"></i>Payables
+        <span class="payables-badge badge bg-danger ms-1" style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
       </button>
       {% endif %}
 
@@ -1055,6 +1060,7 @@
       };
       return schedule;
     };
+    window.managementBase = {{ ('/staff' if session.get('role') == 'staff' else '/admin') | tojson }};
   </script>
 
   {% block scripts %}

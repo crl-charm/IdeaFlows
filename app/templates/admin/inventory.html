@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Inventory Management - Admin - IdeaFlow{% endblock %}
+{% block title %}Inventory Management - IdeaFlow{% endblock %}
 
 {% block content %}
 
@@ -618,7 +618,7 @@ function updateInventorySummary() {
 let inventorySummary = null;
 
 function loadInventory() {
-  fetch('/admin/inventory/api/dashboard-items')
+  fetch(`${window.managementBase}/inventory/api/dashboard-items`)
     .then(r => r.json())
     .then(data => {
       if (data.success) {
@@ -630,6 +630,7 @@ function loadInventory() {
         updateInventorySummary();
         renderDirectStock();
         renderRecipeInventory();
+        InventoryUI.refreshDailySummaries(renderRecipeInventory);
       }
     })
     .catch(() => showToast('Failed to load inventory', 'error'));
@@ -794,7 +795,7 @@ function createIngredient() {
     return;
   }
 
-  csrfFetch('/admin/inventory/api/items', {
+  csrfFetch(`${window.managementBase}/inventory/api/items`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -869,7 +870,7 @@ function resetIngredientSearch() {
 function fetchIngredientSearch(term) {
   const results = document.getElementById('ingredientSearchResults');
   const q = term ? `?q=${encodeURIComponent(term)}` : '';
-  fetch(`/admin/inventory/api/ingredients${q}`)
+  fetch(`${window.managementBase}/inventory/api/ingredients${q}`)
     .then(r => r.json())
     .then(data => {
       if (!data.success) throw new Error('Failed');
@@ -940,7 +941,7 @@ function loadRecipeIngredients(mealId) {
   const tbody = document.getElementById('ingredientsTableBody');
   tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Loading recipe ingredients...</td></tr>';
   
-  fetch(`/admin/inventory/api/recipes/${mealId}`)
+  fetch(`${window.managementBase}/inventory/api/recipes/${mealId}`)
     .then(r => r.json())
     .then(data => {
       if (data.success) {
@@ -1018,7 +1019,7 @@ function linkRecipeIngredient() {
     return;
   }
 
-  csrfFetch('/admin/inventory/api/recipes', {
+  csrfFetch(`${window.managementBase}/inventory/api/recipes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1055,7 +1056,7 @@ async function removeRecipeIngredient(recipeId, ingredientName) {
 
   if (!confirmed) return;
 
-  csrfFetch(`/admin/inventory/api/recipes/${recipeId}`, {
+  csrfFetch(`${window.managementBase}/inventory/api/recipes/${recipeId}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' }
   }).then(r => r.json()).then(data => {
@@ -1137,8 +1138,8 @@ function submitStockAdjustment() {
   }
 
   const stockUrl = currentItemId
-    ? `/admin/inventory/api/items/${currentItemId}/stock`
-    : `/admin/inventory/api/menu-items/${currentMenuItemId}/stock`;
+    ? `${window.managementBase}/inventory/api/items/${currentItemId}/stock`
+    : `${window.managementBase}/inventory/api/menu-items/${currentMenuItemId}/stock`;
 
   const saveButton = document.getElementById('saveStockAdjustment');
   saveButton.disabled = true;
@@ -1190,7 +1191,7 @@ async function deleteRawIngredient(menuItemId, ingredientName, recipeCount) {
 
   if (!confirmed) return;
 
-  csrfFetch(`/admin/inventory/api/ingredients/${menuItemId}`, {
+  csrfFetch(`${window.managementBase}/inventory/api/ingredients/${menuItemId}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' }
   }).then(r => r.json()).then(data => {
@@ -1217,12 +1218,12 @@ async function deleteRecipe(mealId, mealName) {
   if (!confirmed) return;
 
   // Fetch recipe items and delete them
-  fetch(`/admin/inventory/api/recipes/${mealId}`)
+  fetch(`${window.managementBase}/inventory/api/recipes/${mealId}`)
     .then(r => r.json())
     .then(data => {
       if (data.success) {
         const promises = data.data.map(m => 
-          csrfFetch(`/admin/inventory/api/recipes/${m.id}`, { method: 'DELETE' })
+          csrfFetch(`${window.managementBase}/inventory/api/recipes/${m.id}`, { method: 'DELETE' })
         );
         Promise.all(promises).then(() => {
           showToast('✓ Recipe mappings removed successfully', 'success');
@@ -1240,7 +1241,7 @@ function viewLogs(itemId, itemName) {
   
   new bootstrap.Modal(document.getElementById('logsModal')).show();
 
-  fetch(`/admin/inventory/api/items/${itemId}/logs`)
+  fetch(`${window.managementBase}/inventory/api/items/${itemId}/logs`)
     .then(r => r.json())
     .then(data => {
       if (data.success) {

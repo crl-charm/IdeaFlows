@@ -239,7 +239,7 @@ function setPayablesFilter(status, btn) {
 
 function loadPayables() {
   loadPayableCards();
-  fetch('/admin/payables/api/payables')
+  fetch(`${window.managementBase}/payables/api/payables`)
     .then(r => {
       if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Payables unavailable');
       return r.json();
@@ -269,7 +269,7 @@ function loadPayableCards() {
   const end = document.getElementById('paidEndDate').value;
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
-  fetch(`/admin/daily-balance/api/reports?${params}`).then(r => {
+  fetch(`${window.managementBase}/daily-balance/api/reports?${params}`).then(r => {
     if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Payment totals unavailable');
     return r.json();
   }).then(result => {
@@ -410,7 +410,7 @@ function createPayable() {
     return;
   }
 
-  csrfFetch('/admin/payables/api/payables', {
+  csrfFetch(`${window.managementBase}/payables/api/payables`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -517,7 +517,7 @@ function confirmMarkPayablePaid() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing…';
 
-  csrfFetch(`/admin/payables/api/payables/${pendingPayableId}/mark-paid`, {
+  csrfFetch(`${window.managementBase}/payables/api/payables/${pendingPayableId}/mark-paid`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
