@@ -35,6 +35,8 @@
     </div>
   </div>
 
+  <div id="daily-balance-load-error" class="alert alert-danger" role="alert" hidden></div>
+
   <!-- Date Filter Section -->
   <div class="card mb-4 border-0 shadow-sm" style="background-color: #f8fafc; border-radius: 12px;">
     <div class="card-body p-3">
@@ -320,6 +322,15 @@ let reportsCache = [];
 let softBalancesCache = [];
 let reportsRequest = 0;
 let lastManilaToday = '';
+const failedBalanceLoads = new Set();
+
+function setBalanceLoadFailure(section, failed) {
+  if (failed) failedBalanceLoads.add(section);
+  else failedBalanceLoads.delete(section);
+  const banner = document.getElementById('daily-balance-load-error');
+  banner.hidden = failedBalanceLoads.size === 0;
+  banner.textContent = banner.hidden ? '' : `Could not load ${Array.from(failedBalanceLoads).join(', ')}. Please refresh the page.`;
+}
 
 document.addEventListener('DOMContentLoaded', function() {
   // Set default filter date range to today's local date
@@ -333,9 +344,13 @@ document.addEventListener('DOMContentLoaded', function() {
   loadSoftBalances();
   const socket = window.getIdeaFlowSocket();
   if (socket) {
-    const refresh = window.createDebouncedRefresh(loadReports, 250);
+    const refresh = window.createDebouncedRefresh(function () {
+      loadReports();
+      loadSoftBalances();
+    }, 250);
     socket.on('daily_balance_update', refresh);
     socket.on('session_checked_out', refresh);
+    socket.on('connect', refresh);
   }
   
   // Refresh when a network event was missed.
@@ -384,31 +399,32 @@ function loadReports() {
   const end = document.getElementById('filterEndDate').value;
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
-  fetch(`${window.managementBase}/daily-balance/api/reports?${params}`, { credentials: 'include' }).then(r => {
-    if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Reports unavailable');
-    return r.json();
-  }).then(data => {
+  fetchJSON(`${window.managementBase}/daily-balance/api/reports?${params}`).then(data => {
     if (requestNumber !== reportsRequest) return;
-    if (data.success) {
-      reportsCache = data.data;
-      renderFilteredReports();
-    }
-  }).catch(() => showToast('Could not refresh Daily Balance', 'error'));
+    if (!data.success) throw new Error('Reports unavailable');
+    reportsCache = data.data;
+    renderFilteredReports();
+    setBalanceLoadFailure('Daily Balance reports', false);
+  }).catch(() => {
+    if (requestNumber !== reportsRequest) return;
+    setBalanceLoadFailure('Daily Balance reports', true);
+    showToast('Could not refresh Daily Balance', 'error');
+  });
 
   // Load today's live stats immediately
-  fetch(`${window.managementBase}/daily-balance/api/today-stats`, { credentials: 'include' }).then(r => {
-    if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Today totals unavailable');
-    return r.json();
-  }).then(res => {
-    if (res.success) {
-      const stats = res.data;
-      document.getElementById('today-receivables-collected').textContent = stats.receivables_collected_today.toFixed(2);
-      document.getElementById('today-receivables-count').textContent = stats.receivables_paid_today;
-      document.getElementById('today-cash-on-hand').textContent = stats.cash_on_hand.toFixed(2);
-      document.getElementById('today-expected-collections').textContent = stats.expected_to_collect.toFixed(2);
-      document.getElementById('today-expected-cash').textContent = stats.expected_cash_on_hand.toFixed(2);
-    }
-  }).catch(() => showToast('Could not refresh today\'s totals', 'error'));
+  fetchJSON(`${window.managementBase}/daily-balance/api/today-stats`).then(res => {
+    if (!res.success) throw new Error('Today totals unavailable');
+    const stats = res.data;
+    document.getElementById('today-receivables-collected').textContent = stats.receivables_collected_today.toFixed(2);
+    document.getElementById('today-receivables-count').textContent = stats.receivables_paid_today;
+    document.getElementById('today-cash-on-hand').textContent = stats.cash_on_hand.toFixed(2);
+    document.getElementById('today-expected-collections').textContent = stats.expected_to_collect.toFixed(2);
+    document.getElementById('today-expected-cash').textContent = stats.expected_cash_on_hand.toFixed(2);
+    setBalanceLoadFailure('today\'s totals', false);
+  }).catch(() => {
+    setBalanceLoadFailure('today\'s totals', true);
+    showToast('Could not refresh today\'s totals', 'error');
+  });
 
 }
 
@@ -516,14 +532,16 @@ function renderFilteredReports() {
 }
 
 function loadSoftBalances() {
-  fetch(`${window.managementBase}/daily-balance/api/soft-balances`, { credentials: 'include' }).then(r => r.json()).then(data => {
-    if (data.success) {
-      softBalancesCache = data.data;
-      // Trigger soft balances filter rendering
-      const startDateVal = document.getElementById('filterStartDate').value;
-      const endDateVal = document.getElementById('filterEndDate').value;
-      renderFilteredSoftBalances(startDateVal, endDateVal);
-    }
+  fetchJSON(`${window.managementBase}/daily-balance/api/soft-balances`).then(data => {
+    if (!data.success) throw new Error('Soft balances unavailable');
+    softBalancesCache = data.data;
+    const startDateVal = document.getElementById('filterStartDate').value;
+    const endDateVal = document.getElementById('filterEndDate').value;
+    renderFilteredSoftBalances(startDateVal, endDateVal);
+    setBalanceLoadFailure('soft balances', false);
+  }).catch(() => {
+    setBalanceLoadFailure('soft balances', true);
+    showToast('Could not refresh soft balances', 'error');
   });
 }
 

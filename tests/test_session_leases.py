@@ -221,6 +221,39 @@ def test_second_browser_is_blocked_and_logout_releases_account(app):
     assert _login(second_browser).status_code == 200
 
 
+def test_socket_disconnect_keeps_staff_pages_and_other_device_blocked(app):
+    _enable_single_session(app)
+    first_browser = app.test_client()
+    second_browser = app.test_client()
+    assert _login(first_browser).status_code == 200
+
+    socket = socketio.test_client(app, flask_test_client=first_browser)
+    assert socket.is_connected()
+    socket.disconnect()
+    assert first_browser.get("/api/session-status").status_code == 200
+    assert _login(second_browser).status_code == 409
+
+    reconnected = socketio.test_client(app, flask_test_client=first_browser)
+    assert reconnected.is_connected()
+    for path in (
+        "/staff/menu",
+        "/staff/inventory",
+        "/staff/daily-balance",
+        "/expenses-view",
+        "/staff/payables",
+    ):
+        assert first_browser.get(path).status_code == 200, path
+    for path in (
+        "/staff/menu/api/items/all",
+        "/staff/inventory/api/dashboard-items",
+        "/staff/daily-balance/api/today-stats",
+        "/expenses-view/api/expenses",
+        "/staff/payables/api/payables",
+    ):
+        assert first_browser.get(path).status_code == 200, path
+    reconnected.disconnect()
+
+
 def test_admin_account_can_sign_in_on_two_devices(app):
     _enable_single_session(app)
     with app.app_context():

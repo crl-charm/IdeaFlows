@@ -559,12 +559,15 @@ function escapeJsString(text) {
 }
 
 // Socket.IO for real-time updates
-const socket = window.getIdeaFlowSocket();
 const refreshInventory = window.createDebouncedRefresh(loadInventory, 150);
-
-if (socket) socket.on('inventory_update', refreshInventory);
-if (socket) socket.on('connect', refreshInventory);
-if (socket) socket.on('menu_update', refreshInventory);
+try {
+  const socket = window.getIdeaFlowSocket();
+  if (socket) socket.on('inventory_update', refreshInventory);
+  if (socket) socket.on('connect', refreshInventory);
+  if (socket) socket.on('menu_update', refreshInventory);
+} catch (error) {
+  console.warn('Real-time inventory updates are unavailable.', error);
+}
 window.addEventListener('inventory-changed', refreshInventory);
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -616,24 +619,39 @@ function updateInventorySummary() {
 }
 
 let inventorySummary = null;
+let inventoryLoadError = null;
 
 function loadInventory() {
-  fetch(`${window.managementBase}/inventory/api/dashboard-items`)
-    .then(r => r.json())
+  fetchJSON(`${window.managementBase}/inventory/api/dashboard-items`)
     .then(data => {
-      if (data.success) {
-        directStockItems = data.direct_stock || [];
-        recipeItems = data.data || [];
-        InventoryUI.setMeals(recipeItems);
-        document.getElementById('setupReviewCount').textContent = recipeItems.filter(item => item.setup_review).length;
-        inventorySummary = data.summary || null;
-        updateInventorySummary();
-        renderDirectStock();
-        renderRecipeInventory();
-        InventoryUI.refreshDailySummaries(renderRecipeInventory);
-      }
+      if (!data.success) throw new Error('Inventory could not be loaded.');
+      inventoryLoadError = null;
+      directStockItems = data.direct_stock || [];
+      recipeItems = data.data || [];
+      InventoryUI.setMeals(recipeItems);
+      document.getElementById('setupReviewCount').textContent = recipeItems.filter(item => item.setup_review).length;
+      inventorySummary = data.summary || null;
+      updateInventorySummary();
+      renderDirectStock();
+      renderRecipeInventory();
+      InventoryUI.refreshDailySummaries(renderRecipeInventory);
     })
-    .catch(() => showToast('Failed to load inventory', 'error'));
+    .catch(error => {
+      const message = error.status === 403 ? 'Inventory access denied.' : 'Inventory could not be loaded. Please refresh the page.';
+      inventoryLoadError = message;
+      directStockItems = [];
+      recipeItems = [];
+      inventorySummary = null;
+      if (window.InventoryUI) InventoryUI.setMeals([]);
+      for (const id of ['setupReviewCount', 'lowStockCount', 'noStockCount', 'totalMenuItemsCount']) {
+        document.getElementById(id).textContent = '—';
+      }
+      document.getElementById('directStockEmpty').style.display = 'none';
+      document.getElementById('recipeEmpty').style.display = 'none';
+      document.getElementById('direct-stock-grid').textContent = message;
+      document.getElementById('recipe-inventory-grid').textContent = message;
+      showToast(message, 'error');
+    });
 }
 
 function filterDirectStockItems(items) {
@@ -734,6 +752,11 @@ function renderDirectStockCard(item) {
 function renderDirectStock() {
   const grid = document.getElementById('direct-stock-grid');
   const empty = document.getElementById('directStockEmpty');
+  if (inventoryLoadError) {
+    empty.style.display = 'none';
+    grid.textContent = inventoryLoadError;
+    return;
+  }
   const filtered = filterDirectStockItems(directStockItems);
 
   updateInventorySummary();
@@ -757,6 +780,11 @@ function renderDirectStock() {
 
 function renderRecipeInventory() {
   const grid = document.getElementById('recipe-inventory-grid');
+  if (inventoryLoadError) {
+    document.getElementById('recipeEmpty').style.display = 'none';
+    grid.textContent = inventoryLoadError;
+    return;
+  }
   const filtered = filterRecipeItems(recipeItems);
   document.getElementById('recipeEmpty').style.display = recipeItems.length ? 'none' : 'block';
   grid.innerHTML = filtered.map(item => {

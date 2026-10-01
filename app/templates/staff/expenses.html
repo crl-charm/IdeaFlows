@@ -138,7 +138,7 @@ function manilaExpenseDate() {
 }
 const refreshExpenses = window.createDebouncedRefresh(loadExpenses, 150);
 let expensesCache = [];
-let reportsCache = [];
+let reportsCache = null;
 let expenseLoadId = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -164,6 +164,7 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshExpenses();
       });
       socket.on('daily_balance_update', refreshExpenses);
+      socket.on('connect', refreshExpenses);
     } catch (e) {
       console.warn('Socket connection note:', e);
     }
@@ -177,17 +178,24 @@ function loadExpenses() {
   const end = document.getElementById('filterEndDate').value;
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
-  Promise.all([
-    fetch('/expenses-view/api/expenses').then(r => r.json()),
-    fetch(`${window.managementBase}/daily-balance/api/reports?${params}`).then(r => r.json())
-  ]).then(([expenses, reports]) => {
+  Promise.allSettled([
+    fetchJSON('/expenses-view/api/expenses'),
+    fetchJSON(`${window.managementBase}/daily-balance/api/reports?${params}`)
+  ]).then(([expensesResult, reportsResult]) => {
     if (requestId !== expenseLoadId) return;
-    if (!expenses.success || !reports.success) throw new Error('Could not load expenses');
-    expensesCache = expenses.data;
-    reportsCache = reports.data;
+    if (expensesResult.status === 'rejected') throw expensesResult.reason;
+    if (!expensesResult.value.success) throw new Error('Could not load expenses');
+    expensesCache = expensesResult.value.data;
+    reportsCache = reportsResult.status === 'fulfilled' && reportsResult.value.success ? reportsResult.value.data : null;
     renderExpenses();
-  }).catch(() => {
-    if (requestId === expenseLoadId) showToast('Could not load expense history and totals.', 'error');
+    if (reportsCache === null) showToast('Expense totals could not be loaded.', 'error');
+  }).catch(error => {
+    if (requestId !== expenseLoadId) return;
+    const message = error.status === 403 ? 'Expenses access denied.' : 'Expense history could not be loaded. Please refresh the page.';
+    expensesCache = [];
+    document.getElementById('expenses-table-body').innerHTML = `<tr><td colspan="7" class="text-danger text-center">${message}</td></tr>`;
+    document.getElementById('expenses-card-container').textContent = message;
+    showToast(message, 'error');
   });
 }
 
@@ -205,7 +213,11 @@ function renderExpenses() {
   const filtered = expensesCache.filter(exp => inRange(exp.business_date) || inRange(exp.void_business_date));
   const today = manilaExpenseDate();
   document.getElementById('expense-count').textContent = `${filtered.length} record(s)`;
-  window.renderExpenseCards(reportsCache, start, end, document.getElementById('expense-method-cards'));
+  if (reportsCache === null) {
+    document.getElementById('expense-method-cards').textContent = 'Expense totals unavailable.';
+  } else {
+    window.renderExpenseCards(reportsCache, start, end, document.getElementById('expense-method-cards'));
+  }
   const tbody = document.getElementById('expenses-table-body');
   const cards = document.getElementById('expenses-card-container');
   tbody.innerHTML = filtered.map(exp => {

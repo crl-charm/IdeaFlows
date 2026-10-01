@@ -203,6 +203,7 @@
 {% block scripts %}
 <script>
 let payablesCache = [];
+let payablesLoadError = null;
 let pendingPayableId = null;
 let markPayableModalInstance = null;
 let activePayableFilter = "All";
@@ -221,7 +222,11 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('paidEndDate').value = today;
   loadPayables();
   const socket = window.getIdeaFlowSocket();
-  if (socket) socket.on('daily_balance_update', window.createDebouncedRefresh(loadPayables, 150));
+  if (socket) {
+    const refresh = window.createDebouncedRefresh(loadPayables, 150);
+    socket.on('daily_balance_update', refresh);
+    socket.on('connect', refresh);
+  }
   
   const markModalEl = document.getElementById('markPayablePaidModal');
   if (markModalEl) {
@@ -239,19 +244,19 @@ function setPayablesFilter(status, btn) {
 
 function loadPayables() {
   loadPayableCards();
-  fetch(`${window.managementBase}/payables/api/payables`)
-    .then(r => {
-      if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Payables unavailable');
-      return r.json();
-    })
+  fetchJSON(`${window.managementBase}/payables/api/payables`)
     .then(data => {
-      if (data.success) {
-        payablesCache = data.data;
-        renderPayables();
-      }
+      if (!data.success) throw new Error('Payables unavailable');
+      payablesLoadError = null;
+      payablesCache = data.data;
+      renderPayables();
     })
-    .catch(() => {
-      showToast('Error loading payables', 'error');
+    .catch(error => {
+      const message = error.status === 403 ? 'Payables access denied.' : 'Payables could not be loaded. Please refresh the page.';
+      payablesLoadError = message;
+      payablesCache = [];
+      renderPayables();
+      showToast(message, 'error');
     });
 }
 
@@ -269,10 +274,7 @@ function loadPayableCards() {
   const end = document.getElementById('paidEndDate').value;
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
-  fetch(`${window.managementBase}/daily-balance/api/reports?${params}`).then(r => {
-    if (!r.ok || !r.headers.get('content-type')?.includes('application/json')) throw new Error('Payment totals unavailable');
-    return r.json();
-  }).then(result => {
+  fetchJSON(`${window.managementBase}/daily-balance/api/reports?${params}`).then(result => {
     if (requestId !== payableCardRequestId) return;
     if (!result.success) throw new Error('Could not load payment totals');
     const methods = [['cash', 'Cash'], ['gcash', 'GCash'], ['bdo', 'BDO'],
@@ -293,7 +295,9 @@ function loadPayableCards() {
     document.getElementById('payable-method-cards').innerHTML = card('All methods · supplier paid', overall) +
       rows.filter(row => row.key !== 'unclassified' || row.paid).map(row => card(row.label, row)).join('');
   }).catch(() => {
-    if (requestId === payableCardRequestId) showToast('Could not load supplier payment totals.', 'error');
+    if (requestId !== payableCardRequestId) return;
+    document.getElementById('payable-method-cards').textContent = 'Supplier payment totals unavailable.';
+    showToast('Could not load supplier payment totals.', 'error');
   });
 }
 
@@ -302,6 +306,14 @@ function renderPayables() {
   const cardContainer = document.getElementById('payables-card-container');
   tbody.innerHTML = '';
   cardContainer.innerHTML = '';
+  if (payablesLoadError) {
+    document.getElementById('payables-count').textContent = 'Records unavailable';
+    document.getElementById('total-unpaid-payables').textContent = '—';
+    document.getElementById('unpaid-payables-count').textContent = '—';
+    tbody.innerHTML = `<tr><td colspan="8" class="text-danger text-center">${payablesLoadError}</td></tr>`;
+    cardContainer.textContent = payablesLoadError;
+    return;
+  }
 
   let totalUnpaid = 0;
   let unpaidCount = 0;

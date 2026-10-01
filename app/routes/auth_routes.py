@@ -171,7 +171,7 @@ def login_api():
                     return jsonify({
                         "error": (
                             "This account is already signed in on another device. "
-                            "Log out there first or wait about two minutes."
+                            "Log out there first or wait for that session to expire."
                         ),
                         "code": "account_already_active",
                     }), 409

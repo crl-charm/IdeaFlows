@@ -900,8 +900,13 @@
       try {
         data = await response.json();
       } catch (_) {
-        data = {};
+        if (response.ok) {
+          const error = new Error('The server returned an invalid response. Please refresh the page.');
+          error.status = response.status;
+          throw error;
+        }
       }
+      if (response.status === 401) window.location.href = '/login';
       if (!response.ok) {
         const error = new Error(data.message || data.error || 'The request could not be completed.');
         error.status = response.status;
@@ -914,6 +919,28 @@
   </script>
 
   <script>
+    window.managementBase = {{ ('/staff' if session.get('role') == 'staff' else '/admin') | tojson }};
+
+    /** Coalesce a burst of local and Socket.IO refresh requests into one call. */
+    window.createDebouncedRefresh = function createDebouncedRefresh(fn, delayMs) {
+      let timer = null;
+      let latestArgs = [];
+      const delay = Math.max(0, Number(delayMs) || 150);
+      function schedule() {
+        latestArgs = Array.from(arguments);
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(function () {
+          timer = null;
+          fn.apply(null, latestArgs);
+        }, delay);
+      }
+      schedule.cancel = function () {
+        if (timer) window.clearTimeout(timer);
+        timer = null;
+      };
+      return schedule;
+    };
+
     window.createSmartPoller = function createSmartPoller(fn, intervalMs, opts) {
       opts = opts || {};
       const runImmediately = opts.runImmediately !== false;
@@ -960,15 +987,22 @@
         console.warn("Real-time updates are unavailable; page refreshes will still work.");
         return null;
       }
-      window.__ideaFlowSocket = window.io({
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 10000,
-        randomizationFactor: 0.5
-      });
+      try {
+        window.__ideaFlowSocket = window.io({
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 10000,
+          randomizationFactor: 0.5
+        });
+      } catch (error) {
+        console.warn("Real-time updates are unavailable; page refreshes will still work.", error);
+        return null;
+      }
       return window.__ideaFlowSocket;
     };
+  </script>
 
+  <script>
     {% if config.SINGLE_SESSION_ENABLED %}
     const sessionSocket = window.getIdeaFlowSocket();
     if (sessionSocket) {
@@ -1041,26 +1075,6 @@
     }
     {% endif %}
 
-    /** Coalesce a burst of local and Socket.IO refresh requests into one call. */
-    window.createDebouncedRefresh = function createDebouncedRefresh(fn, delayMs) {
-      let timer = null;
-      let latestArgs = [];
-      const delay = Math.max(0, Number(delayMs) || 150);
-      function schedule() {
-        latestArgs = Array.from(arguments);
-        if (timer) window.clearTimeout(timer);
-        timer = window.setTimeout(function () {
-          timer = null;
-          fn.apply(null, latestArgs);
-        }, delay);
-      }
-      schedule.cancel = function () {
-        if (timer) window.clearTimeout(timer);
-        timer = null;
-      };
-      return schedule;
-    };
-    window.managementBase = {{ ('/staff' if session.get('role') == 'staff' else '/admin') | tojson }};
   </script>
 
   {% block scripts %}

@@ -595,89 +595,85 @@
   let currentItemId = null;
   let originalRecipeHadRows = false;
   let allItems = [];
+  let menuLoadError = null;
   let currentFilter = 'All';
   let CATEGORIES = [];
   const refreshMenu = window.createDebouncedRefresh(function () {
-    loadCategories(loadItems);
+    loadCategories();
+    loadItems();
   }, 150);
 
   // Socket.IO for real-time updates
-  const socket = window.getIdeaFlowSocket();
-
-  if (socket) socket.on('menu_update', function (data) {
-    refreshMenu();
-    if (data.event === 'create') {
-      showToast('✓ New menu item added!', 'success');
-    } else if (data.event === 'update') {
-      showToast('✓ Menu item updated!', 'success');
-    } else if (data.event === 'delete') {
-      showToast('✓ Menu item deleted!', 'success');
-    } else if (data.event === 'availability_toggle') {
-      showToast('✓ Item availability toggled!', 'success');
-    } else if (data.event === 'create_category') {
-      showToast('✓ New category added!', 'success');
-    }
-  });
-  if (socket) socket.on('inventory_update', refreshMenu);
-
-  if (socket) socket.on('connect', function () {
-    console.log('Connected to server for real-time updates');
-  });
-
-  if (socket) socket.on('disconnect', function () {
-    console.log('Disconnected from server');
-  });
-
-  document.addEventListener('DOMContentLoaded', function () {
-    loadCategories(function() {
-      loadItems();
-      setupImagePreviews();
-    });
-  });
-
-  function loadCategories(callback) {
-    fetch(`${window.managementBase}/menu/api/categories`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success) {
-          CATEGORIES = data.data;
-          
-          // Re-render tabs
-          const container = document.getElementById('categoryTabs');
-          if (container) {
-            container.innerHTML = `<div class="category-tab ${currentFilter === 'All' ? 'active' : ''}" data-category="All">All Items</div>`;
-            CATEGORIES.forEach(cat => {
-              const tab = document.createElement('div');
-              tab.className = `category-tab ${currentFilter === cat ? 'active' : ''}`;
-              tab.textContent = cat;
-              tab.dataset.category = cat;
-              container.appendChild(tab);
-            });
-            setupEventListeners();
-          }
-          
-          // Populate select dropdowns
-          const populateSelect = (selectId) => {
-            const select = document.getElementById(selectId);
-            if (select) {
-              const val = select.value; // save selection
-              select.innerHTML = '<option value="">Select category...</option>';
-              CATEGORIES.forEach(cat => {
-                const opt = document.createElement('option');
-                opt.value = cat;
-                opt.textContent = cat;
-                select.appendChild(opt);
-              });
-              select.value = val;
-            }
-          };
-          
-          populateSelect('category');
-          populateSelect('editCategory');
-          
-          if (callback) callback();
+  try {
+    const socket = window.getIdeaFlowSocket();
+    if (socket) {
+      socket.on('menu_update', function (data) {
+        refreshMenu();
+        if (data.event === 'create') {
+          showToast('✓ New menu item added!', 'success');
+        } else if (data.event === 'update') {
+          showToast('✓ Menu item updated!', 'success');
+        } else if (data.event === 'delete') {
+          showToast('✓ Menu item deleted!', 'success');
+        } else if (data.event === 'availability_toggle') {
+          showToast('✓ Item availability toggled!', 'success');
+        } else if (data.event === 'create_category') {
+          showToast('✓ New category added!', 'success');
         }
       });
+      socket.on('inventory_update', refreshMenu);
+      socket.on('connect', refreshMenu);
+    }
+  } catch (error) {
+    console.warn('Real-time menu updates are unavailable.', error);
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    loadCategories();
+    loadItems();
+    setupImagePreviews();
+  });
+
+  function loadCategories() {
+    fetchJSON(`${window.managementBase}/menu/api/categories`)
+      .then(data => {
+        if (!data.success) throw new Error('Menu categories unavailable');
+        CATEGORIES = data.data;
+
+        // Re-render tabs
+        const container = document.getElementById('categoryTabs');
+        if (container) {
+          container.innerHTML = `<div class="category-tab ${currentFilter === 'All' ? 'active' : ''}" data-category="All">All Items</div>`;
+          CATEGORIES.forEach(cat => {
+            const tab = document.createElement('div');
+            tab.className = `category-tab ${currentFilter === cat ? 'active' : ''}`;
+            tab.textContent = cat;
+            tab.dataset.category = cat;
+            container.appendChild(tab);
+          });
+          setupEventListeners();
+        }
+
+        // Populate select dropdowns
+        const populateSelect = (selectId) => {
+          const select = document.getElementById(selectId);
+          if (select) {
+            const val = select.value; // save selection
+            select.innerHTML = '<option value="">Select category...</option>';
+            CATEGORIES.forEach(cat => {
+              const opt = document.createElement('option');
+              opt.value = cat;
+              opt.textContent = cat;
+              select.appendChild(opt);
+            });
+            select.value = val;
+          }
+        };
+
+        populateSelect('category');
+        populateSelect('editCategory');
+      })
+      .catch(err => showToast(err.status === 403 ? 'Menu access denied.' : 'Could not load menu categories.', 'error'));
   }
 
   function createCategory() {
@@ -783,19 +779,30 @@
   }
 
   function loadItems() {
-    fetch(`${window.managementBase}/menu/api/items/all`, { credentials: 'include' })
-      .then(parseMenuResponse)
+    fetchJSON(`${window.managementBase}/menu/api/items/all`)
       .then(data => {
+        if (!data.success) throw new Error('Menu items unavailable');
+        menuLoadError = null;
         allItems = data.data;
         filterAndRender();
       })
       .catch(err => {
         console.error('Load items error:', err);
-        showToast('✗ ' + err.message, 'error');
+        const message = err.status === 403 ? 'Menu access denied.' : 'Menu items could not be loaded. Please refresh the page.';
+        menuLoadError = message;
+        allItems = [];
+        document.getElementById('emptyState').style.display = 'none';
+        document.getElementById('menuGrid').textContent = message;
+        showToast(message, 'error');
       });
   }
 
   function filterAndRender() {
+    if (menuLoadError) {
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('menuGrid').textContent = menuLoadError;
+      return;
+    }
     const searchQuery = document.getElementById('searchInput').value.toLowerCase();
     const variantsBtn = document.getElementById('btnAddVariants');
     if (variantsBtn) {
