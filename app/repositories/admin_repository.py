@@ -10,10 +10,17 @@ from app.models import Admin, CustomerSession, Order, OrderItem, SpaceType, Staf
 from app.models.space_price_history import SpacePriceHistory
 
 
+STAFF_RECOVERY_WINDOW = timedelta(hours=24)
+
+
 class AdminRepository:
-    def list_staff_paginated(self, page: int, per_page: int):
+    def list_staff_paginated(self, page: int, per_page: int, *, active: bool = True):
+        query = User.query.filter_by(role="staff", is_active=active)
+        if not active:
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - STAFF_RECOVERY_WINDOW
+            query = query.filter(User.deactivated_at > cutoff)
         return (
-            User.query.filter_by(role="staff", is_active=True)
+            query
             .order_by(User.created_at.desc())
             .paginate(page=page, per_page=per_page, error_out=False)
         )
@@ -48,8 +55,8 @@ class AdminRepository:
         if rows:
             db.session.commit()
 
-    def get_staff_user(self, user_id: int):
-        return User.query.filter_by(id=user_id, role="staff", is_active=True).first()
+    def get_staff_user(self, user_id: int, *, active: bool = True):
+        return User.query.filter_by(id=user_id, role="staff", is_active=active).first()
 
     def username_exists_for_other(self, username: str, user_id: int) -> bool:
         existing_user = User.query.filter_by(username=username).first()
@@ -60,6 +67,7 @@ class AdminRepository:
 
     def deactivate_staff(self, user: User, ended_at: datetime) -> None:
         user.is_active = False
+        user.deactivated_at = ended_at
         for row in StaffAttendance.query.filter_by(user_id=user.id, time_out=None).all():
             row.time_out = ended_at
 

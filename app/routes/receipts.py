@@ -20,9 +20,14 @@ def view_receipt(session_id: int) -> str:
     if not sess:
         return render_template("error.html", message="Session not found"), 404
 
-    food_only = sess.service_mode == "food_only"
-    time_diff = sess.time_out - sess.time_in if sess.time_out and not food_only else None
-    duration_min = int(time_diff.total_seconds() / 60) if time_diff else 0
+    tx = _repo.get_latest_transaction_for_session(session_id, include_voided=True)
+    food_only = (tx.service_mode_snapshot if tx else sess.service_mode) == "food_only"
+    time_in_dt = (tx.billing_start_at if tx else None) or sess.time_in
+    time_out_dt = (tx.billing_end_at if tx else None) or sess.time_out
+    time_diff = time_out_dt - time_in_dt if time_out_dt and not food_only else None
+    duration_min = (tx.billable_microseconds // 60_000_000
+                    if tx and tx.billable_microseconds is not None
+                    else int(time_diff.total_seconds() / 60) if time_diff else 0)
 
     orders = _repo.get_orders_for_session(session_id) or []
 
@@ -31,7 +36,6 @@ def view_receipt(session_id: int) -> str:
     space_rate = sess.space_type.rate_per_minute if sess.space_type else 0
     time_bill = float(duration_min * space_rate) if space_rate and not food_only else 0
 
-    tx = _repo.get_latest_transaction_for_session(session_id, include_voided=True)
     if tx:
         time_bill = float(tx.time_bill)
         total_food = float(tx.food_bill)
@@ -49,8 +53,8 @@ def view_receipt(session_id: int) -> str:
         customer_name=sess.customer_name,
         space_name=sess.space_type.name if sess.space_type else "Unknown",
         food_only=food_only,
-        time_in=(sess.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"),
-        time_out=(sess.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S") if sess.time_out else "N/A",
+        time_in=(time_in_dt + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"),
+        time_out=(time_out_dt + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S") if time_out_dt else "N/A",
         duration_minutes=duration_min,
         time_bill=time_bill,
         food_bill=total_food,

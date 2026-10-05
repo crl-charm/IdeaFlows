@@ -170,7 +170,7 @@ class SessionRepository:
         )
 
     def list_transactions_paginated(self, page: int, per_page: int, *, date_from=None, date_to=None,
-                                    payment_method: str = ""):
+                                    payment_method: str = "", search: str = "", status: str = ""):
         query = Transaction.query.options(
             selectinload(Transaction.session).selectinload(CustomerSession.space_type),
             selectinload(Transaction.void_requests),
@@ -186,7 +186,22 @@ class SessionRepository:
                                          Transaction.payment_method.is_(None)))
             else:
                 query = query.filter(stored_method == payment_method)
-        return query.order_by(Transaction.created_at.desc()).paginate(
+        if search:
+            query = query.join(CustomerSession, Transaction.session_id == CustomerSession.id).filter(
+                func.lower(func.coalesce(func.nullif(Transaction.customer_name_snapshot, ""), CustomerSession.customer_name))
+                .contains(search.lower(), autoescape=True)
+            )
+        if status == "pending_void":
+            query = query.filter(Transaction.is_voided.is_(False), Transaction.void_requests.any(
+                CheckoutVoidRequest.status == "pending"
+            ))
+        elif status == "completed":
+            query = query.filter(Transaction.is_voided.is_(False), ~Transaction.void_requests.any(
+                CheckoutVoidRequest.status == "pending"
+            ))
+        elif status == "voided":
+            query = query.filter(Transaction.is_voided.is_(True))
+        return query.order_by(Transaction.created_at.desc(), Transaction.id.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         )
 

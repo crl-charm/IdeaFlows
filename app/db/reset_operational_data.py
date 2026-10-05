@@ -41,6 +41,7 @@ RESET_TABLES = {
     "soft_balance_entries",
     "space_price_history",
     "space_types",
+    "session_time_events",
     "staff_attendance",
     "staff_shifts",
     "staff_performance_logs",

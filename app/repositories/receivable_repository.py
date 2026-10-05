@@ -13,7 +13,68 @@ from app.models.receivable import Receivable, ReceivablePayment, ReceivableTab
 from app.utils.dates import manila_date, manila_day_bounds
 
 
+class ReceivableTabConflict(ValueError):
+    pass
+
+
 class ReceivableRepository:
+    def suggest_customers(self, search: str, limit: int = 15) -> list[dict]:
+        name, contact, _ = ReceivableTab.identity(search, search)
+        latest_id = func.max(ReceivableTab.id)
+        open_id = func.max(case((ReceivableTab.closed_at.is_(None), ReceivableTab.id)))
+        identities = (db.session.query(
+            ReceivableTab.normalized_name, ReceivableTab.normalized_contact,
+            latest_id.label("latest_id"), open_id.label("open_id"),
+        ).filter(or_(ReceivableTab.normalized_name.contains(name, autoescape=True),
+                     ReceivableTab.normalized_contact.contains(contact, autoescape=True)))
+            .group_by(ReceivableTab.normalized_name, ReceivableTab.normalized_contact)
+            .order_by(case((ReceivableTab.normalized_name == name, 0),
+                           (ReceivableTab.normalized_contact == contact, 1), else_=2),
+                      latest_id.desc()).limit(limit).all())
+        ids = {tab_id for row in identities for tab_id in (row.latest_id, row.open_id) if tab_id}
+        tabs = {tab.id: tab for tab in ReceivableTab.query.filter(ReceivableTab.id.in_(ids)).all()} if ids else {}
+        blank_names = [row.normalized_name for row in identities if not row.normalized_contact and row.open_id]
+        blank_open = (ReceivableTab.query.filter(ReceivableTab.normalized_name.in_(blank_names),
+                                               ReceivableTab.normalized_contact == "",
+                                               ReceivableTab.closed_at.is_(None))
+                      .order_by(ReceivableTab.id.desc()).limit(limit).all()) if blank_names else []
+
+        matches = []
+        seen = set()
+        def add(tab, open_tab_id=None, *, legacy=False):
+            identity = ReceivableTab.identity(tab.customer_name, tab.customer_contact)[:2]
+            key = (identity, open_tab_id if not identity[1] else None)
+            if key in seen:
+                return
+            seen.add(key)
+            matches.append({"customer_name": tab.customer_name,
+                            "customer_contact": tab.customer_contact or "",
+                            "open_tab_id": open_tab_id,
+                            "label": f"Open tab #{open_tab_id}" if open_tab_id else
+                                     ("Customer record—new tab" if legacy else "Past customer—new tab"),
+                            "_score": 0 if identity[0] == name else 1 if identity[1] == contact else 2,
+                            "_seen_at": getattr(tab, "opened_at", None) or getattr(tab, "created_at", None) or datetime.min})
+
+        tab_identities = {(row.normalized_name, row.normalized_contact) for row in identities}
+        for row in identities:
+            if not row.normalized_contact and row.open_id:
+                for tab in blank_open:
+                    if tab.normalized_name == row.normalized_name:
+                        add(tab, tab.id)
+            else:
+                add(tabs[row.open_id or row.latest_id], row.open_id)
+
+        # ponytail: legacy rows are normally backfilled; index normalized fields if this scan grows.
+        legacy_rows = Receivable.query.filter(Receivable.tab_id.is_(None)).order_by(Receivable.id.desc()).all()
+        for row in legacy_rows:
+            row_name, row_contact, _ = ReceivableTab.identity(row.customer_name, row.customer_contact)
+            if (row_name, row_contact) not in tab_identities and (name in row_name or contact in row_contact):
+                add(row, legacy=True)
+        matches.sort(key=lambda row: row["_seen_at"], reverse=True)
+        matches.sort(key=lambda row: row["_score"])
+        return [{key: value for key, value in row.items() if not key.startswith("_")}
+                for row in matches[:limit]]
+
     @staticmethod
     def _search_filter(search: str, *, tabs: bool = False):
         fields = [Receivable.customer_name, Receivable.customer_contact, Receivable.items_description]
@@ -154,7 +215,7 @@ class ReceivableRepository:
         if tab_id is not None:
             tab = ReceivableTab.query.filter_by(id=tab_id).with_for_update().first()
             if not tab or tab.closed_at is not None:
-                raise ValueError("This customer tab is closed. Refresh and choose an open tab.")
+                raise ReceivableTabConflict("This customer tab is closed. Refresh and choose an open tab.")
             if (tab.normalized_name, tab.normalized_contact) != (normalized_name, normalized_contact):
                 raise ValueError("The selected customer tab does not match the name and contact.")
         else:

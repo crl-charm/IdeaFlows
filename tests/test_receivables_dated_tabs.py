@@ -7,10 +7,11 @@ import pytest
 
 from app import create_app, db
 from app.db.migrator import SchemaMigrator
-from app.models import Receivable, ReceivablePayment, ReceivableTab
+from app.models import Admin, Receivable, ReceivablePayment, ReceivableTab
 from app.repositories.receivable_repository import ReceivableRepository
 from app.repositories.sales_repository import SalesRepository
 from app.services.receivable_service import ReceivableService
+from app.utils.dates import manila_date
 import app.services.receivable_service as service_module
 
 
@@ -179,3 +180,124 @@ def test_backdated_debt_collection_reconciles_on_payment_day(app, monkeypatch):
         assert paid_day["collection_methods"]["gcash"] == 75
         assert paid_day["total_collections"] == paid_day["net_balance"] == 75
         assert paid_day["total_revenue"] == 0
+
+
+def test_customer_suggestions_include_old_paid_and_ambiguous_customers(app):
+    with app.app_context():
+        paid = create(" Ana  Cruz ", "0911 123", "Coffee", 20, "2026-09-29")
+        active = create("ana cruz", "0922", "Bread", 30, "2026-09-30")
+        no_contact_one = create("Ana Cruz", "", "Tea", 10, "2026-09-29")
+        no_contact_two = create("Ana Cruz", "", "Egg", 15, "2026-09-30")
+        ReceivableService(ReceivableRepository()).mark_paid(paid["id"], "20", 1, "cash")
+        db.session.add(Receivable(customer_name="Legacy Lee", customer_contact="0999 000",
+                                  items_description="Old item", amount_owed=Decimal("10"),
+                                  due_date=date(2026, 10, 10), created_by=1))
+        db.session.commit()
+
+    client = app.test_client()
+    path = "/receivables-view/api/receivables/customer-suggestions"
+    assert client.get(path, query_string={"q": "Ana"}).status_code == 401
+    auth(client)
+    assert client.get("/admin/receivables/api/receivables/customer-suggestions", query_string={"q": "Ana"}).status_code == 403
+    assert client.get(path, query_string={"q": "A"}).status_code == 400
+    assert client.get(path, query_string={"q": "a" * 101}).status_code == 400
+    assert client.get(path, query_string={"q": "%%"}).get_json()["data"] == []
+
+    # Today's Date Taken filter must not limit the identity lookup.
+    response = client.get(path, query_string={"q": " ana   CRUZ ", "date": "2026-10-05"})
+    assert response.status_code == 200
+    matches = response.get_json()["data"]
+    assert len(matches) == 4
+    assert {row["open_tab_id"] for row in matches} == {
+        None, active["tab_id"], no_contact_one["tab_id"], no_contact_two["tab_id"]
+    }
+    assert next(row for row in matches if row["customer_contact"] == "0911 123")["label"] == "Past customer—new tab"
+    assert next(row for row in matches if row["customer_contact"] == "0922")["open_tab_id"] == active["tab_id"]
+    assert client.get(path, query_string={"q": "0911123"}).get_json()["data"][0]["open_tab_id"] is None
+    legacy = client.get(path, query_string={"q": "0999000"}).get_json()["data"]
+    assert legacy[0]["customer_name"] == "Legacy Lee" and legacy[0]["open_tab_id"] is None
+
+
+def test_selected_customer_actor_paid_cycle_conflict_and_retry(app):
+    with app.app_context():
+        old = create("Nina", "0911", "Old meal", 25, "2026-09-29")
+        db.session.get(Receivable, old["id"]).approved_by_staff = "Historical free text"
+        db.session.commit()
+        ReceivableService(ReceivableRepository()).mark_paid(old["id"], "25", 1, "cash")
+
+    client = app.test_client()
+    auth(client)
+    staff = "/receivables-view/api/receivables"
+    match = client.get(staff + "/customer-suggestions", query_string={"q": "nina"}).get_json()["data"][0]
+    assert match["open_tab_id"] is None
+    assert b'id="approvedByStaff"' not in client.get("/receivables-view").data
+    payload = {"customer_name": match["customer_name"], "customer_contact": match["customer_contact"],
+               "items_description": "New meal", "amount_owed": "40.00", "incurred_date": "2026-10-05",
+               "due_date": "2026-10-10", "approved_by_staff": "Impostor"}
+    saved = client.post(staff, json=payload, headers={"Idempotency-Key": "new-cycle-nina"})
+    assert saved.status_code == 201
+    assert client.post(staff, json=payload, headers={"Idempotency-Key": "new-cycle-nina"}).status_code == 409
+    new = saved.get_json()["data"]
+    assert new["tab_id"] != old["tab_id"]
+    assert client.post(staff, json={**payload, "tab_id": old["tab_id"]}).status_code == 409
+    assert client.get(staff, query_string={"date": "2026-10-05", "page": 1}).get_json()["data"][0]["approved_by_staff"] == "test_user"
+    with app.app_context():
+        assert Receivable.query.count() == 2
+        assert db.session.get(Receivable, new["id"]).created_by == 1
+        assert db.session.get(Receivable, old["id"]).approved_by_staff == "Historical free text"
+        assert db.session.get(ReceivableTab, old["tab_id"]).closed_at is not None
+
+    with app.app_context():
+        owner = Admin(id=1, full_name="Owner", username="owner")
+        owner.set_password("TestOwner123!")
+        db.session.add(owner)
+        db.session.commit()
+    auth(client, "admin")
+    admin = client.post("/admin/receivables/api/receivables", json={
+        **payload, "customer_name": "Brand New", "customer_contact": "0900", "tab_id": None,
+    })
+    assert admin.status_code == 201
+    assert client.get("/admin/receivables/api/receivables/customer-suggestions", query_string={"q": "Brand"}).get_json()["data"][0]["open_tab_id"] == admin.get_json()["data"]["tab_id"]
+    with app.app_context():
+        record = db.session.get(Receivable, admin.get_json()["data"]["id"])
+        assert (record.created_by, record.approved_by_staff) == (1, "owner")
+
+
+def test_suggested_open_tab_debt_and_payment_reconcile_on_payment_date(app):
+    with app.app_context():
+        old = create("Carl", "0912", "Yesterday", 100, "2026-09-30")
+    client = app.test_client()
+    auth(client)
+    base = "/receivables-view/api/receivables"
+    suggestion = client.get(base + "/customer-suggestions", query_string={"q": "carl"}).get_json()["data"][0]
+    assert suggestion["open_tab_id"] == old["tab_id"]
+    saved = client.post(base, json={
+        "customer_name": suggestion["customer_name"], "customer_contact": suggestion["customer_contact"],
+        "tab_id": suggestion["open_tab_id"], "items_description": "Today", "amount_owed": "50.00",
+        "incurred_date": "2026-10-05", "due_date": "2026-10-10",
+    })
+    assert saved.status_code == 201 and saved.get_json()["data"]["tab_id"] == old["tab_id"]
+    assert client.get(base, query_string={"date": "2026-09-30", "page": 1}).get_json()["totals"]["selected_taken"] == 100
+    today_view = client.get(base, query_string={"date": "2026-10-05", "page": 1}).get_json()
+    assert today_view["totals"] == {"all_outstanding": 150, "selected_taken": 50, "selected_outstanding": 50}
+    assert today_view["data"][0]["items"] == "Today"
+    assert client.get(base + "/tabs", query_string={"date": "2026-10-05"}).get_json()["data"][0]["outstanding_balance"] == 150
+
+    paid_day = manila_date(datetime.utcnow())
+    with app.app_context():
+        assert SalesRepository().daily_ledger(paid_day, paid_day) == {}
+    path = f"{base}/tabs/{old['tab_id']}/payments"
+    result = client.post(path, json={"amount": "70.00", "payment_method": "gcash"},
+                         headers={"Idempotency-Key": "carl-partial-payment"})
+    assert result.status_code == 200
+    assert client.post(path, json={"amount": "70.00", "payment_method": "gcash"},
+                       headers={"Idempotency-Key": "carl-partial-payment"}).status_code == 409
+    with app.app_context():
+        payments = ReceivablePayment.query.all()
+        assert len(payments) == 1
+        assert (payments[0].amount, payments[0].balance_before, payments[0].balance_after) == (
+            Decimal("70.00"), Decimal("100.00"), Decimal("30.00"))
+        ledger = SalesRepository().daily_ledger(paid_day, paid_day)[paid_day]
+        assert ledger["collection_methods"]["gcash"] == 70
+        assert ledger["total_collections"] == ledger["net_balance"] == 70
+        assert ledger["total_revenue"] == 0

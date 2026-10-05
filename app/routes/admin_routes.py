@@ -1,6 +1,6 @@
 # Add these routes to your auth_routes.py or a new admin_routes.py
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from flask import Blueprint, current_app, render_template, request, jsonify, session, redirect
 from app.repositories.admin_repository import AdminRepository
@@ -60,8 +60,9 @@ def admin_page():
 def get_all_users():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
+    active = request.args.get("inactive") != "1"
     try:
-        return jsonify(_service.list_users(page=page, per_page=per_page))
+        return jsonify(_service.list_users(page=page, per_page=per_page, active=active))
     except SessionLeaseUnavailable:
         return jsonify({"error": "Session registry temporarily unavailable"}), 503
 
@@ -162,6 +163,18 @@ def delete_user(user_id):
     return jsonify(resp)
 
 
+@admin_bp.route("/api/admin/users/<int:user_id>/reactivate", methods=["POST"])
+@login_required
+@admin_required
+@idempotent_request("admin-reactivate-staff")
+def reactivate_user(user_id):
+    resp = _service.reactivate_user(user_id)
+    if isinstance(resp, tuple):
+        body, status = resp
+        return jsonify(body), status
+    return jsonify(resp)
+
+
 @admin_bp.route("/api/admin/customer-records", methods=["GET"])
 @login_required
 @admin_required
@@ -181,7 +194,20 @@ def get_customer_count():
 @admin_required
 def get_staff_attendance():
     try:
-        return jsonify(_service.staff_attendance())
+        if request.args.get("events") != "1":
+            return jsonify(_service.staff_attendance())
+        try:
+            page = int(request.args.get("page", "1"))
+            per_page = int(request.args.get("per_page", "50"))
+            target_date = date.fromisoformat(request.args["date"]) if request.args.get("date") else None
+        except (ValueError, OverflowError):
+            return jsonify({"error": "Invalid page, page size, or date."}), 400
+        if not 1 <= page <= 1_000_000 or not 1 <= per_page <= 100:
+            return jsonify({"error": "Page must be 1–1,000,000 and page size must be 1–100."}), 400
+        events = _service.staff_attendance_events(target_date)
+        start = (page - 1) * per_page
+        return jsonify({"data": events[start:start + per_page], "total": len(events),
+                        "page": page, "per_page": per_page, "has_next": start + per_page < len(events)})
     except SessionLeaseUnavailable:
         return jsonify({"error": "Session registry temporarily unavailable"}), 503
 

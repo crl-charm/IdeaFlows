@@ -13,15 +13,22 @@
   window.ReceivablesDatedPage = base => {
     const $ = id => document.getElementById(id);
     const state = { date: null, search: '', status: '', recordPage: 1, tabPage: 1,
-      sequence: 0, suggestionSequence: 0, tabs: [], records: [], detail: null };
+      sequence: 0, suggestionSequence: 0, suggestions: [], selectedCustomer: null,
+      tabs: [], records: [], detail: null };
     const api = `${base}/api/receivables`;
     const page = { afterMutation: async () => {} };
+    let suggestionTimer;
 
     async function json(url, options) {
       const request = options?.method && options.method !== 'GET' ? window.csrfFetch : fetch;
       const response = await request(url, { credentials: 'include', ...options });
       const data = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;
-      if (!response.ok || !data?.success) throw new Error(data?.error || 'Could not load Receivables.');
+      if (response.status === 401) location.href = '/login';
+      if (!response.ok || !data?.success) {
+        const error = new Error(data?.error || 'Could not load Receivables.');
+        error.status = response.status;
+        throw error;
+      }
       return data;
     }
 
@@ -98,34 +105,58 @@
       }
     }
 
-    async function suggestions() {
+    function resetSuggestions(message = 'Type at least two letters of a name or contact.') {
+      state.suggestions = [];
+      $('matchingTabs').replaceChildren(new Option('New customer / keep typing', ''));
+      $('matchingTabs').size = 1;
+      $('matchingCustomersStatus').textContent = message;
+    }
+
+    async function suggestions(source = 'name') {
       const sequence = ++state.suggestionSequence;
       const name = normName($('customerName').value);
       const contact = normContact($('customerContact').value);
       const select = $('matchingTabs');
-      select.innerHTML = '<option value="">Create a new tab</option>';
-      if (!name) return;
+      const query = source === 'contact' && contact.length >= 2 ? $('customerContact').value :
+        name.length >= 2 ? $('customerName').value : contact.length >= 2 ? $('customerContact').value : '';
+      resetSuggestions();
+      if (!query) return;
+      $('matchingCustomersStatus').textContent = 'Searching all customer dates…';
       try {
-        const result = await json(`${api}/tabs?${new URLSearchParams({ search: name, per_page: '100' })}`);
+        const result = await json(`${api}/customer-suggestions?${new URLSearchParams({ q: query })}`);
         if (sequence !== state.suggestionSequence) return;
-        const matches = result.data.filter(tab => normName(tab.customer_name) === name &&
-          (!contact || normContact(tab.customer_contact) === contact));
-        for (const tab of matches) select.add(new Option(`${tab.customer_name} · ${tab.customer_contact || 'no contact'} · ${pesos(tab.outstanding_balance)} owed`, tab.id));
-        if (contact && matches.length === 1) select.value = String(matches[0].id);
-      } catch (_) { /* Saving still validates the selected tab on the server. */ }
+        state.suggestions = result.data;
+        result.data.forEach((customer, index) => select.add(new Option(
+          `${customer.customer_name} · ${customer.customer_contact || 'no contact'} · ${customer.label}`, String(index))));
+        select.size = Math.min(result.data.length + 1, 5);
+        $('matchingCustomersStatus').textContent = result.data.length ?
+          'Choose a customer, or keep typing to enter a new one. Matching contacted open tabs are reused on save.' :
+          'No matching customer found. Enter a new customer.';
+      } catch (error) {
+        if (sequence !== state.suggestionSequence) return;
+        resetSuggestions('Customer lookup failed. Retry typing before choosing an existing customer.');
+        showToast(error.message, 'error');
+      }
     }
 
     function newReceivable(tab = null) {
       ++state.suggestionSequence;
+      clearTimeout(suggestionTimer);
       $('receivable-form').reset();
+      state.selectedCustomer = null;
       $('customerName').readOnly = !!tab;
       $('customerContact').readOnly = !!tab;
-      $('matchingTabs').innerHTML = '<option value="">Create a new tab</option>';
+      resetSuggestions();
       if (tab) {
         $('customerName').value = tab.customer_name;
         $('customerContact').value = tab.customer_contact;
-        $('matchingTabs').add(new Option(`Open tab #${tab.id}`, tab.id));
-        $('matchingTabs').value = String(tab.id);
+        const customer = { customer_name: tab.customer_name, customer_contact: tab.customer_contact,
+          open_tab_id: tab.id, label: `Open tab #${tab.id}` };
+        state.suggestions = [customer];
+        state.selectedCustomer = customer;
+        $('matchingTabs').add(new Option(`${tab.customer_name} · ${customer.label}`, '0'));
+        $('matchingTabs').value = '0';
+        $('matchingCustomersStatus').textContent = `Adding to open tab #${tab.id}.`;
       }
       $('incurredDate').value = today();
       $('dueDate').value = today();
@@ -186,18 +217,25 @@
       }
       addEventListener('popstate', () => { readUrl(); state.recordPage = state.tabPage = 1; page.reload(); });
       $('new-receivable').addEventListener('click', () => newReceivable());
-      $('customerName').addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(suggestions, 250); });
-      $('customerContact').addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(suggestions, 250); });
-      $('matchingTabs').addEventListener('change', async () => {
-        const id = Number($('matchingTabs').value);
-        if (!id) { $('customerName').readOnly = $('customerContact').readOnly = false; return; }
-        try {
-          const tab = (await json(`${api}/tabs/${id}`)).data;
-          if (!tab.open) throw new Error('This tab is closed. Refresh the list.');
-          $('customerName').value = tab.customer_name;
-          $('customerContact').value = tab.customer_contact;
-          $('customerName').readOnly = $('customerContact').readOnly = true;
-        } catch (error) { showToast(error.message, 'error'); }
+      for (const [id, source] of [['customerName', 'name'], ['customerContact', 'contact']]) {
+        $(id).addEventListener('input', () => {
+          state.selectedCustomer = null;
+          ++state.suggestionSequence;
+          clearTimeout(suggestionTimer);
+          suggestionTimer = setTimeout(() => suggestions(source), 250);
+        });
+      }
+      $('matchingTabs').addEventListener('change', () => {
+        const selected = $('matchingTabs').value;
+        state.selectedCustomer = selected === '' ? null : state.suggestions[Number(selected)];
+        $('customerName').readOnly = $('customerContact').readOnly = !!state.selectedCustomer;
+        if (state.selectedCustomer) {
+          $('customerName').value = state.selectedCustomer.customer_name;
+          $('customerContact').value = state.selectedCustomer.customer_contact;
+          $('matchingCustomersStatus').textContent = state.selectedCustomer.label;
+        } else {
+          $('matchingCustomersStatus').textContent = 'Enter a new customer, or choose a match.';
+        }
       });
       $('customer-tabs-body').addEventListener('click', event => {
         const view = event.target.closest('[data-view-tab]');
@@ -218,12 +256,19 @@
         button.disabled = true;
         try {
           const payload = Object.fromEntries(new FormData(event.currentTarget));
-          if ($('matchingTabs').value) payload.tab_id = Number($('matchingTabs').value);
+          if (state.selectedCustomer?.open_tab_id) payload.tab_id = state.selectedCustomer.open_tab_id;
           const result = await json(api, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           bootstrap.Modal.getInstance($('addReceivableModal'))?.hide();
           await page.afterMutation();
           showToast(`Debt recorded on tab #${result.data.tab_id}.`, 'success');
-        } catch (error) { showToast(error.message, 'error'); }
+        } catch (error) {
+          if (error.status === 409) {
+            state.selectedCustomer = null;
+            $('customerName').readOnly = $('customerContact').readOnly = false;
+            await suggestions('name');
+          }
+          showToast(error.message, 'error');
+        }
         finally { button.disabled = false; }
       });
       $('payment-full').addEventListener('click', () => { $('customerPaymentAmount').value = state.detail?.outstanding_balance.toFixed(2) || ''; });

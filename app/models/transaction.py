@@ -31,6 +31,7 @@ class Transaction(db.Model):
     # Immutable receipt snapshot fields so old receipts do not change when sessions reopen
     billing_start_at = db.Column(db.DateTime, nullable=True)
     billing_end_at = db.Column(db.DateTime, nullable=True)
+    billable_microseconds = db.Column(db.BigInteger, nullable=True)
     customer_name_snapshot = db.Column(db.String(100), nullable=True)
     space_name_snapshot = db.Column(db.String(100), nullable=True)
     service_mode_snapshot = db.Column(db.String(16), nullable=True)

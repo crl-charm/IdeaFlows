@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import create_app, db
-from app.models import (BookingChange, BoardroomBooking, CustomerSession, Expense,
+from app.models import (BookingChange, BoardroomBooking, CheckoutVoidRequest, CustomerSession, Expense,
                         Order, SpaceType, StaffAttendance, Transaction, User)
 from app.repositories.booking_repository import BookingRepository
 from app.repositories.sales_repository import SalesRepository
@@ -53,6 +53,63 @@ def test_checkout_filters_before_pagination_using_manila_day(app):
     )
     assert response.status_code == 200
     assert [row["transaction_id"] for row in response.get_json()] == [target_id]
+
+
+def test_checkout_daily_pages_search_and_status_reach_all_records(app):
+    with app.app_context():
+        space = SpaceType(name="Regular Lounge", rate_per_minute=Decimal("0.1667"))
+        db.session.add(space)
+        db.session.flush()
+        sessions = [CustomerSession(customer_name=f"Guest {i}", space_type_id=space.id,
+                                    status="completed", time_in=datetime(2026, 10, 4, 12))
+                    for i in range(56)]
+        db.session.add_all(sessions)
+        db.session.flush()
+        old = Transaction(session_id=sessions[0].id, time_bill=10, food_bill=0, total_bill=10,
+                          payment_method="cash", created_at=datetime(2026, 10, 5, 15, 59))
+        current = [Transaction(session_id=sessions[i].id, time_bill=10, food_bill=0,
+                               total_bill=10, payment_method="cash",
+                               created_at=datetime(2026, 10, 5, 16, 1))
+                   for i in range(1, 54)]
+        current[0].customer_name_snapshot = ""
+        pending = Transaction(session_id=sessions[54].id, time_bill=10, food_bill=0,
+                              total_bill=10, payment_method="bdo",
+                              customer_name_snapshot="Snapshot Customer",
+                              created_at=datetime(2026, 10, 5, 16, 1))
+        voided = Transaction(session_id=sessions[55].id, time_bill=10, food_bill=0,
+                             total_bill=10, payment_method="gcash", is_voided=True,
+                             created_at=datetime(2026, 10, 5, 16, 1))
+        db.session.add_all([old, *current, pending, voided])
+        db.session.flush()
+        db.session.add(CheckoutVoidRequest(
+            transaction_id=pending.id, requested_by_id=1, status="pending",
+            request_reason="Mistake", original_amount=10, original_payment_method="bdo",
+            original_business_date=date(2026, 10, 6),
+        ))
+        db.session.commit()
+        old_id, pending_id, voided_id, empty_snapshot_id = old.id, pending.id, voided.id, current[0].id
+
+    client = _staff_client(app)
+    base = "/api/checkout-records?paginated=1&date_from=2026-10-06&date_to=2026-10-06"
+    first = client.get(base).get_json()
+    second = client.get(base + "&page=2").get_json()
+    assert first["total"] == 55 and first["has_next"] is True
+    assert len(first["data"]) == 50 and len(second["data"]) == 5
+    assert second["has_next"] is False
+    ids = [row["transaction_id"] for row in first["data"] + second["data"]]
+    assert len(set(ids)) == 55 and old_id not in ids
+    assert all(row["created_date"] == "2026-10-06" for row in first["data"] + second["data"])
+    assert client.get(base + "&search=Snapshot&status=pending_void&payment_method=bdo").get_json()["data"][0]["transaction_id"] == pending_id
+    assert empty_snapshot_id in {
+        row["transaction_id"] for row in client.get(base + "&search=Guest%201").get_json()["data"]
+    }
+    assert client.get(base + "&status=voided").get_json()["data"][0]["transaction_id"] == voided_id
+    assert client.get(base + "&status=completed").get_json()["total"] == 53
+    assert client.get("/api/checkout-records?paginated=1&date_from=2026-10-05&date_to=2026-10-05").get_json()["data"][0]["transaction_id"] == old_id
+    assert client.get("/api/checkout-records?paginated=1").get_json()["total"] == 56
+    assert isinstance(client.get("/api/checkout-records").get_json(), list)
+    for bad in ("page=0", "page=1000001", "per_page=101", "date_from=bad", "status=bad", "payment_method=bad"):
+        assert client.get("/api/checkout-records?paginated=1&" + bad).status_code == 400
 
 
 def test_discounted_sales_breakdown_reconciles_with_daily_balance(app):

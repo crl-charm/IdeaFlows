@@ -7,7 +7,7 @@ from flask import Blueprint, request, render_template, session
 
 from app.dto.api_response import api_error, api_ok
 
-from app.utils.billing import calculate_time_bill
+from app.utils.billing import current_time_bill
 from app import db
 from app.core.idempotency import idempotent_request
 from app.repositories.sales_repository import SalesRepository
@@ -197,10 +197,7 @@ def api_today_stats() -> tuple:
             .all()
         )
     for sess in active_sessions:
-        time_bill = Decimal("0.00") if sess.service_mode == "food_only" else calculate_time_bill(
-            sess.space_type, (now - sess.time_in).total_seconds() / 60,
-            booking=bookings.get(sess.id), now_utc=now,
-        )
+        time_bill = current_time_bill(sess, now, booking=bookings.get(sess.id))
         
         food_total = food_totals.get(sess.id, Decimal("0.00"))
         

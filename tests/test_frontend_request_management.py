@@ -62,7 +62,9 @@ def test_manual_initial_loads_do_not_get_repeated_by_pollers_immediately():
             "createSmartPoller(loadSpaceAvailability, 15000, { runImmediately: false })",
         ),
         "checkout_records.html": (
-            "createSmartPoller(loadCheckoutRecords, 20000, { runImmediately: false })",
+            "createSmartPoller(() => {",
+            "if (checkoutPage <= 1) loadCheckoutRecords();",
+            "}, 20000, { runImmediately: false })",
         ),
         "lounge_booking.html": (
             "createSmartPoller(loadSchedule, 30000, { runImmediately: false })",

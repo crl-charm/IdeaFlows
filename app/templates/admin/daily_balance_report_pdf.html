@@ -125,7 +125,7 @@
 
   <div class="summary">
     <div class="summary-box">
-      <div class="label">Total Revenue</div>
+      <div class="label">Checkout Sales</div>
       <div class="value revenue">Php {{ "%.2f"|format(total_revenue) }}</div>
     </div>
     <div class="summary-box">
@@ -138,6 +138,14 @@
     </div>
   </div>
 
+  <h2>Checkout Sales Breakdown</h2>
+  <p>Cowork bill Php {{ "%.2f"|format(cowork_bill) }} + Cafe bill Php {{ "%.2f"|format(cafe_bill) }} − Discounts Php {{ "%.2f"|format(discounts_total) }} = Checkout sales Php {{ "%.2f"|format(total_revenue) }}. Refunds paid Php {{ "%.2f"|format(total_refunds) }} are recorded separately on their payment date.</p>
+  {% if sales_reconciliation_difference %}<p class="expenses">One or more payment methods differ from this breakdown by a combined Php {{ "%.2f"|format(sales_reconciliation_difference) }}; review older checkout records.</p>{% endif %}
+
+  <table class="data"><thead><tr><th>Date</th><th class="amount">Cowork bill</th><th class="amount">Cafe bill</th><th class="amount">Discounts</th><th class="amount">Checkout sales</th><th class="amount">Refunds paid</th></tr></thead><tbody>
+    {% for r in reports %}<tr><td>{{ r.report_date }}</td><td class="amount">Php {{ "%.2f"|format(r.get('cowork_bill', 0)) }}</td><td class="amount">Php {{ "%.2f"|format(r.get('cafe_bill', 0)) }}</td><td class="amount">Php {{ "%.2f"|format(r.get('discounts_total', 0)) }}</td><td class="amount">Php {{ "%.2f"|format(r.total_revenue) }}</td><td class="amount">Php {{ "%.2f"|format(r.get('total_refunds', 0)) }}</td></tr>{% endfor %}
+  </tbody></table>
+
   <div class="summary">
     <div class="summary-box"><div class="label">Customer Debt Collected</div><div class="value">Php {{ "%.2f"|format(total_collections) }}</div></div>
     <div class="summary-box"><div class="label">Supplier Payments</div><div class="value">Php {{ "%.2f"|format(total_payables_paid) }}</div></div>
@@ -146,7 +154,7 @@
     <div class="summary-box"><div class="label">Other Income</div><div class="value">Php {{ "%.2f"|format(total_other_income) }}</div></div>
     <div class="summary-box"><div class="label">Budget Spending</div><div class="value">Php {{ "%.2f"|format(total_budget_spend) }}</div></div>
   </div>
-  <p>Net movement = checkout sales + debt collected + other income − business-funded expenses − business-funded supplier payments − budget spending. Externally funded payments are recorded separately and do not reduce business funds.</p>
+  <p>Net movement = checkout sales − credit applied + credit received + debt collected + other income − business-funded expenses − business-funded supplier payments − budget spending − refunds paid. Externally funded payments are recorded separately and do not reduce business funds.</p>
   <p>Expenses: Php {{ "%.2f"|format(total_business_expenses) }} business-funded; Php {{ "%.2f"|format(total_external_expenses) }} externally funded.</p>
   <p>Supplier payments: Php {{ "%.2f"|format(total_business_payables_paid) }} business-funded; Php {{ "%.2f"|format(total_external_payables_paid) }} externally funded.</p>
 
@@ -182,6 +190,9 @@
   <table class="data"><thead><tr><th>Method</th><th class="amount">Checkout</th><th class="amount">Debt Collected</th><th class="amount">Other Income</th><th class="amount">Business Expenses</th><th class="amount">External-funded Expenses</th><th class="amount">Business Supplier Paid</th><th class="amount">External-funded Supplier Paid</th><th class="amount">Budget Spent</th><th class="amount">Net</th></tr></thead><tbody>
     {% for m in method_rows %}<tr><td>{{ "Older records (method unknown)" if m.method == "unclassified" else m.method }}</td><td class="amount">Php {{ "%.2f"|format(m.checkout) }}</td><td class="amount">Php {{ "%.2f"|format(m.collection) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_income) }}</td><td class="amount">Php {{ "%.2f"|format(m.expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.external_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.external_payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.net) }}</td></tr>{% endfor %}
   </tbody></table>
+  <table class="data"><thead><tr><th>Method</th><th class="amount">Credit applied</th><th class="amount">Credit received</th><th class="amount">Refunds paid</th></tr></thead><tbody>
+    {% for m in method_rows %}<tr><td>{{ "Older records (method unknown)" if m.method == "unclassified" else m.method }}</td><td class="amount">Php {{ "%.2f"|format(m.credit_applied) }}</td><td class="amount">Php {{ "%.2f"|format(m.credit_received) }}</td><td class="amount">Php {{ "%.2f"|format(m.refund) }}</td></tr>{% endfor %}
+  </tbody></table>
 
   <h2>Daily Reports</h2>
   {% if reports %}
@@ -189,7 +200,7 @@
     <thead>
       <tr>
         <th>Date</th>
-        <th class="amount">Revenue</th>
+        <th class="amount">Checkout sales</th>
         <th class="amount">Debt Collected</th>
         <th class="amount">Cash</th>
         <th class="amount">GCash</th>

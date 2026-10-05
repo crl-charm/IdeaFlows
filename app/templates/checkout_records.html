@@ -18,20 +18,30 @@
         placeholder="Search customer..."
         oninput="loadCheckoutRecords()"
       >
+      <div class="d-flex flex-wrap gap-2 align-items-end">
+        <div class="flex-grow-1">
+          <label for="checkoutDay" class="form-label small mb-1">Checkout day</label>
+          <input type="date" id="checkoutDay" class="form-control" onchange="setCheckoutDay(this.value)">
+        </div>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setCheckoutDay(manilaToday())">Today</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="showAllCheckoutDates()">Show All</button>
+      </div>
       <div class="d-flex gap-2 align-items-center">
+        <label for="dateFrom" class="visually-hidden">From checkout date</label>
         <input
           type="date"
           id="dateFrom"
           class="form-control"
-          oninput="loadCheckoutRecords()"
+          onchange="syncCheckoutRange()"
           title="From date"
         >
         <span class="text-muted d-none d-md-inline">–</span>
+        <label for="dateTo" class="visually-hidden">To checkout date</label>
         <input
           type="date"
           id="dateTo"
           class="form-control"
-          oninput="loadCheckoutRecords()"
+          onchange="syncCheckoutRange()"
           title="To date"
         >
       </div>
@@ -64,9 +74,12 @@
 
   <div id="payment-summary" class="row g-2 mb-3" style="display:none;"></div>
 
-  <!-- Records rendered here, grouped by month -->
+  <!-- Records rendered here, grouped by Manila checkout day -->
   <div id="checkout-records-container">
     <p class="text-center text-muted py-4">Loading...</p>
+  </div>
+  <div id="checkout-pagination" class="text-center mb-4 d-none">
+    <button type="button" class="btn btn-outline-secondary" onclick="loadCheckoutRecords(checkoutPage + 1)">Load older records</button>
   </div>
 </div>
 
@@ -183,12 +196,28 @@
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="checkoutTimeHistoryModal" tabindex="-1" aria-labelledby="checkoutTimeHistoryTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="checkoutTimeHistoryTitle">Time bill history</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="checkoutTimeHistoryBody" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 const IS_ADMIN = {{ 'true' if session.get('role') == 'admin' else 'false' }};
 let cachedRecords = {};
+let loadedCheckoutRecords = [];
+let checkoutPage = 0;
+let checkoutHasNext = false;
+let checkoutRequest = 0;
 
 function formatTime(seconds) {
   if (seconds === null || seconds === undefined) return "N/A";
@@ -210,11 +239,31 @@ function discountLabel(record) {
   return `${type} −₱${Number(record.discount_amount || 0).toFixed(2)} (${basis})`;
 }
 
-// Format "YYYY-MM" → "January 2026"
-function monthLabel(yearMonth) {
-  const [y, m] = yearMonth.split("-").map(Number);
-  const d = new Date(y, m - 1, 1);
-  return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+function checkoutDayLabel(isoDay) {
+  const [year, month, day] = isoDay.split('-').map(Number);
+  return `${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][month - 1]} ${day}, ${year}`;
+}
+
+function manilaToday() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+function setCheckoutDay(day) {
+  document.getElementById('checkoutDay').value = day;
+  document.getElementById('dateFrom').value = day;
+  document.getElementById('dateTo').value = day;
+  loadCheckoutRecords();
+}
+
+function syncCheckoutRange() {
+  const from = document.getElementById('dateFrom').value;
+  const to = document.getElementById('dateTo').value;
+  document.getElementById('checkoutDay').value = from && from === to ? from : '';
+  loadCheckoutRecords();
+}
+
+function showAllCheckoutDates() {
+  setCheckoutDay('');
 }
 
 function paymentBadge(method) {
@@ -244,24 +293,46 @@ function statusBadge(record) {
 }
 
 function renderActions(record) {
+  const history = record.has_time_pause
+    ? `<button class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1" onclick="showCheckoutTimeHistory(${record.session_id})" aria-label="Time bill history for ${escapeCheckoutText(record.customer_name)}">Time history</button>` : '';
   if (record.is_voided) {
     let rep = '';
     if (record.void_request && record.void_request.replacement_transaction_id) {
       rep = `<br><span class="text-muted" style="font-size:0.75rem;">Replaced by #${record.void_request.replacement_transaction_id}</span>`;
     }
-    return `<button class="btn btn-outline-secondary btn-sm py-0 px-2" onclick="showVoidDetails(${record.transaction_id})">Details</button>${rep}`;
+    return `<button class="btn btn-outline-secondary btn-sm py-0 px-2" onclick="showVoidDetails(${record.transaction_id})">Details</button>${history}${rep}`;
   }
   if (record.void_request && record.void_request.status === 'pending') {
     if (IS_ADMIN) {
-      return `<button class="btn btn-warning btn-sm py-0 px-2 fw-semibold" onclick="openReviewVoidModal(${record.transaction_id})">Review</button>`;
+      return `<button class="btn btn-warning btn-sm py-0 px-2 fw-semibold" onclick="openReviewVoidModal(${record.transaction_id})">Review</button>${history}`;
     }
-    return `<span class="text-muted small">Pending approval</span>`;
+    return `<span class="text-muted small">Pending approval</span>${history}`;
   }
-  return `<button class="btn btn-outline-danger btn-sm py-0 px-2" onclick="openRequestVoidModal(${record.transaction_id})">Void</button>`;
+  return `<button class="btn btn-outline-danger btn-sm py-0 px-2" onclick="openRequestVoidModal(${record.transaction_id})">Void</button>${history}`;
+}
+
+async function showCheckoutTimeHistory(sessionId) {
+  const body = document.getElementById('checkoutTimeHistoryBody');
+  body.textContent = 'Loading...';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('checkoutTimeHistoryModal')).show();
+  try {
+    const history = await fetchJSON(`/api/sessions/${sessionId}/time-history`);
+    document.getElementById('checkoutTimeHistoryTitle').textContent = `${history.customer_name} — time bill history`;
+    body.innerHTML = history.events.length ? history.events.map(event => `
+      <div class="border-bottom py-2">
+        <strong>${escapeCheckoutText(event.action.replaceAll('_', ' '))}</strong> · ${escapeCheckoutText(event.at)}<br>
+        <small>${escapeCheckoutText(event.actor)} (${escapeCheckoutText(event.role)})</small><br>
+        <small>Billable time ${formatTime(event.billable_seconds_before)} → ${formatTime(event.billable_seconds_after)};
+        time bill ₱${event.time_bill_before.toFixed(2)} → ₱${event.time_bill_after.toFixed(2)}</small>
+      </div>`).join('') : 'No time bill changes for this visit.';
+  } catch (error) {
+    body.textContent = error.message || 'Could not load time bill history.';
+  }
 }
 
 function clearFilters() {
   document.getElementById("checkoutSearch").value = "";
+  document.getElementById("checkoutDay").value = "";
   document.getElementById("dateFrom").value = "";
   document.getElementById("dateTo").value   = "";
   document.getElementById("paymentFilter").value = "";
@@ -304,8 +375,9 @@ function renderPaymentSummary(records) {
     if (record.is_voided) {
       voidedTotal += record.total_bill;
       voidedCount += 1;
-      continue;
     }
+    const treatment = record.void_request?.status === 'approved' ? record.void_request.money_treatment : null;
+    if (treatment === 'false_entry' || treatment === 'retained_credit') continue;
     activeCount += 1;
     if (record.payment_method === "gcash") {
       gcashTotal += record.total_bill;
@@ -327,6 +399,7 @@ function renderPaymentSummary(records) {
 
   summaryEl.style.display = "flex";
   summaryEl.innerHTML = `
+    <div class="col-12 text-muted small">Totals for the ${records.length} shown records. Refunded checkouts remain sales on their original day; their refunds appear separately in Daily Balance.</div>
     <div class="col-6 col-md-2">
       <div class="card border-success h-100 shadow-sm">
         <div class="card-body py-2 px-3">
@@ -370,7 +443,7 @@ function renderPaymentSummary(records) {
     <div class="col-12 col-md-2">
       <div class="card border-dark h-100 shadow-sm">
         <div class="card-body py-2 px-3">
-          <small class="text-muted">Net Sales</small>
+          <small class="text-muted">Checkout Sales (shown)</small>
           <div class="fw-bold text-primary">₱${(cashTotal + gcashTotal + bdoTotal + bpiTotal + queenbankTotal).toFixed(2)} <span class="text-muted fw-normal" style="font-size:0.75rem;">(${activeCount})</span></div>
         </div>
       </div>
@@ -388,62 +461,52 @@ function renderPaymentSummary(records) {
   `;
 }
 
-function loadCheckoutRecords() {
-  const search   = document.getElementById("checkoutSearch").value.toLowerCase().trim();
+function loadPendingVoidBanner() {
+  fetchJSON('/api/checkout-records/void-requests?status=pending').then(requests => {
+    const banner = document.getElementById('pending-voids-banner');
+    document.getElementById('pending-voids-count').textContent = requests.length;
+    banner.classList.toggle('d-none', requests.length === 0);
+  }).catch(() => showToast('Could not refresh pending void requests.', 'error'));
+}
+
+function loadCheckoutRecords(page = 1) {
+  const requestNumber = ++checkoutRequest;
+  const search = document.getElementById("checkoutSearch").value.trim();
   const dateFrom = document.getElementById("dateFrom").value;
   const dateTo   = document.getElementById("dateTo").value;
   const paymentMethod = document.getElementById("paymentFilter").value;
+  const status = document.getElementById("statusFilter").value;
 
-  let url = "/api/checkout-records";
   const params = new URLSearchParams();
   if (dateFrom) params.set("date_from", dateFrom);
   if (dateTo)   params.set("date_to",   dateTo);
   if (paymentMethod) params.set("payment_method", paymentMethod);
-  if (params.toString()) url += "?" + params.toString();
+  if (search) params.set('search', search);
+  if (status) params.set('status', status);
+  if (page === 1) {
+    history.replaceState(null, '', `${location.pathname}${params.toString() ? '?' + params : ''}`);
+    loadPendingVoidBanner();
+  }
+  params.set('paginated', '1');
+  params.set('page', String(page));
+  params.set('per_page', '50');
 
-  fetch(url, { credentials: "include" })
-  .then(res => res.json())
-  .then(data => {
+  fetchJSON(`/api/checkout-records?${params}`)
+  .then(result => {
+    if (requestNumber !== checkoutRequest) return;
+    if (!Array.isArray(result.data)) throw new Error('Invalid checkout response.');
     const container = document.getElementById("checkout-records-container");
-
-    if (!Array.isArray(data)) {
-      container.innerHTML = `<p class="text-center text-danger py-4">Failed to load checkout records. Please refresh the page.</p>`;
-      renderPaymentSummary([]);
-      return;
-    }
+    loadedCheckoutRecords = page === 1 ? result.data : [...loadedCheckoutRecords, ...result.data];
+    checkoutPage = page;
+    checkoutHasNext = result.has_next;
+    const filtered = loadedCheckoutRecords;
 
     cachedRecords = {};
-    for (const r of data) {
+    for (const r of filtered) {
       cachedRecords[r.transaction_id] = r;
     }
-
-    // Update pending void requests banner
-    const pendingList = data.filter(r => r.void_request && r.void_request.status === 'pending');
-    const banner = document.getElementById("pending-voids-banner");
-    const countEl = document.getElementById("pending-voids-count");
-    if (banner && countEl) {
-      if (pendingList.length > 0) {
-        countEl.textContent = pendingList.length;
-        banner.classList.remove("d-none");
-      } else {
-        banner.classList.add("d-none");
-      }
-    }
-
-    const statusFilter = document.getElementById("statusFilter") ? document.getElementById("statusFilter").value : "";
-    let filtered = search
-      ? data.filter(r => r.customer_name.toLowerCase().includes(search))
-      : data;
-
-    if (statusFilter === "pending_void") {
-      filtered = filtered.filter(r => r.void_request && r.void_request.status === 'pending');
-    } else if (statusFilter === "completed") {
-      filtered = filtered.filter(r => !r.is_voided && (!r.void_request || r.void_request.status !== 'pending'));
-    } else if (statusFilter === "voided") {
-      filtered = filtered.filter(r => r.is_voided);
-    }
-
-    document.getElementById("checkout-count").innerText = `${filtered.length} record(s)`;
+    document.getElementById("checkout-count").innerText = `Showing ${filtered.length} of ${result.total} matching record(s)`;
+    document.getElementById('checkout-pagination').classList.toggle('d-none', !checkoutHasNext);
     renderPaymentSummary(filtered);
 
     if (!filtered.length) {
@@ -451,11 +514,11 @@ function loadCheckoutRecords() {
       return;
     }
 
-    // --- Group by YYYY-MM (derived from created_date) ---
+    // Group by the checkout's Manila business date, not the customer's Time In.
     const groups = {};
     for (const record of filtered) {
       const raw = record.created_date || "";
-      const key = raw.length >= 7 ? raw.slice(0, 7) : "Unknown";
+      const key = raw.length >= 10 ? raw.slice(0, 10) : "Unknown";
       if (!groups[key]) groups[key] = [];
       groups[key].push(record);
     }
@@ -464,7 +527,7 @@ function loadCheckoutRecords() {
 
     let html = "";
     for (const key of sortedKeys) {
-      const label   = key === "Unknown" ? "Unknown Date" : monthLabel(key);
+      const label   = key === "Unknown" ? "Unknown Date" : checkoutDayLabel(key);
       const records = groups[key];
 
       // Desktop table view
@@ -480,7 +543,7 @@ function loadCheckoutRecords() {
                     <th>Space</th>
                     <th>Time In</th>
                     <th>Time Out</th>
-                    <th>Time Spent</th>
+                    <th>Billable time</th>
                     <th>Time Bill</th>
                     <th>Food Bill</th>
                     <th>Discount</th>
@@ -546,7 +609,7 @@ function loadCheckoutRecords() {
                     <span class="checkout-card-value">${record.created_date || '—'}</span>
                   </div>
                   ${record.service_mode === 'food_only' ? '' : `<div class="checkout-card-row">
-                    <span class="checkout-card-label">Duration:</span>
+                    <span class="checkout-card-label">Billable time:</span>
                     <span class="checkout-card-value">${formatTime(record.seconds_spent)}</span>
                   </div>
                   <div class="checkout-card-row">
@@ -594,9 +657,21 @@ function loadCheckoutRecords() {
 
     container.innerHTML = html;
   })
-  .catch(() => {
+  .catch(error => {
+    if (requestNumber !== checkoutRequest) return;
+    if (page > 1) {
+      showToast('Could not load older checkout records.', 'error');
+      return;
+    }
+    loadedCheckoutRecords = [];
+    cachedRecords = {};
+    checkoutPage = 0;
+    checkoutHasNext = false;
+    document.getElementById('checkout-count').textContent = 'Could not load records';
+    document.getElementById('checkout-pagination').classList.add('d-none');
+    document.getElementById('payment-summary').style.display = 'none';
     document.getElementById("checkout-records-container").innerHTML =
-      `<p class="text-center text-danger py-4">Failed to load checkout records. Please refresh the page.</p>`;
+      `<p class="text-center text-danger py-4">${escapeCheckoutText(error.message || 'Could not load checkout records.')}</p>`;
   });
 }
 
@@ -838,7 +913,19 @@ function showVoidDetails(txId) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById("voidDetailsModal")).show();
 }
 
+const checkoutUrlFilters = new URLSearchParams(location.search);
+for (const [key, inputId] of [['search', 'checkoutSearch'], ['date_from', 'dateFrom'],
+                               ['date_to', 'dateTo'], ['payment_method', 'paymentFilter'],
+                               ['status', 'statusFilter']]) {
+  if (checkoutUrlFilters.has(key)) document.getElementById(inputId).value = checkoutUrlFilters.get(key);
+}
+const initialFrom = document.getElementById('dateFrom').value;
+if (initialFrom && initialFrom === document.getElementById('dateTo').value) {
+  document.getElementById('checkoutDay').value = initialFrom;
+}
 loadCheckoutRecords();
-window.createSmartPoller(loadCheckoutRecords, 20000, { runImmediately: false });
+window.createSmartPoller(() => {
+  if (checkoutPage <= 1) loadCheckoutRecords();
+}, 20000, { runImmediately: false });
 </script>
 {% endblock %}

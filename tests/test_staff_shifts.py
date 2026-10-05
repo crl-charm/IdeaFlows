@@ -103,3 +103,43 @@ def test_admin_history_shows_manual_shift_and_only_older_login_records(app):
     assert rows[1]["source"] == "Legacy login record"
     assert rows[1]["shift_role"] == "Not recorded"
     assert _signed_in(app).get("/api/admin/staff-attendance").status_code == 403
+
+
+def test_admin_attendance_events_split_overnight_and_page_without_hidden_logs(app):
+    with app.app_context():
+        db.session.add_all([
+            StaffShift(user_id=1, shift_role="cashier",
+                       time_in=datetime(2026, 10, 5, 15, 59),
+                       time_out=datetime(2026, 10, 5, 16, 1)),
+            StaffShift(user_id=1, shift_role="cook",
+                       time_in=datetime(2026, 10, 5, 17),
+                       time_out=datetime(2026, 10, 5, 18)),
+            StaffShift(user_id=1, shift_role="server", time_in=datetime(2026, 10, 5, 19)),
+            StaffAttendance(user_id=1, time_in=datetime(2026, 10, 5, 20),
+                            time_out=datetime(2026, 10, 5, 21), show_in_history=True),
+            StaffAttendance(user_id=1, time_in=datetime(2026, 10, 5, 22),
+                            show_in_history=False),
+        ])
+        db.session.commit()
+
+    admin = _signed_in(app, role="admin")
+    base = "/api/admin/staff-attendance?events=1"
+    first_day = admin.get(base + "&date=2026-10-05").get_json()
+    second_day = admin.get(base + "&date=2026-10-06").get_json()
+    assert [(event["event"], event["shift_role"]) for event in first_day["data"]] == [
+        ("Time In", "Cashier")]
+    assert first_day["data"][0]["event_date"] == "2026-10-05"
+    assert second_day["total"] == 6
+    assert {event["source"] for event in second_day["data"]} == {
+        "Manual shift", "Legacy login record"}
+    assert sum(event["event"] == "Time Out" for event in second_day["data"]) == 3
+    assert any(event["paired_time"] == "Open shift" for event in second_day["data"])
+    assert all(event["event_date"] == "2026-10-06" for event in second_day["data"])
+    page1 = admin.get(base + "&per_page=2&page=1").get_json()
+    page2 = admin.get(base + "&per_page=2&page=2").get_json()
+    assert page1["total"] == 7 and page1["has_next"] is True
+    assert len({event["id"] for event in page1["data"] + page2["data"]}) == 4
+    assert admin.get(base + "&date=bad").status_code == 400
+    assert admin.get(base + "&page=0").status_code == 400
+    assert admin.get(base + "&page=1000001").status_code == 400
+    assert _signed_in(app).get(base).status_code == 403

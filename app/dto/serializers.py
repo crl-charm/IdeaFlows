@@ -126,11 +126,13 @@ def serialize_transaction(transaction):
     customer_name = transaction.customer_name_snapshot or (session.customer_name if session else "N/A")
     space_type = transaction.space_name_snapshot or (session.space_type.name if session and session.space_type else "N/A")
 
-    seconds_spent = (
-        int((time_out_dt - time_in_dt).total_seconds())
-        if service_mode != "food_only" and time_in_dt and time_out_dt
-        else None
+    wall_microseconds = (
+        (time_out_dt - time_in_dt) // timedelta(microseconds=1)
+        if service_mode != "food_only" and time_in_dt and time_out_dt else None
     )
+    billable_us = transaction.billable_microseconds
+    duration_us = billable_us if billable_us is not None else wall_microseconds
+    seconds_spent = duration_us // 1_000_000 if duration_us is not None else None
     payment_method = normalize_payment_method(
         getattr(transaction, "payment_method", None)
         or (getattr(session, "payment_method", None) if session else None)
@@ -153,6 +155,7 @@ def serialize_transaction(transaction):
 
     return {
         "transaction_id": transaction.id,
+        "session_id": transaction.session_id,
         "customer_name": customer_name,
         "payment_method": payment_method,
         "collected_by": transaction.collected_by,
@@ -176,6 +179,8 @@ def serialize_transaction(transaction):
         "discount_amount": float(transaction.discount_amount or 0),
         "total_bill": float(transaction.total_bill),
         "seconds_spent": seconds_spent,
+        "has_time_pause": (billable_us is not None and wall_microseconds is not None
+                           and billable_us < wall_microseconds),
         "minutes_spent": round(seconds_spent / 60, 2) if seconds_spent is not None else None,
         "created_date": (
             (transaction.created_at + timedelta(hours=8)).strftime("%Y-%m-%d")

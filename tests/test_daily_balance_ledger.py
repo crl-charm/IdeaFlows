@@ -2,14 +2,17 @@
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from io import BytesIO
 
 import pytest
+from flask import render_template
+from openpyxl import load_workbook
 from sqlalchemy import create_engine, inspect, text
 
 from app import create_app, db
 from app.models import (
-    CustomerSession, Expense, FinanceBudget, FinanceTransaction, Payable, PayablePayment, Receivable,
-    ReceivablePayment, SpaceType, Transaction,
+    CheckoutVoidRequest, CustomerSession, Expense, FinanceBudget, FinanceTransaction, Order,
+    Payable, PayablePayment, Receivable, ReceivablePayment, SpaceType, Transaction,
 )
 from app.repositories.sales_repository import SalesRepository
 from app.services.daily_balance_export_service import DailyBalanceExportService
@@ -183,6 +186,149 @@ def test_budget_adjustment_is_separate_from_checkout_sales(app):
         assert FinanceService(db).get_summary()["transactions"][0]["actor"] == "test_user"
         with pytest.raises(ValueError, match="already recorded"):
             FinanceService(db).add_transaction(budget_id, "income", "50.00", "Retry", "bdo", 1, "other-income")
+
+
+def test_cowork_cafe_discount_split_reconciles_with_daily_balance_and_exports(app):
+    first_day, next_day = date(2026, 10, 5), date(2026, 10, 6)
+    before_midnight = datetime(2026, 10, 5, 15, 59)  # 23:59 in Manila
+    after_midnight = datetime(2026, 10, 5, 16, 1)
+    with app.app_context():
+        regular = SpaceType(name="Regular Lounge", rate_per_minute=Decimal("0.1667"))
+        takeout = SpaceType(name="Take Out", rate_per_minute=Decimal("0"))
+        db.session.add_all([regular, takeout])
+        db.session.flush()
+
+        def checkout(name, time, food, discount, method, *, at=before_midnight,
+                     food_only=False, food_discount=False, credit_applied=0):
+            session = CustomerSession(customer_name=name, space_type_id=takeout.id if food_only else regular.id,
+                                      service_mode="food_only" if food_only else "timed", status="completed")
+            db.session.add(session)
+            db.session.flush()
+            tx = Transaction(session_id=session.id, time_bill=Decimal(str(time)), food_bill=Decimal(str(food)),
+                             discount_amount=Decimal(str(discount)), discount_item_id=1 if food_discount else None,
+                             total_bill=Decimal(str(time + food - discount)), payment_method=method,
+                             credit_applied=Decimal(str(credit_applied)), created_at=at)
+            db.session.add(tx)
+            db.session.flush()
+            return tx
+
+        checkout("Mixed", 20, 180, 18, "cash", food_discount=True)
+        checkout("Time discount", 50, 0, 10, "gcash")
+        checkout("Take Out", 0, 100, 0, "bdo", food_only=True)
+        checkout("Bank food", 0, 20, 0, "bpi", food_only=True)
+        checkout("Bank time", 30, 0, 0, "queenbank")
+        refunded = checkout("Refunded tomorrow", 0, 100, 0, "cash", food_only=True)
+        mistaken = checkout("False entry", 50, 0, 0, "cash")
+        credited = checkout("Credit retained", 0, 60, 0, "gcash", food_only=True)
+        pending = checkout("Pending void", 0, 7, 0, "cash", food_only=True)
+        rejected = checkout("Rejected void", 0, 8, 0, "gcash", food_only=True)
+        checkout("Credit replacement", 0, 60, 0, "cash", at=after_midnight,
+                 food_only=True, credit_applied=60)
+
+        for tx, status, treatment, refund in (
+            (refunded, "approved", "refund", 100),
+            (mistaken, "approved", "false_entry", 0),
+            (credited, "approved", "retained_credit", 0),
+            (pending, "pending", None, 0),
+            (rejected, "rejected", None, 0),
+        ):
+            db.session.add(CheckoutVoidRequest(
+                transaction_id=tx.id, status=status, money_treatment=treatment,
+                request_reason="Audit", requested_by_id=1, original_amount=tx.total_bill,
+                original_payment_method=tx.payment_method, original_business_date=first_day,
+                decided_at=after_midnight if status != "pending" else None,
+                decision_business_date=next_day if status == "approved" else None,
+                refund_amount=Decimal(str(refund)),
+            ))
+
+        unpaid = CustomerSession(customer_name="Unpaid order", space_type_id=takeout.id,
+                                 service_mode="food_only", status="active")
+        db.session.add(unpaid)
+        db.session.flush()
+        db.session.add(Order(customer_session_id=unpaid.id, food_total_after=Decimal("200"),
+                             created_at=before_midnight))
+        debt = Receivable(customer_name="Debtor", items_description="Old debt", amount_owed=Decimal("150"),
+                          partial_paid=Decimal("150"), due_date=next_day, created_by=1)
+        db.session.add(debt)
+        db.session.flush()
+        db.session.add(ReceivablePayment(receivable_id=debt.id, amount=Decimal("150"),
+                                         payment_method="cash", received_by=1, received_at=after_midnight))
+        db.session.commit()
+
+        rows = SalesService(SalesRepository()).list_reports(first_day, next_day)
+        by_day = {row["report_date"]: row for row in rows}
+        first = by_day[first_day.isoformat()]
+        second = by_day[next_day.isoformat()]
+        assert (first["cowork_bill"], first["cafe_bill"], first["discounts_total"],
+                first["total_revenue"], first["total_refunds"]) == (100, 415, 28, 487, 0)
+        assert (first["cowork_discounts"], first["cafe_discounts"]) == (10, 18)
+        assert first["credit_received_methods"]["gcash"] == 60
+        assert first["total_orders"] == 1  # The unpaid order did not add to sales.
+        assert (second["cowork_bill"], second["cafe_bill"], second["discounts_total"],
+                second["total_revenue"], second["total_refunds"], second["total_collections"]) == (0, 60, 0, 60, 100, 150)
+        assert second["credit_applied_methods"]["cash"] == 60
+        for row in rows:
+            assert row["cowork_bill"] + row["cafe_bill"] - row["discounts_total"] == row["total_revenue"]
+            assert row["sales_reconciliation_difference"] == 0
+            for method, amount in row["checkout_methods"].items():
+                assert row["cowork_methods"][method] + row["cafe_methods"][method] - row["discount_methods"][method] == amount
+        assert first["checkout_methods"] == {
+            "cash": 289, "gcash": 48, "bdo": 100, "bpi": 20, "queenbank": 30, "unclassified": 0,
+        }
+
+        generated = SalesService(SalesRepository()).generate_report(first_day, 1, "Audit")
+        assert (generated["data"]["cowork_bill"], generated["data"]["cafe_bill"],
+                generated["data"]["discounts_total"], generated["data"]["total_refunds"]) == (100, 415, 28, 0)
+        assert SalesService(SalesRepository()).list_reports(first_day, first_day)[0]["cowork_bill"] == 100
+        context = DailyBalanceExportService(db).build_pdf_context(rows, [])
+        assert (context["cowork_bill"], context["cafe_bill"], context["discounts_total"],
+                context["total_revenue"], context["total_refunds"]) == (100, 475, 28, 547, 100)
+        assert "Checkout Sales Breakdown" in render_template(DailyBalanceExportService.PDF_TEMPLATE, **context)
+
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, username="test_user", role="admin",
+                    last_activity=datetime.now(timezone.utc).timestamp())
+    query = "start_date=2026-10-05&end_date=2026-10-06"
+    api = client.get(f"/admin/daily-balance/api/reports?{query}")
+    assert api.status_code == 200
+    assert api.get_json()["data"][0]["cafe_bill"] == 60
+    csv_response = client.get(f"/admin/daily-balance/api/reports/export-csv?{query}")
+    assert csv_response.status_code == 200
+    assert "Cowork Bill,Cafe Bill,Discounts,Checkout Sales,Refunds Paid" in csv_response.data.decode("utf-8")
+    assert "₱100.00,₱415.00,₱28.00,₱487.00,₱0.00" in csv_response.data.decode("utf-8")
+    excel_response = client.get(f"/admin/daily-balance/api/reports/export-excel?{query}")
+    assert excel_response.status_code == 200
+    workbook = load_workbook(BytesIO(excel_response.data), read_only=True, data_only=True)
+    assert workbook["Summary"]["B24"].value == 100
+    assert workbook["Summary"]["B25"].value == 475
+    assert [workbook["Daily Reports"].cell(row=1, column=column).value for column in range(24, 29)] == [
+        "Cowork Bill", "Cafe Bill", "Discounts", "Refunds Paid", "Sales Reconciliation Difference",
+    ]
+    assert [workbook["Daily Reports"].cell(row=3, column=column).value for column in range(24, 28)] == [
+        100, 415, 28, 0,
+    ]
+    pdf_response = client.get(f"/admin/daily-balance/api/reports/export-pdf?{query}")
+    assert pdf_response.status_code == 200
+    assert pdf_response.data.startswith(b"%PDF")
+
+
+def test_legacy_checkout_component_mismatch_is_reported_without_changing_sales(app):
+    day = date(2026, 10, 5)
+    with app.app_context():
+        space = SpaceType(name="Regular Lounge", rate_per_minute=Decimal("0.1667"))
+        db.session.add(space)
+        db.session.flush()
+        session = CustomerSession(customer_name="Legacy", space_type_id=space.id, status="completed")
+        db.session.add(session)
+        db.session.flush()
+        db.session.add(Transaction(session_id=session.id, time_bill=Decimal("20"), food_bill=Decimal("80"),
+                                   discount_amount=Decimal("0"), total_bill=Decimal("95"),
+                                   payment_method="cash", created_at=datetime(2026, 10, 5, 8)))
+        db.session.commit()
+        row = SalesRepository().daily_ledger(day, day)[day]
+        assert row["total_revenue"] == row["checkout_methods"]["cash"] == 95
+        assert (row["cowork_bill"], row["cafe_bill"], row["sales_reconciliation_difference"]) == (20, 80, 5)
 
 
 def test_additive_upgrade_accepts_legacy_sqlite_schema():

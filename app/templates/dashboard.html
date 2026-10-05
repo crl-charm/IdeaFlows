@@ -78,7 +78,7 @@
               <th class="d-none d-md-table-cell">Purpose</th>
               <th>Space</th>
               <th>Time In</th>
-              <th class="d-none d-md-table-cell">Duration</th>
+              <th class="d-none d-md-table-cell">Billable time</th>
               <th class="d-none d-md-table-cell">Current Bill</th>
               <th class="text-end">Actions</th>
               {% endif %}
@@ -133,6 +133,18 @@
         <span id="cancelHistoryPage" aria-live="polite"></span>
         <button type="button" class="btn btn-outline-secondary" id="cancelHistoryNext" onclick="loadCancelledCheckins(cancelHistoryPage + 1)">Next</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="timeHistoryModal" tabindex="-1" aria-labelledby="timeHistoryTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="timeHistoryTitle">Time bill history</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="timeHistoryBody" aria-live="polite"></div>
     </div>
   </div>
 </div>
@@ -273,6 +285,57 @@ const sessionsById = new Map();
 let cancelSessionId = null;
 let cancelHistoryPage = 1;
 
+async function setSessionTimePaused(sessionId, pause, button) {
+    const customer = sessionsById.get(sessionId);
+    if (!customer) return;
+    const action = pause ? "Pause" : "Resume";
+    const confirmed = await showConfirmDialog({
+        title: `${action} time bill`,
+        message: `${action} the time bill for ${customer.customer_name}?`,
+        confirmText: "Yes",
+        cancelText: "No"
+    });
+    if (!confirmed) return;
+    try {
+        const result = await runButtonAction(button, {label: `${action}...`}, key => fetchJSON(
+            `/api/sessions/${sessionId}/${pause ? "pause" : "resume"}`, {
+                method: "POST", headers: {"Idempotency-Key": key}
+            }
+        ));
+        showToast(result.message, "success");
+        loadSessions();
+    } catch (error) {
+        showToast(error.message || `Could not ${action.toLowerCase()} the time bill.`, "error");
+        if (error.status === 409) loadSessions();
+    }
+}
+
+async function showTimeHistory(sessionId) {
+    const body = document.getElementById("timeHistoryBody");
+    body.textContent = "Loading...";
+    const historyModal = bootstrap.Modal.getOrCreateInstance(document.getElementById("timeHistoryModal"));
+    const cancellations = document.getElementById("cancelledCheckinsModal");
+    if (cancellations.classList.contains("show")) {
+        cancellations.addEventListener("hidden.bs.modal", () => historyModal.show(), {once: true});
+        bootstrap.Modal.getInstance(cancellations).hide();
+    } else {
+        historyModal.show();
+    }
+    try {
+        const history = await fetchJSON(`/api/sessions/${sessionId}/time-history`);
+        document.getElementById("timeHistoryTitle").textContent = `${history.customer_name} — time bill history`;
+        body.innerHTML = history.events.length ? history.events.map(event => `
+            <div class="border-bottom py-2">
+                <strong>${escapeHtml(event.action.replaceAll("_", " "))}</strong> · ${escapeHtml(event.at)}<br>
+                <small>${escapeHtml(event.actor)} (${escapeHtml(event.role)})</small><br>
+                <small>Billable time ${formatTime(event.billable_seconds_before)} → ${formatTime(event.billable_seconds_after)};
+                time bill ₱${event.time_bill_before.toFixed(2)} → ₱${event.time_bill_after.toFixed(2)}</small>
+            </div>`).join("") : "No time bill changes for this visit.";
+    } catch (error) {
+        body.textContent = error.message || "Could not load time bill history.";
+    }
+}
+
 function openCancelCheckin(sessionId) {
     const customer = sessionsById.get(sessionId);
     if (!customer) return;
@@ -315,7 +378,8 @@ async function loadCancelledCheckins(page) {
             <tr>
               <td>${escapeHtml(row.customer_name)}<br><small>${escapeHtml(row.space_name)}</small></td>
               <td>${escapeHtml(row.time_in)}<br><small>Cancelled ${escapeHtml(row.cancelled_at)}</small></td>
-              <td>${escapeHtml(row.actor || "Unknown")}<br><small>${escapeHtml(row.reason || "")}</small></td>
+              <td>${escapeHtml(row.actor || "Unknown")}<br><small>${escapeHtml(row.reason || "")}</small>
+              ${row.has_time_pause ? `<br><button type="button" class="btn btn-link btn-sm p-0" onclick="showTimeHistory(${row.session_id})" aria-label="Time bill history for ${escapeHtml(row.customer_name)}">Time history</button>` : ''}</td>
               <td class="text-end">₱${row.uncollected_time_charge.toFixed(2)}</td>
             </tr>`).join("") : '<tr><td colspan="4" class="text-center">No cancelled Time Ins.</td></tr>';
         document.getElementById("cancelHistoryPage").textContent = `Page ${page} of ${Math.max(1, result.pages)}`;
@@ -580,7 +644,7 @@ function viewOrder(sessionId) {
                 <p><strong>Customer:</strong> ${escapeHtml(data.customer_name)}</p>
                 ${isFoodOnly
                     ? `<p><strong>Location:</strong> ${escapeHtml(data.space_type)} · Food only</p>`
-                    : `<p><strong>Time Used:</strong> ${formatTime(Math.floor(data.minutes_used * 60))}</p>`}
+                    : `<p><strong>Billable time:</strong> ${formatTime(Math.floor(data.minutes_used * 60))}${data.paused ? ' · Paused' : ''}</p>`}
 
                 <hr>
                 <h6>Orders:</h6>
@@ -838,7 +902,12 @@ function buildSessionTableRow(session) {
         `;
     }
     const purpose = session.space_type === "Boardroom" ? (session.purpose || "N/A") : "—";
-    const cancelButton = ["Regular Lounge", "Premium Lounge"].includes(session.space_type)
+    const timedLounge = ["Regular Lounge", "Premium Lounge"].includes(session.space_type);
+    const pauseButton = timedLounge
+        ? `<button type="button" class="btn btn-outline-primary btn-sm py-2 ms-1" onclick="setSessionTimePaused(${session.session_id}, ${!session.paused}, this)" aria-label="${session.paused ? 'Resume' : 'Pause'} time bill for ${escapeHtml(session.customer_name)}">${session.paused ? 'Resume time' : 'Pause time'}</button>` : "";
+    const historyButton = session.has_time_pause
+        ? `<button type="button" class="btn btn-outline-secondary btn-sm py-2 ms-1" onclick="showTimeHistory(${session.session_id})" aria-label="Time bill history for ${escapeHtml(session.customer_name)}">Time history</button>` : "";
+    const cancelButton = timedLounge
         ? `<button type="button" class="btn btn-outline-danger btn-sm py-2 ms-1" onclick="openCancelCheckin(${session.session_id})" title="Cancel mistaken Time In" aria-label="Cancel mistaken Time In for ${escapeHtml(session.customer_name)}"><i class="bi bi-trash3" aria-hidden="true"></i></button>` : "";
     return `
         <tr>
@@ -848,7 +917,7 @@ function buildSessionTableRow(session) {
             <td class="d-none d-md-table-cell">${escapeHtml(purpose)}</td>
             <td>${escapeHtml(session.space_type)}</td>
             <td>${escapeHtml(session.time_in)}</td>
-            <td class="d-none d-md-table-cell">${formatTime(session.seconds_used)}</td>
+            <td class="d-none d-md-table-cell">${formatTime(session.seconds_used)}${session.paused ? '<br><span class="badge text-bg-warning">Paused</span>' : ''}</td>
             <td class="d-none d-md-table-cell">₱${session.current_bill.toFixed(2)}</td>
             <td class="text-end">
                 <button class="btn btn-primary btn-sm py-2 me-1"
@@ -859,6 +928,8 @@ function buildSessionTableRow(session) {
                     onclick="viewOrder(${session.session_id})">
                     View Order
                 </button>
+                ${pauseButton}
+                ${historyButton}
                 ${cancelButton}
             </td>
         </tr>
@@ -884,10 +955,15 @@ function buildSessionMobileCard(session) {
         `;
     }
     const schoolLine = [session.school, session.course].filter(Boolean).join(" · ");
+    const timedLounge = ["Regular Lounge", "Premium Lounge"].includes(session.space_type);
+    const pauseButton = timedLounge
+        ? `<button type="button" class="btn btn-outline-primary flex-fill" onclick="setSessionTimePaused(${session.session_id}, ${!session.paused}, this)" aria-label="${session.paused ? 'Resume' : 'Pause'} time bill for ${escapeHtml(session.customer_name)}">${session.paused ? 'Resume time' : 'Pause time'}</button>` : "";
+    const historyButton = session.has_time_pause
+        ? `<button type="button" class="btn btn-outline-secondary flex-fill" onclick="showTimeHistory(${session.session_id})" aria-label="Time bill history for ${escapeHtml(session.customer_name)}">Time history</button>` : "";
     const purposeLine = session.space_type === "Boardroom" && session.purpose
         ? `<div class="mobile-session-purpose text-muted small mb-2">Purpose: ${escapeHtml(session.purpose)}</div>`
         : "";
-    const cancelButton = ["Regular Lounge", "Premium Lounge"].includes(session.space_type)
+    const cancelButton = timedLounge
         ? `<button type="button" class="btn btn-outline-danger" onclick="openCancelCheckin(${session.session_id})" aria-label="Cancel mistaken Time In for ${escapeHtml(session.customer_name)}"><i class="bi bi-trash3" aria-hidden="true"></i></button>` : "";
     return `
         <article class="mobile-session-card card shadow-sm mb-2">
@@ -906,15 +982,16 @@ function buildSessionMobileCard(session) {
                         <span class="fw-semibold">${escapeHtml(session.time_in)}</span>
                     </div>
                     <div class="col-4">
-                        <span class="text-muted d-block">Duration</span>
+                        <span class="text-muted d-block">Billable time</span>
                         <span class="fw-semibold">${formatTime(session.seconds_used)}</span>
+                        ${session.paused ? '<span class="badge text-bg-warning">Paused</span>' : ''}
                     </div>
                     <div class="col-4">
                         <span class="text-muted d-block">Bill</span>
                         <span class="fw-semibold">₱${session.current_bill.toFixed(2)}</span>
                     </div>
                 </div>
-                <div class="mobile-session-actions${cancelButton ? " with-cancel" : ""}">
+                <div class="mobile-session-actions">
                     <button type="button" class="btn btn-primary"
                         onclick="goToOrder(${session.session_id})">
                         Add Order
@@ -923,8 +1000,8 @@ function buildSessionMobileCard(session) {
                         onclick="viewOrder(${session.session_id})">
                         View Order
                     </button>
-                    ${cancelButton}
                 </div>
+                ${timedLounge ? `<div class="d-flex flex-wrap gap-2 mt-2">${pauseButton}${historyButton}${cancelButton}</div>` : ''}
             </div>
         </article>
     `;

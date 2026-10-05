@@ -17,6 +17,8 @@ class CustomerSession(db.Model):
     service_mode = db.Column(db.String(16), nullable=False, default="timed", server_default="timed")
     time_in = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     time_out = db.Column(db.DateTime, nullable=True)
+    paused_at = db.Column(db.DateTime, nullable=True)
+    paused_microseconds = db.Column(db.BigInteger, nullable=False, default=0, server_default="0")
     status = db.Column(db.String(20), default="active", nullable=False)
     cancelled_at = db.Column(db.DateTime, nullable=True)
     cancelled_by_id = db.Column(db.Integer, nullable=True)

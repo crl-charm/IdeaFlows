@@ -8,6 +8,7 @@ from app.core.idempotency import idempotent_request
 from app.dto.serializers import serialize_transaction, serialize_void_request
 from app.repositories.session_repository import SessionRepository
 from app.services.session_service import SessionService
+from app.utils.payment import VALID_PAYMENT_METHODS
 
 
 # Blueprint groups related routes together
@@ -49,6 +50,35 @@ def checkin():
 @login_required
 def get_active_sessions():
     return jsonify(_service.get_active_sessions_view())
+
+
+@session_bp.route("/api/sessions/<int:session_id>/pause", methods=["POST"])
+@staff_or_admin_required
+@idempotent_request("pause-time-bill")
+def pause_time_bill(session_id: int):
+    payload, status = _service.set_time_paused(
+        session_id, True, session["user_id"],
+        session.get("username") or "Staff", session.get("role") or "staff",
+    )
+    return jsonify(payload), status
+
+
+@session_bp.route("/api/sessions/<int:session_id>/resume", methods=["POST"])
+@staff_or_admin_required
+@idempotent_request("resume-time-bill")
+def resume_time_bill(session_id: int):
+    payload, status = _service.set_time_paused(
+        session_id, False, session["user_id"],
+        session.get("username") or "Staff", session.get("role") or "staff",
+    )
+    return jsonify(payload), status
+
+
+@session_bp.route("/api/sessions/<int:session_id>/time-history")
+@staff_or_admin_required
+def session_time_history(session_id: int):
+    payload, status = _service.time_history(session_id)
+    return jsonify(payload), status
 
 
 @session_bp.route("/api/sessions/<int:session_id>/cancel", methods=["POST"])
@@ -133,6 +163,8 @@ def checkout(session_id):
         discount_type=discount_type,
         discount_item_id=discount_item_id,
         actor_name=actor_name,
+        actor_id=session.get("user_id"),
+        actor_role=session.get("role") or "staff",
     )
     if isinstance(resp, tuple):
         payload, status = resp
@@ -153,13 +185,29 @@ def preview_checkout(session_id):
 @session_bp.route("/api/checkout-records")
 @login_required
 def checkout_records():
-    page = max(request.args.get("page", 1, type=int) or 1, 1)
-    per_page = min(max(request.args.get("per_page", 50, type=int) or 50, 1), 100)
+    paginated = request.args.get("paginated") == "1"
+    if paginated:
+        try:
+            page = int(request.args.get("page", "1"))
+            per_page = int(request.args.get("per_page", "50"))
+        except ValueError:
+            return jsonify({"error": "Invalid page or page size."}), 400
+        if not 1 <= page <= 1_000_000 or not 1 <= per_page <= 100:
+            return jsonify({"error": "Page must be 1–1,000,000 and page size must be 1–100."}), 400
+    else:
+        page = max(request.args.get("page", 1, type=int) or 1, 1)
+        per_page = min(max(request.args.get("per_page", 50, type=int) or 50, 1), 100)
 
     # Optional date-range filter (YYYY-MM-DD strings from the frontend)
     date_from_str = request.args.get("date_from", "").strip()
     date_to_str   = request.args.get("date_to",   "").strip()
     payment_filter = request.args.get("payment_method", "").strip().lower()
+    search = request.args.get("search", "").strip()
+    status = request.args.get("status", "").strip()
+    if paginated and (payment_filter and payment_filter not in VALID_PAYMENT_METHODS
+                      or status not in {"", "pending_void", "completed", "voided"}
+                      or len(search) > 100):
+        return jsonify({"error": "Invalid checkout filter."}), 400
 
     date_from = None
     date_to   = None
@@ -169,13 +217,21 @@ def checkout_records():
         if date_to_str:
             date_to = datetime.strptime(date_to_str, "%Y-%m-%d").date()
     except ValueError:
-        pass  # Ignore bad dates — return unfiltered
+        if paginated:
+            return jsonify({"error": "Invalid date. Use YYYY-MM-DD."}), 400
+    if paginated and date_from and date_to and date_from > date_to:
+        return jsonify({"error": "From date must be on or before To date."}), 400
 
     transactions = _service.checkout_records(
         page=page, per_page=per_page, date_from=date_from, date_to=date_to,
-        payment_method=payment_filter,
+        payment_method=payment_filter, search=search if paginated else "",
+        status=status if paginated else "",
     )
-    return jsonify([serialize_transaction(tx) for tx in transactions.items])
+    data = [serialize_transaction(tx) for tx in transactions.items]
+    if paginated:
+        return jsonify({"data": data, "total": transactions.total, "page": page,
+                        "per_page": per_page, "has_next": transactions.has_next})
+    return jsonify(data)
 
 
 @session_bp.route("/api/checkout-records/<int:tx_id>/void-request", methods=["POST"])

@@ -38,11 +38,11 @@
   <form id="receivable-form"><div class="modal-body">
     <div class="mb-2"><label class="form-label" for="customerName">Customer name *</label><input id="customerName" name="customer_name" class="form-control" maxlength="100" required></div>
     <div class="mb-2"><label class="form-label" for="customerContact">Contact</label><input id="customerContact" name="customer_contact" class="form-control" maxlength="100"></div>
-    <div class="mb-2"><label class="form-label" for="matchingTabs">Open customer tab</label><select id="matchingTabs" class="form-select"><option value="">Create a new tab</option></select><div class="form-text">Choose an existing tab to add to it. With a contact number, a matching open tab is reused automatically.</div></div>
+    <div class="mb-2"><label class="form-label" for="matchingTabs">Matching customers</label><select id="matchingTabs" class="form-select" aria-describedby="matchingCustomersStatus"><option value="">New customer / keep typing</option></select><div id="matchingCustomersStatus" class="form-text" role="status" aria-live="polite">Type at least two letters of a name or contact. Choose a match to use its open tab or start a new cycle.</div></div>
     <div class="mb-2"><label class="form-label" for="itemsDesc">Items taken *</label><textarea id="itemsDesc" name="items_description" class="form-control" required></textarea></div>
     <div class="mb-2"><label class="form-label" for="receivableNotes">Borrowed utensils / notes</label><textarea id="receivableNotes" name="notes" class="form-control" maxlength="2000"></textarea></div>
     <div class="mb-2"><label class="form-label" for="amountOwed">Amount owed (₱) *</label><input id="amountOwed" name="amount_owed" type="number" min="0.01" step="0.01" class="form-control" required></div>
-    <div class="mb-2"><label class="form-label" for="approvedByStaff">Approved by staff</label><input id="approvedByStaff" name="approved_by_staff" class="form-control" maxlength="100"></div>
+    <div class="mb-2"><span class="form-label d-block">Approved by staff</span><strong>{{ session.get('username', 'Signed-in user') }}</strong></div>
     <div class="mb-2"><label class="form-label" for="incurredDate">Date Taken *</label><input id="incurredDate" name="incurred_date" type="date" class="form-control" required></div>
     <div class="mb-2"><label class="form-label" for="dueDate">Due date *</label><input id="dueDate" name="due_date" type="date" class="form-control" required></div>
   </div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" id="save-receivable" class="btn btn-warning">Save debt</button></div></form>

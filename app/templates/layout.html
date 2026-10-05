@@ -683,6 +683,7 @@
         titleEl.textContent = options.title || "Confirm";
         messageEl.textContent = options.message || "Are you sure you want to continue?";
         confirmBtn.textContent = options.confirmText || "Confirm";
+        cancelBtn.textContent = options.cancelText || "Cancel";
         confirmBtn.className = "btn px-4 " + (options.confirmClass || "btn-success");
 
         var iconType = options.iconType || "default";

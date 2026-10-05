@@ -16,6 +16,7 @@ class User(db.Model, AuthAccountMixin):
     role = db.Column(db.String(20), nullable=False, default="staff")
     job_role = db.Column(db.String(50), nullable=False, default="general")  # cashier, cook, general
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    deactivated_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def __repr__(self) -> str:

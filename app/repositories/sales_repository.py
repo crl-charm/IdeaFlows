@@ -151,6 +151,11 @@ class SalesRepository:
                 rows[day] = {
                     "checkout_methods": {m: Decimal("0") for m in METHODS},
                     "checkout_counts": {m: 0 for m in METHODS},
+                    "cowork_methods": {m: Decimal("0") for m in METHODS},
+                    "cafe_methods": {m: Decimal("0") for m in METHODS},
+                    "discount_methods": {m: Decimal("0") for m in METHODS},
+                    "cowork_discounts": Decimal("0"),
+                    "cafe_discounts": Decimal("0"),
                     "refund_methods": {m: Decimal("0") for m in METHODS},
                     "refund_counts": {m: 0 for m in METHODS},
                     "credit_received_methods": {m: Decimal("0") for m in METHODS},
@@ -218,6 +223,14 @@ class SalesRepository:
                 if getattr(tx, "credit_refunded", None) and tx.credit_refunded > 0:
                     daily["refund_methods"][bucket] += Decimal(str(tx.credit_refunded))
                     daily["refund_counts"][bucket] += 1
+
+            # These are the original checkout bills, not order-placement estimates.
+            # Only branches counted as checkout sales reach this point.
+            daily["cowork_methods"][bucket] += Decimal(str(tx.time_bill or 0))
+            daily["cafe_methods"][bucket] += Decimal(str(tx.food_bill or 0))
+            discount = Decimal(str(tx.discount_amount or 0))
+            daily["discount_methods"][bucket] += discount
+            daily["cafe_discounts" if tx.discount_item_id is not None else "cowork_discounts"] += discount
 
         # 2. Approved void refunds on their decision business day
         approved_refunds = CheckoutVoidRequest.query.filter(
@@ -307,6 +320,9 @@ class SalesRepository:
             budget_spend = daily["adjustment_expense_methods"]
 
             tot_rev = float(sum(checkout.values()))
+            cowork = daily["cowork_methods"]
+            cafe = daily["cafe_methods"]
+            discounts = daily["discount_methods"]
             tot_ref = float(sum(refund.values()))
             net_bal = float(
                 sum(checkout.values()) - sum(credit_applied.values()) + sum(credit_received.values())
@@ -322,6 +338,14 @@ class SalesRepository:
             result[day] = {
                 "report_date": day.isoformat(),
                 "total_revenue": tot_rev,
+                "cowork_bill": float(sum(cowork.values())),
+                "cafe_bill": float(sum(cafe.values())),
+                "discounts_total": float(sum(discounts.values())),
+                "cowork_discounts": float(daily["cowork_discounts"]),
+                "cafe_discounts": float(daily["cafe_discounts"]),
+                "sales_reconciliation_difference": float(sum(
+                    abs(checkout[m] - cowork[m] - cafe[m] + discounts[m]) for m in METHODS
+                )),
                 "total_refunds": tot_ref,
                 "net_revenue": tot_rev - tot_ref,
                 "total_collections": float(sum(collection.values())),
@@ -339,6 +363,9 @@ class SalesRepository:
                 "total_orders": daily["total_orders"],
                 "total_sessions": len(daily["session_ids"]),
                 "checkout_methods": {m: float(v) for m, v in checkout.items()},
+                "cowork_methods": {m: float(v) for m, v in cowork.items()},
+                "cafe_methods": {m: float(v) for m, v in cafe.items()},
+                "discount_methods": {m: float(v) for m, v in discounts.items()},
                 "refund_methods": {m: float(v) for m, v in refund.items()},
                 "refund_counts": {m: daily["refund_counts"][m] for m in METHODS},
                 "credit_received_methods": {m: float(v) for m, v in credit_received.items()},
@@ -363,6 +390,9 @@ class SalesRepository:
     def daily_ledger_empty(day: date) -> dict:
         return {
             "report_date": day.isoformat(), "total_revenue": 0.0,
+            "cowork_bill": 0.0, "cafe_bill": 0.0, "discounts_total": 0.0,
+            "cowork_discounts": 0.0, "cafe_discounts": 0.0,
+            "sales_reconciliation_difference": 0.0,
             "total_refunds": 0.0, "net_revenue": 0.0,
             "total_collections": 0.0, "total_expenses": 0.0,
             "total_payables_paid": 0.0, "net_balance": 0.0,
@@ -375,7 +405,7 @@ class SalesRepository:
             **{f"{m}_count": 0 for m in METHODS},
             **{f"{m}_refund": 0.0 for m in METHODS},
             **{f"{bucket}_methods": {m: 0.0 for m in METHODS}
-               for bucket in ("checkout", "collection", "expense", "external_expense", "expense_paid",
+               for bucket in ("checkout", "cowork", "cafe", "discount", "collection", "expense", "external_expense", "expense_paid",
                               "expense_void", "payable", "external_payable", "payable_paid",
                               "adjustment_income", "adjustment_expense", "refund",
                               "credit_received", "credit_applied")},

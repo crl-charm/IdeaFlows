@@ -5,8 +5,9 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
-from app.repositories.receivable_repository import ReceivableRepository
+from app.repositories.receivable_repository import ReceivableRepository, ReceivableTabConflict
 from app import db
+from app.models import Admin, User
 from app.models.receivable import ReceivableTab
 from sqlalchemy.exc import IntegrityError
 from app.repositories.sales_repository import SalesRepository
@@ -94,6 +95,11 @@ class ReceivableService:
         return {"data": rows, "pagination": {"page": pagination.page, "pages": pagination.pages,
                 "total": pagination.total, "has_next": pagination.has_next, "has_prev": pagination.has_prev}}
 
+    def suggest_customers(self, search: str) -> list[dict]:
+        if not isinstance(search, str) or not 2 <= len(search.strip()) <= 100:
+            raise ValueError("Enter 2–100 characters to search customers.")
+        return self.repo.suggest_customers(search.strip())
+
     def tab_detail(self, tab_id: int) -> dict | None:
         tab = db.session.get(ReceivableTab, tab_id)
         if not tab:
@@ -127,10 +133,10 @@ class ReceivableService:
         due_date: str,
         created_by: int,
         session_id: Optional[int],
-        approved_by_staff: Optional[str] = None,
         incurred_date: Optional[str] = None,
         notes: Optional[str] = None,
         tab_id: Optional[int] = None,
+        actor_role: str = "staff",
     ) -> dict[str, Any]:
         if not isinstance(customer_name, str) or not customer_name.strip() or len(customer_name.strip()) > 100:
             raise ValueError("Enter a customer name up to 100 characters.")
@@ -152,8 +158,11 @@ class ReceivableService:
             raise ValueError("Enter a positive amount with up to two decimal places.")
         if notes is not None and (not isinstance(notes, str) or len(notes) > 2000):
             raise ValueError("Notes must be text up to 2,000 characters.")
-        if approved_by_staff is not None and (not isinstance(approved_by_staff, str) or len(approved_by_staff) > 100):
-            raise ValueError("Approved by staff must be text up to 100 characters.")
+        if actor_role not in {"admin", "staff"}:
+            raise ValueError("Signed-in account not found. Please log in again.")
+        actor = db.session.get(Admin if actor_role == "admin" else User, created_by)
+        if not actor:
+            raise ValueError("Signed-in account not found. Please log in again.")
         clean_notes = notes.strip() if notes else ""
         if session_id not in (None, ""):
             from app.models import CustomerSession
@@ -167,7 +176,7 @@ class ReceivableService:
             try:
                 receivable = self.repo.create(
                     customer_name.strip(), customer_contact.strip(), items_description.strip(), amount_decimal,
-                    due, created_by, session_id, approved_by_staff, incurred, clean_notes,
+                    due, created_by, session_id, actor.username, incurred, clean_notes,
                     int(tab_id) if tab_id is not None else None,
                 )
                 self.repo.save()
@@ -175,7 +184,7 @@ class ReceivableService:
             except IntegrityError:
                 db.session.rollback()
                 if attempt or tab_id is not None:
-                    raise ValueError("The customer tab changed. Refresh and try again.")
+                    raise ReceivableTabConflict("The customer tab changed. Refresh and try again.")
         raise ValueError("Could not create customer tab.")
 
     def mark_paid(self, receivable_id: int, amount: Any, received_by: int, payment_method: str, request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:

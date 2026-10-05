@@ -429,7 +429,7 @@
           <i class="bi bi-person-x-fill"></i>
         </div>
         <h4 id="offline-staff">—</h4>
-        <p>Offline / Inactive</p>
+        <p>Offline</p>
       </div>
     </div>
 
@@ -470,6 +470,7 @@
       <option value="all">All Status</option>
       <option value="online">Active / Online</option>
       <option value="offline">Offline</option>
+      <option value="deactivated">Deactivated</option>
     </select>
   </div>
 
@@ -663,23 +664,36 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+          <div>
+            <label for="staff-attendance-date" class="form-label small mb-1">Event date (Asia/Manila)</label>
+            <input type="date" id="staff-attendance-date" class="form-control" onchange="loadStaffAttendanceData()">
+          </div>
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setStaffAttendanceDate(new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date()))">Today</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setStaffAttendanceDate('')">Show All</button>
+          <small id="staff-attendance-count" class="text-muted ms-auto" aria-live="polite"></small>
+        </div>
         <div class="table-responsive">
           <table class="modern-table">
             <thead>
               <tr>
+                <th>Event</th>
                 <th>Name</th>
                 <th>Shift Role</th>
-                <th>Time In</th>
-                <th>Time Out</th>
+                <th>Event time</th>
+                <th>Paired time</th>
                 <th>Source</th>
               </tr>
             </thead>
             <tbody id="staff-attendance-body">
               <tr>
-                <td colspan="5" class="text-center text-muted py-4">Loading...</td>
+                <td colspan="6" class="text-center text-muted py-4">Loading...</td>
               </tr>
             </tbody>
           </table>
+        </div>
+        <div id="staff-attendance-pagination" class="text-center mt-3 d-none">
+          <button type="button" class="btn btn-outline-secondary" onclick="loadStaffAttendanceData(staffAttendancePage + 1)">Load older events</button>
         </div>
       </div>
     </div>
@@ -874,8 +888,8 @@
 
   // LOAD USERS
   function loadUsers() {
-
-    fetch("/api/admin/users", { credentials: "include" })
+    const showDeactivated = document.getElementById("statusFilter").value === "deactivated";
+    fetch(showDeactivated ? "/api/admin/users?inactive=1&per_page=100" : "/api/admin/users", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         if (!Array.isArray(data)) {
@@ -890,7 +904,7 @@
         let filtered = data.filter(u => {
           const matchSearch = u.name.toLowerCase().includes(search) || u.username.toLowerCase().includes(search);
           const matchRole = roleFilter === "all" ? true : (u.job_role || "general").toLowerCase() === roleFilter;
-          const matchStatus = statusFilter === "all"
+          const matchStatus = showDeactivated || statusFilter === "all"
             ? true
             : (statusFilter === "online" ? !!u.is_online : !u.is_online);
           return matchSearch && matchRole && matchStatus;
@@ -907,21 +921,22 @@
           return a.name.localeCompare(b.name);
         });
 
-        // Stats
-        const staffOnly = data.filter(u => u.role === "staff");
-        const onlineCount = staffOnly.filter(u => u.is_online).length;
-        document.getElementById("total-staff").textContent = staffOnly.length;
-        document.getElementById("online-staff").textContent = onlineCount;
-        document.getElementById("offline-staff").textContent = staffOnly.length - onlineCount;
-        document.getElementById("count-cashier").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "cashier").length;
-        document.getElementById("count-cook").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "cook").length;
-        document.getElementById("count-server").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "server").length;
-        document.getElementById("count-general").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "general").length;
+        if (!showDeactivated) {
+          const staffOnly = data.filter(u => u.role === "staff");
+          const onlineCount = staffOnly.filter(u => u.is_online).length;
+          document.getElementById("total-staff").textContent = staffOnly.length;
+          document.getElementById("online-staff").textContent = onlineCount;
+          document.getElementById("offline-staff").textContent = staffOnly.length - onlineCount;
+          document.getElementById("count-cashier").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "cashier").length;
+          document.getElementById("count-cook").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "cook").length;
+          document.getElementById("count-server").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "server").length;
+          document.getElementById("count-general").textContent = staffOnly.filter(u => (u.job_role || "general").toLowerCase() === "general").length;
+        }
 
         const tbody = document.getElementById("users-table-body");
 
         if (filtered.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">No staff found.</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">${showDeactivated ? 'No deactivated staff.' : 'No staff found.'}</td></tr>`;
           return;
         }
 
@@ -930,11 +945,16 @@
         <td class="ps-4 fw-semibold">${u.name}</td>
         <td class="text-muted d-none d-md-table-cell">@${u.username}</td>
         <td>${jobRoleBadge(u.job_role)}</td>
-        <td class="d-none d-md-table-cell">${statusBadge(u.is_online)}</td>
+        <td class="d-none d-md-table-cell">${showDeactivated ? '<span class="badge bg-danger">Deactivated</span>' : statusBadge(u.is_online)}</td>
         <td class="text-muted d-none d-md-table-cell" style="font-size:13px;">${u.created_at || "—"}</td>
         <td class="text-end pe-4">
           <div class="action-btn-group">
-            <button
+            ${showDeactivated ? `<button class="action-btn action-btn-edit"
+              title="Reactivate staff"
+              onclick="reactivateUser(${u.id}, decodeURIComponent(this.getAttribute('data-name')))"
+              data-name="${encodeURIComponent(u.name)}"
+            ><i class="bi bi-person-check-fill"></i> Reactivate</button>
+            <small class="d-block text-muted mt-1">Recovery closes ${new Date(u.reactivate_until).toLocaleString()}</small>` : `<button
               class="action-btn action-btn-edit"
               title="Edit staff"
               onclick="openEdit(${u.id}, decodeURIComponent(this.getAttribute('data-name')), decodeURIComponent(this.getAttribute('data-username')), decodeURIComponent(this.getAttribute('data-job-role')))"
@@ -943,15 +963,15 @@
               data-job-role="${encodeURIComponent(u.job_role || 'general')}"
             >
               <i class="bi bi-pencil-fill"></i> Edit
-            </button>
-            <button
+            </button>`}
+            ${showDeactivated ? '' : `<button
               class="action-btn action-btn-delete"
               title="Deactivate staff"
               onclick="deleteUser(${u.id}, decodeURIComponent(this.getAttribute('data-name')))"
               data-name="${encodeURIComponent(u.name)}"
             >
               <i class="bi bi-person-x-fill"></i> Deactivate
-            </button>
+            </button>`}
           </div>
         </td>
       </tr>
@@ -1003,38 +1023,67 @@
       });
   }
 
-  function loadStaffAttendanceData() {
-    return fetch("/api/admin/staff-attendance", { credentials: "include" })
-      .then(res => {
-        if (!res.ok) throw new Error("Could not load staff shifts.");
-        return res.json();
-      })
-      .then(data => {
-        const body = document.getElementById("staff-attendance-body");
-        if (!Array.isArray(data) || !data.length) {
-          body.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No staff shifts recorded yet.</td></tr>`;
-        } else {
-          body.innerHTML = data.map(r => `
-        <tr>
-          <td>${escapeHTML(r.name)}</td>
-          <td>${escapeHTML(r.shift_role)}</td>
-          <td>${escapeHTML(r.time_in)}</td>
-          <td>${escapeHTML(r.time_out)}</td>
-          <td>${escapeHTML(r.source)}</td>
-        </tr>
-      `).join("");
+  let staffAttendanceEvents = [];
+  let staffAttendancePage = 0;
+  let staffAttendanceRequest = 0;
+
+  function setStaffAttendanceDate(day) {
+    document.getElementById('staff-attendance-date').value = day;
+    loadStaffAttendanceData();
+  }
+
+  function loadStaffAttendanceData(page = 1) {
+    const requestNumber = ++staffAttendanceRequest;
+    const day = document.getElementById('staff-attendance-date').value;
+    const params = new URLSearchParams({events: '1', page: String(page), per_page: '50'});
+    if (day) params.set('date', day);
+    return fetchJSON(`/api/admin/staff-attendance?${params}`).then(result => {
+      if (requestNumber !== staffAttendanceRequest) return;
+      if (!Array.isArray(result.data)) throw new Error('Invalid attendance response.');
+      staffAttendanceEvents = page === 1 ? result.data : [...staffAttendanceEvents, ...result.data];
+      staffAttendancePage = page;
+      document.getElementById('staff-attendance-count').textContent = `Showing ${staffAttendanceEvents.length} of ${result.total} event(s)`;
+      document.getElementById('staff-attendance-pagination').classList.toggle('d-none', !result.has_next);
+      const body = document.getElementById('staff-attendance-body');
+      if (!staffAttendanceEvents.length) {
+        body.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">No staff events on this date.</td></tr>`;
+        return;
+      }
+      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      let previousDay = '';
+      body.innerHTML = staffAttendanceEvents.map(event => {
+        let heading = '';
+        if (event.event_date !== previousDay) {
+          previousDay = event.event_date;
+          const [year, month, date] = previousDay.split('-').map(Number);
+          heading = `<tr class="table-light"><th scope="rowgroup" colspan="6">${months[month - 1]} ${date}, ${year}</th></tr>`;
         }
-      });
+        return `${heading}<tr>
+          <td><strong>${escapeHTML(event.event)}</strong></td>
+          <td>${escapeHTML(event.name)}</td>
+          <td>${escapeHTML(event.shift_role)}</td>
+          <td>${escapeHTML(event.time)}</td>
+          <td>${escapeHTML(event.paired_time)}</td>
+          <td>${escapeHTML(event.source)}</td>
+        </tr>`;
+      }).join('');
+    }).catch(error => {
+      if (requestNumber !== staffAttendanceRequest) return;
+      if (page === 1) {
+        staffAttendanceEvents = [];
+        staffAttendancePage = 0;
+        document.getElementById('staff-attendance-count').textContent = 'Could not load events';
+        document.getElementById('staff-attendance-pagination').classList.add('d-none');
+        document.getElementById('staff-attendance-body').innerHTML =
+          `<tr><td colspan="6" class="text-center text-danger py-4">Could not load staff attendance.</td></tr>`;
+      }
+      showToast(error.message || 'Failed to load staff attendance records.', 'error');
+    });
   }
 
   function openStaffAttendance() {
-    loadStaffAttendanceData()
-      .then(() => {
-        new bootstrap.Modal(document.getElementById("staffAttendanceModal")).show();
-      })
-      .catch(() => {
-        showToast("Failed to load staff attendance records.", "error");
-      });
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('staffAttendanceModal')).show();
+    loadStaffAttendanceData();
   }
 
   function loadStaffAnalytics() {
@@ -1251,11 +1300,11 @@
   async function deleteUser(id, name) {
     const confirmed = await showConfirmDialog({
       title: "Deactivate Staff",
-      message: `Deactivate staff "${name}"? They will lose access; their sales and attendance history will remain.`,
+      message: `Deactivate staff "${name}"? They cannot sign in. An admin has 24 hours to reactivate them; after that, the account stays closed. Their history remains. To sign them out, use Active Sessions.`,
       confirmText: "Deactivate Staff",
       confirmClass: "btn-danger",
       iconType: "delete",
-      icon: '<i class="bi bi-trash3 fs-1 text-danger"></i>'
+      icon: '<i class="bi bi-person-x fs-1 text-danger"></i>'
     });
     if (!confirmed) return;
 
@@ -1287,11 +1336,36 @@
         }
 
         showToast(`Staff "${name}" deactivated.`, "success");
+        document.getElementById("statusFilter").value = "deactivated";
         loadUsers();
       })
       .catch(() => {
         showToast("Failed to deactivate staff. Please try again.", "error");
       });
+  }
+
+  async function reactivateUser(id, name) {
+    const confirmed = await showConfirmDialog({
+      title: "Reactivate Staff",
+      message: `Reactivate staff "${name}"? They can sign in again with their existing password.`,
+      confirmText: "Reactivate Staff",
+      confirmClass: "btn-success"
+    });
+    if (!confirmed) return;
+
+    try {
+      const response = await csrfFetch(`/api/admin/users/${id}/reactivate`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 410) loadUsers();
+        throw new Error(data.error || "Failed to reactivate staff.");
+      }
+      document.getElementById("statusFilter").value = "all";
+      showToast(data.message, "success");
+      loadUsers();
+    } catch (error) {
+      showToast(error.message || "Failed to reactivate staff.", "error");
+    }
   }
 
 
@@ -1424,7 +1498,7 @@
 
     // Reload the attendance records in-place if the modal is currently open!
     const modalEl = document.getElementById("staffAttendanceModal");
-    if (modalEl && modalEl.classList.contains("show")) {
+    if (modalEl && modalEl.classList.contains("show") && staffAttendancePage <= 1) {
       loadStaffAttendanceData();
     }
   }, 150);

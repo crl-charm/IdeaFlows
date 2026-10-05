@@ -69,6 +69,10 @@ class DailyBalanceExportService(ExportService):
             "reports": reports,
             "soft_entries": soft_entries,
             "total_revenue": sum(r["total_revenue"] for r in reports),
+            "cowork_bill": sum(r.get("cowork_bill", 0) for r in reports),
+            "cafe_bill": sum(r.get("cafe_bill", 0) for r in reports),
+            "discounts_total": sum(r.get("discounts_total", 0) for r in reports),
+            "sales_reconciliation_difference": sum(r.get("sales_reconciliation_difference", 0) for r in reports),
             "total_refunds": sum(r.get("total_refunds", 0) for r in reports),
             "total_expenses": sum(r["total_expenses"] for r in reports),
             "total_business_expenses": sum(r.get("total_business_expenses", 0) for r in reports),
@@ -109,7 +113,12 @@ class DailyBalanceExportService(ExportService):
             output,
             fieldnames=[
                 "Report Date",
-                "Total Revenue",
+                "Cowork Bill",
+                "Cafe Bill",
+                "Discounts",
+                "Checkout Sales",
+                "Refunds Paid",
+                "Sales Reconciliation Difference",
                 "Debt Collected",
                 "Cash",
                 "GCash",
@@ -138,7 +147,12 @@ class DailyBalanceExportService(ExportService):
         for report in reports:
             values = {
                 "Report Date": report["report_date"],
-                "Total Revenue": f"₱{report['total_revenue']:.2f}",
+                "Cowork Bill": f"₱{report.get('cowork_bill', 0):.2f}",
+                "Cafe Bill": f"₱{report.get('cafe_bill', 0):.2f}",
+                "Discounts": f"₱{report.get('discounts_total', 0):.2f}",
+                "Checkout Sales": f"₱{report['total_revenue']:.2f}",
+                "Refunds Paid": f"₱{report.get('total_refunds', 0):.2f}",
+                "Sales Reconciliation Difference": f"₱{report.get('sales_reconciliation_difference', 0):.2f}",
                 "Debt Collected": f"₱{report.get('total_collections', 0):.2f}",
                 "Cash": f"₱{report.get('cash_total', 0):.2f}",
                 "GCash": f"₱{report.get('gcash_total', 0):.2f}",
@@ -226,7 +240,7 @@ class DailyBalanceExportService(ExportService):
         total_bpi = sum(r.get("bpi_total", 0) for r in reports)
         total_queenbank = sum(r.get("queenbank_total", 0) for r in reports)
 
-        ws["A4"] = "Total Revenue:"
+        ws["A4"] = "Checkout Sales:"
         ws["B4"] = total_revenue
         ws["B4"].number_format = "₱#,##0.00"
 
@@ -284,6 +298,15 @@ class DailyBalanceExportService(ExportService):
         ws["B22"] = sum(r.get("total_business_payables_paid", 0) for r in reports)
         ws["A23"] = "External-funded Supplier Paid:"
         ws["B23"] = sum(r.get("total_external_payables_paid", 0) for r in reports)
+        for row, label, key in (
+            (24, "Cowork Bill:", "cowork_bill"),
+            (25, "Cafe Bill:", "cafe_bill"),
+            (26, "Discounts:", "discounts_total"),
+            (27, "Refunds Paid:", "total_refunds"),
+            (28, "Sales Reconciliation Difference:", "sales_reconciliation_difference"),
+        ):
+            ws.cell(row=row, column=1, value=label)
+            ws.cell(row=row, column=2, value=sum(r.get(key, 0) for r in reports)).number_format = "₱#,##0.00"
 
     @staticmethod
     def _create_details_sheet(ws, reports: list[dict[str, Any]]) -> None:
@@ -298,7 +321,7 @@ class DailyBalanceExportService(ExportService):
 
         headers = [
             "Report Date",
-            "Revenue",
+            "Checkout Sales",
             "Debt Collected",
             "Cash",
             "GCash",
@@ -320,6 +343,11 @@ class DailyBalanceExportService(ExportService):
             "External-funded Expenses",
             "Business Supplier Paid",
             "External-funded Supplier Paid",
+            "Cowork Bill",
+            "Cafe Bill",
+            "Discounts",
+            "Refunds Paid",
+            "Sales Reconciliation Difference",
         ]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col)
@@ -354,16 +382,24 @@ class DailyBalanceExportService(ExportService):
                 report.get("total_external_expenses", 0),
                 report.get("total_business_payables_paid", 0),
                 report.get("total_external_payables_paid", 0),
+                report.get("cowork_bill", 0),
+                report.get("cafe_bill", 0),
+                report.get("discounts_total", 0),
+                report.get("total_refunds", 0),
+                report.get("sales_reconciliation_difference", 0),
             ]
             for col, value in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col)
                 cell.value = value
                 cell.border = border
-                if 2 <= col <= 12 or col in (18, 19, 20, 21, 22, 23):
+                if 2 <= col <= 12 or col in (18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28):
                     cell.number_format = "₱#,##0.00"
 
         for col, width in zip("ABCDEFGHIJKLMNOPQRSTUVW", [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 10, 10, 15, 25, 25, 15, 15, 15, 15, 15, 15]):
             ws.column_dimensions[col].width = width
+        for col in ("X", "Y", "Z", "AA"):
+            ws.column_dimensions[col].width = 15
+        ws.column_dimensions["AB"].width = 32
 
     @staticmethod
     def _create_comparison_sheet(ws, reports: list[dict[str, Any]]) -> None:

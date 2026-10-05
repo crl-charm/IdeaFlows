@@ -123,13 +123,21 @@
     </div>
   </div>
 
-  <h5 class="mb-3 text-muted">Live Summary (Asia/Manila)</h5>
+  <h5 class="mb-3 text-muted">Live Summary (Asia/Manila) <small id="sales-summary-period" class="d-block fw-normal"></small></h5>
+  <div class="row g-3 mb-2">
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Cowork bill</small><div class="fs-5 fw-bold">₱<span id="cowork-bill">0.00</span></div><small class="text-muted">Space and time, before discounts</small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Cafe bill</small><div class="fs-5 fw-bold">₱<span id="cafe-bill">0.00</span></div><small class="text-muted">Menu items, before discounts</small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Discounts</small><div class="fs-5 fw-bold">−₱<span id="discounts-total">0.00</span></div><small class="text-muted">Cowork ₱<span id="cowork-discounts">0.00</span> · Cafe ₱<span id="cafe-discounts">0.00</span></small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Checkout sales</small><div class="fs-5 fw-bold">₱<span id="total-revenue">0.00</span></div><small class="text-muted">Cowork + Cafe − Discounts</small></div></div></div>
+  </div>
+  <p id="sales-reconciliation-warning" class="text-danger small d-none" role="alert">One or more payment methods differ from the Cowork + Cafe − Discounts breakdown by a combined ₱<span id="sales-reconciliation-difference">0.00</span>. Review older checkout records.</p>
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-4">
       <div class="card bg-light border-0 shadow-sm">
         <div class="card-body p-3">
-          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total Revenue</small>
-          <div class="fs-5 fw-bold text-dark mt-1">₱<span id="total-revenue">0.00</span></div>
+          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Refunds paid</small>
+          <div class="fs-5 fw-bold text-danger mt-1">₱<span id="total-refunds">0.00</span></div>
+          <small class="text-muted">Shown on the day refunded, separate from checkout sales</small>
         </div>
       </div>
     </div>
@@ -155,7 +163,7 @@
   <div class="row g-3 mb-4">
     <div class="col-12"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Supplier Payments</small><div class="fs-5 fw-bold">₱<span id="total-payables-paid">0.00</span></div><small class="text-muted">Business ₱<span id="total-business-payables-paid">0.00</span> · External-funded ₱<span id="total-external-payables-paid">0.00</span></small></div></div></div>
   </div>
-  <p class="text-muted small">Net movement = checkout sales + customer debt collected + other income − expenses − supplier payments − budget spending. Debt collection and other income are separate from sales revenue.</p>
+  <p class="text-muted small">Net movement = checkout sales − credit applied + credit received + customer debt collected + other income − business expenses − business supplier payments − budget spending − refunds paid. Debt collection and other income are separate from sales revenue.</p>
 
   <h6 class="mb-2 text-muted fw-semibold">Payment Breakdown</h6>
   <div class="row g-2 mb-4">
@@ -209,7 +217,7 @@
   <div class="card mb-4 daily-balance-table-card">
     <div class="card-header"><strong>Payment method reconciliation</strong><small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small></div>
     <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Payment method reconciliation table" tabindex="0">
-      <table class="table table-sm mb-0"><thead><tr><th>Method</th><th>Checkout sales</th><th>Debt collected</th><th>Other income</th><th>Business expenses</th><th>External-funded expenses</th><th>Business supplier paid</th><th>External-funded supplier paid</th><th>Budget spent</th><th>Net movement</th></tr></thead><tbody id="method-reconciliation-body"></tbody></table>
+      <table class="table table-sm mb-0"><thead><tr><th>Method</th><th>Checkout sales</th><th>Credit applied</th><th>Credit received</th><th>Debt collected</th><th>Other income</th><th>Business expenses</th><th>External-funded expenses</th><th>Business supplier paid</th><th>External-funded supplier paid</th><th>Budget spent</th><th>Refunds paid</th><th>Net movement</th></tr></thead><tbody id="method-reconciliation-body"></tbody></table>
     </div>
   </div>
 
@@ -224,7 +232,11 @@
           <thead>
             <tr>
               <th>Report Date</th>
-              <th>Revenue</th>
+              <th>Cowork bill</th>
+              <th>Cafe bill</th>
+              <th>Discounts</th>
+              <th>Checkout sales</th>
+              <th>Refunds paid</th>
               <th>Debt Collected</th>
               <th>Other Income</th>
               <th>Cash</th>
@@ -442,14 +454,22 @@ function renderFilteredReports() {
   const tbody = document.getElementById('reports-table-body');
   tbody.innerHTML = '';
 
-  let sumRevenue = 0, sumExpenses = 0, sumBusinessExpenses = 0, sumExternalExpenses = 0, sumPayables = 0, sumBusinessPayables = 0, sumExternalPayables = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
+  let sumCowork = 0, sumCafe = 0, sumDiscounts = 0, sumCoworkDiscounts = 0, sumCafeDiscounts = 0, sumRevenue = 0, sumRefunds = 0, sumDifference = 0;
+  let sumExpenses = 0, sumBusinessExpenses = 0, sumExternalExpenses = 0, sumPayables = 0, sumBusinessPayables = 0, sumExternalPayables = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
   let cashCount = 0, gcashCount = 0, bdoCount = 0, bpiCount = 0, queenbankCount = 0;
   const methods = ['cash', 'gcash', 'bdo', 'bpi', 'queenbank', 'unclassified'];
-  const flows = ['checkout', 'collection', 'adjustment_income', 'expense', 'external_expense', 'payable', 'external_payable', 'adjustment_expense'];
+  const flows = ['checkout', 'credit_applied', 'credit_received', 'collection', 'adjustment_income', 'expense', 'external_expense', 'payable', 'external_payable', 'adjustment_expense', 'refund'];
   const methodTotals = Object.fromEntries(methods.map(m => [m, Object.fromEntries(flows.map(flow => [flow, 0]))]));
 
   filteredReports.forEach(report => {
+    sumCowork += report.cowork_bill || 0;
+    sumCafe += report.cafe_bill || 0;
+    sumDiscounts += report.discounts_total || 0;
+    sumCoworkDiscounts += report.cowork_discounts || 0;
+    sumCafeDiscounts += report.cafe_discounts || 0;
     sumRevenue += report.total_revenue;
+    sumRefunds += report.total_refunds || 0;
+    sumDifference += report.sales_reconciliation_difference || 0;
     sumExpenses += report.total_expenses;
     sumBusinessExpenses += report.total_business_expenses || 0;
     sumExternalExpenses += report.total_external_expenses || 0;
@@ -477,7 +497,11 @@ function renderFilteredReports() {
     tbody.innerHTML += `
       <tr>
         <td>${report.report_date}</td>
+        <td>₱${(report.cowork_bill || 0).toFixed(2)}</td>
+        <td>₱${(report.cafe_bill || 0).toFixed(2)}</td>
+        <td>₱${(report.discounts_total || 0).toFixed(2)}</td>
         <td>₱${report.total_revenue.toFixed(2)}</td>
+        <td>₱${(report.total_refunds || 0).toFixed(2)}</td>
         <td>₱${report.total_collections.toFixed(2)}</td>
         <td>₱${report.total_other_income.toFixed(2)}</td>
         <td>₱${(report.cash_total || 0).toFixed(2)}</td>
@@ -498,10 +522,21 @@ function renderFilteredReports() {
   });
 
   if (filteredReports.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="17" class="text-center text-muted py-3">No activity found for this range.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="21" class="text-center text-muted py-3">No activity found for this range.</td></tr>';
   }
 
+  document.getElementById('sales-summary-period').textContent = startDateVal && endDateVal
+    ? (startDateVal === endDateVal ? startDateVal : `${startDateVal} to ${endDateVal}`)
+    : (startDateVal ? `From ${startDateVal}` : (endDateVal ? `Through ${endDateVal}` : 'All recorded dates'));
+  document.getElementById('cowork-bill').textContent = sumCowork.toFixed(2);
+  document.getElementById('cafe-bill').textContent = sumCafe.toFixed(2);
+  document.getElementById('discounts-total').textContent = sumDiscounts.toFixed(2);
+  document.getElementById('cowork-discounts').textContent = sumCoworkDiscounts.toFixed(2);
+  document.getElementById('cafe-discounts').textContent = sumCafeDiscounts.toFixed(2);
   document.getElementById('total-revenue').textContent = sumRevenue.toFixed(2);
+  document.getElementById('total-refunds').textContent = sumRefunds.toFixed(2);
+  document.getElementById('sales-reconciliation-difference').textContent = Math.abs(sumDifference).toFixed(2);
+  document.getElementById('sales-reconciliation-warning').classList.toggle('d-none', Math.abs(sumDifference) < 0.005);
   document.getElementById('total-expenses').textContent = sumExpenses.toFixed(2);
   document.getElementById('total-business-expenses').textContent = sumBusinessExpenses.toFixed(2);
   document.getElementById('total-external-expenses').textContent = sumExternalExpenses.toFixed(2);
@@ -524,8 +559,8 @@ function renderFilteredReports() {
     m !== 'unclassified' || flows.some(flow => methodTotals[m][flow] !== 0)
   ).map(m => {
     const v = methodTotals[m];
-    const net = v.checkout + v.collection + v.adjustment_income - v.expense - v.payable - v.adjustment_expense;
-    return `<tr><th>${m === 'unclassified' ? 'Older records (method unknown)' : m.toUpperCase()}</th><td>₱${v.checkout.toFixed(2)}</td><td>₱${v.collection.toFixed(2)}</td><td>₱${v.adjustment_income.toFixed(2)}</td><td>₱${v.expense.toFixed(2)}</td><td>₱${v.external_expense.toFixed(2)}</td><td>₱${v.payable.toFixed(2)}</td><td>₱${v.external_payable.toFixed(2)}</td><td>₱${v.adjustment_expense.toFixed(2)}</td><td>₱${net.toFixed(2)}</td></tr>`;
+    const net = v.checkout - v.credit_applied + v.credit_received + v.collection + v.adjustment_income - v.expense - v.payable - v.adjustment_expense - v.refund;
+    return `<tr><th>${m === 'unclassified' ? 'Older records (method unknown)' : m.toUpperCase()}</th><td>₱${v.checkout.toFixed(2)}</td><td>₱${v.credit_applied.toFixed(2)}</td><td>₱${v.credit_received.toFixed(2)}</td><td>₱${v.collection.toFixed(2)}</td><td>₱${v.adjustment_income.toFixed(2)}</td><td>₱${v.expense.toFixed(2)}</td><td>₱${v.external_expense.toFixed(2)}</td><td>₱${v.payable.toFixed(2)}</td><td>₱${v.external_payable.toFixed(2)}</td><td>₱${v.adjustment_expense.toFixed(2)}</td><td>₱${v.refund.toFixed(2)}</td><td>₱${net.toFixed(2)}</td></tr>`;
   }).join('');
 
   renderFilteredSoftBalances(startDateVal, endDateVal);

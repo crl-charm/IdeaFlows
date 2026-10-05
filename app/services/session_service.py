@@ -6,11 +6,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
 from app import db
-from app.utils.billing import calculate_time_bill
+from app.utils.billing import billable_microseconds, current_time_bill
 from app.core.interfaces import Clock, Notifier
 from app.models import (
     BoardroomBooking, BookingChange, CheckoutVoidRequest, CustomerSession,
-    Order, Receivable, Transaction,
+    Order, Receivable, SessionTimeEvent, Transaction,
 )
 from app.repositories.session_repository import SessionRepository
 from app.repositories.sales_repository import SalesRepository
@@ -201,10 +201,8 @@ class SessionService:
         now = self.clock.now()
 
         for sess in sessions:
-            time_difference = now - sess.time_in
-            minutes_used = time_difference.total_seconds() / 60
             linked = boardroom_by_session.get(sess.id)
-            current_bill = calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=now)
+            current_bill = current_time_bill(sess, now, booking=linked)
             purpose = linked.purpose if linked else None
 
             result.append(
@@ -217,12 +215,78 @@ class SessionService:
                     "purpose": purpose,
                     "space_type": sess.space_type.name,
                     "time_in": (sess.time_in + timedelta(hours=8)).strftime("%B %d, %Y %I:%M %p"),
-                    "seconds_used": int(time_difference.total_seconds()),
+                    "seconds_used": billable_microseconds(sess, now) // 1_000_000,
+                    "paused": sess.paused_at is not None,
+                    "has_time_pause": bool(sess.paused_at or sess.paused_microseconds),
                     "current_bill": float(current_bill),
                 }
             )
 
         return result
+
+    @staticmethod
+    def _record_time_event(sess: CustomerSession, action: str, when,
+                           actor_id: int, actor_name: str, actor_role: str,
+                           before_microseconds: int, before_bill: Decimal) -> None:
+        db.session.add(SessionTimeEvent(
+            session_id=sess.id, action=action, occurred_at=when,
+            business_date=manila_date(when), actor_id=actor_id,
+            actor_name=actor_name[:100], actor_role=actor_role[:20],
+            billable_microseconds_before=before_microseconds,
+            billable_microseconds_after=billable_microseconds(sess, when),
+            time_bill_before=before_bill,
+            time_bill_after=current_time_bill(sess, when),
+        ))
+
+    def set_time_paused(self, session_id: int, pause: bool, actor_id: int,
+                        actor_name: str, actor_role: str) -> tuple[dict[str, Any], int]:
+        sess = self.repo.get_session_for_update(session_id)
+        if not sess:
+            return {"error": "Customer session not found."}, 404
+        if (sess.status != "active" or sess.service_mode != "timed"
+                or sess.space_type.name not in {"Regular Lounge", "Premium Lounge"}):
+            return {"error": "Only active Regular or Premium time bills can be paused."}, 409
+        if bool(sess.paused_at) == pause:
+            return {"error": "This time bill is already paused." if pause else "This time bill is already running."}, 409
+
+        now = self.clock.now()
+        before_microseconds = billable_microseconds(sess, now)
+        before_bill = current_time_bill(sess, now)
+        if pause:
+            sess.paused_at = now
+        else:
+            sess.paused_microseconds += max(0, (now - sess.paused_at) // timedelta(microseconds=1))
+            sess.paused_at = None
+        self._record_time_event(sess, "paused" if pause else "resumed", now,
+                                actor_id, actor_name, actor_role, before_microseconds, before_bill)
+        self.repo.commit()
+        return {
+            "message": f"Time bill {'paused' if pause else 'resumed'} for {sess.customer_name}.",
+            "paused": pause,
+            "billable_seconds": billable_microseconds(sess, now) // 1_000_000,
+            "time_bill": float(current_time_bill(sess, now)),
+        }, 200
+
+    def time_history(self, session_id: int) -> tuple[dict[str, Any], int]:
+        sess = self.repo.get_session(session_id)
+        if not sess:
+            return {"error": "Customer session not found."}, 404
+        events = (SessionTimeEvent.query.filter_by(session_id=session_id)
+                  .order_by(SessionTimeEvent.occurred_at, SessionTimeEvent.id).all())
+        return {
+            "customer_name": sess.customer_name,
+            "space_type": sess.space_type.name,
+            "events": [{
+                "action": event.action,
+                "at": (event.occurred_at + timedelta(hours=8)).strftime("%B %d, %Y %I:%M:%S %p"),
+                "actor": event.actor_name,
+                "role": event.actor_role,
+                "billable_seconds_before": event.billable_microseconds_before // 1_000_000,
+                "billable_seconds_after": event.billable_microseconds_after // 1_000_000,
+                "time_bill_before": float(event.time_bill_before),
+                "time_bill_after": float(event.time_bill_after),
+            } for event in events],
+        }, 200
 
     def cancel_unused_checkin(self, session_id: int, reason: str, actor_id: int,
                               actor_name: str, actor_role: str) -> tuple[dict[str, Any], int]:
@@ -250,7 +314,13 @@ class SessionService:
             return {"error": "This Time In is linked to a booking. Use Space Bookings."}, 409
 
         now = self.clock.now()
-        uncollected = calculate_time_bill(sess.space_type, (now - sess.time_in).total_seconds() / 60)
+        uncollected = current_time_bill(sess, now)
+        if sess.paused_at:
+            before_microseconds = billable_microseconds(sess, now)
+            sess.paused_microseconds += max(0, (now - sess.paused_at) // timedelta(microseconds=1))
+            sess.paused_at = None
+            self._record_time_event(sess, "cancelled", now, actor_id, actor_name,
+                                    actor_role, before_microseconds, uncollected)
         sess.status = "cancelled"
         sess.time_out = now
         sess.cancelled_at = now
@@ -283,6 +353,7 @@ class SessionService:
                 "actor": row.cancelled_by_name,
                 "reason": row.cancel_reason,
                 "uncollected_time_charge": float(row.cancelled_uncollected_amount or 0),
+                "has_time_pause": bool(row.paused_microseconds),
             } for row in history.items],
             "page": page,
             "pages": history.pages,
@@ -304,16 +375,10 @@ class SessionService:
 
         food_only = sess.service_mode == "food_only"
         now = self.clock.now()
-        minutes_used = 0 if food_only else (now - sess.time_in).total_seconds() / 60
+        minutes_used = 0 if food_only else float(Decimal(billable_microseconds(sess, now)) / Decimal(60_000_000))
         linked = None if food_only else self.repo.get_active_boardroom_bookings_by_session_ids([session_id]).get(session_id)
 
-        # Check if session has a retained fixed time charge from voided booking
-        if getattr(sess, "retained_time_bill", None) is not None:
-            time_bill = Decimal(str(sess.retained_time_bill))
-        else:
-            time_bill = Decimal("0.00") if food_only else calculate_time_bill(
-                sess.space_type, minutes_used, booking=linked, now_utc=now
-            )
+        time_bill = current_time_bill(sess, now, booking=linked)
         food_total, carried_food = self._food_bill(sess)
         try:
             discount_amount, selected_type, selected_item_id = self._discount(session_id, discount_type, discount_item_id, time_bill)
@@ -331,6 +396,7 @@ class SessionService:
             "space_type": sess.space_type.name,
             "service_mode": sess.service_mode,
             "minutes_used": minutes_used,
+            "paused": sess.paused_at is not None,
             "time_bill": float(time_bill),
             "food_bill": float(food_total),
             "carried_food_bill": float(carried_food),
@@ -348,7 +414,8 @@ class SessionService:
     def checkout(
         self, session_id: int, payment_method: str = "cash", amount_tendered: Any = None,
         discount_type: str | None = None, discount_item_id: Any = None,
-        actor_name: str | None = None,
+        actor_name: str | None = None, actor_id: int | None = None,
+        actor_role: str = "staff",
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         sess = self.repo.get_session_for_update(session_id)
         if not sess:
@@ -371,14 +438,12 @@ class SessionService:
 
         time_out = self.clock.now()
         food_only = sess.service_mode == "food_only"
-        minutes_used = 0 if food_only else (time_out - sess.time_in).total_seconds() / 60
+        billable_us = 0 if food_only else billable_microseconds(sess, time_out)
+        minutes_used = float(Decimal(billable_us) / Decimal(60_000_000))
         rate = 0 if food_only else sess.space_type.rate_per_minute
         linked = None if food_only else self.repo.get_active_boardroom_bookings_by_session_ids([session_id]).get(session_id)
 
-        if getattr(sess, "retained_time_bill", None) is not None:
-            time_bill = Decimal(str(sess.retained_time_bill)).quantize(Decimal("0.01"))
-        else:
-            time_bill = Decimal("0.00") if food_only else calculate_time_bill(sess.space_type, minutes_used, booking=linked, now_utc=time_out)
+        time_bill = current_time_bill(sess, time_out, booking=linked)
 
         food_total, _ = self._food_bill(sess)
         if food_only and food_total <= 0:
@@ -420,8 +485,17 @@ class SessionService:
             tendered = None
             change_given = None
 
+        if sess.paused_at and actor_id is None:
+            return {"error": "Authenticated checkout actor is required for a paused time bill."}, 401
+
         sess.payment_method = payment_method
         sess.amount_tendered = tendered
+
+        if sess.paused_at:
+            sess.paused_microseconds += max(0, (time_out - sess.paused_at) // timedelta(microseconds=1))
+            sess.paused_at = None
+            self._record_time_event(sess, "checked_out", time_out, actor_id, actor_name or "Staff",
+                                    actor_role, billable_us, time_bill)
 
         tx = Transaction(
             session_id=sess.id,
@@ -437,6 +511,7 @@ class SessionService:
             change_given=change_given,
             billing_start_at=sess.time_in,
             billing_end_at=time_out,
+            billable_microseconds=billable_us if not food_only else None,
             customer_name_snapshot=sess.customer_name,
             space_name_snapshot=sess.space_type.name if sess.space_type else None,
             service_mode_snapshot=sess.service_mode,
@@ -501,11 +576,12 @@ class SessionService:
         }
 
     def checkout_records(self, page: int | None = None, per_page: int | None = None, *,
-                         date_from=None, date_to=None, payment_method: str = ""):
+                         date_from=None, date_to=None, payment_method: str = "",
+                         search: str = "", status: str = ""):
         if page and per_page:
             return self.repo.list_transactions_paginated(
                 page=page, per_page=per_page, date_from=date_from, date_to=date_to,
-                payment_method=payment_method,
+                payment_method=payment_method, search=search, status=status,
             )
         return self.repo.list_transactions()
 

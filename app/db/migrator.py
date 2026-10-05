@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import text, inspect, case, func
@@ -89,6 +89,7 @@ class SchemaMigrator:
                 "is_active",
                 "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
             ),
+            ("users", "deactivated_at", "ALTER TABLE users ADD COLUMN deactivated_at DATETIME NULL"),
             ("orders", "handled_by", "ALTER TABLE orders ADD COLUMN handled_by INT NULL"),
             (
                 "customer_sessions",
@@ -107,6 +108,8 @@ class SchemaMigrator:
             ("customer_sessions", "cancel_reason", "ALTER TABLE customer_sessions ADD COLUMN cancel_reason VARCHAR(500) NULL"),
             ("customer_sessions", "cancelled_space_name", "ALTER TABLE customer_sessions ADD COLUMN cancelled_space_name VARCHAR(100) NULL"),
             ("customer_sessions", "cancelled_uncollected_amount", "ALTER TABLE customer_sessions ADD COLUMN cancelled_uncollected_amount DECIMAL(10,2) NULL"),
+            ("customer_sessions", "paused_at", "ALTER TABLE customer_sessions ADD COLUMN paused_at DATETIME NULL"),
+            ("customer_sessions", "paused_microseconds", "ALTER TABLE customer_sessions ADD COLUMN paused_microseconds BIGINT NOT NULL DEFAULT 0"),
             ("boardroom_bookings", "session_id", "ALTER TABLE boardroom_bookings ADD COLUMN session_id INT NULL"),
             ("boardroom_bookings", "started_at", "ALTER TABLE boardroom_bookings ADD COLUMN started_at DATETIME NULL"),
             (
@@ -225,6 +228,7 @@ class SchemaMigrator:
             # Checkout records snapshots, void status, and retained credit
             ("transactions", "billing_start_at", "ALTER TABLE transactions ADD COLUMN billing_start_at DATETIME NULL"),
             ("transactions", "billing_end_at", "ALTER TABLE transactions ADD COLUMN billing_end_at DATETIME NULL"),
+            ("transactions", "billable_microseconds", "ALTER TABLE transactions ADD COLUMN billable_microseconds BIGINT NULL"),
             ("transactions", "customer_name_snapshot", "ALTER TABLE transactions ADD COLUMN customer_name_snapshot VARCHAR(100) NULL"),
             ("transactions", "space_name_snapshot", "ALTER TABLE transactions ADD COLUMN space_name_snapshot VARCHAR(100) NULL"),
             ("transactions", "service_mode_snapshot", "ALTER TABLE transactions ADD COLUMN service_mode_snapshot VARCHAR(16) NULL"),
@@ -260,6 +264,14 @@ class SchemaMigrator:
             except Exception as e:
                 db.session.rollback()
                 print(f"[WARNING] Column {column_name} on {table_name} skipped/failed: {e}")
+
+        if "deactivated_at" not in table_columns.get("users", set()):
+            raise RuntimeError("Staff recovery migration could not add users.deactivated_at")
+        db.session.execute(text(
+            "UPDATE users SET deactivated_at = :now "
+            "WHERE role = 'staff' AND is_active = FALSE AND deactivated_at IS NULL"
+        ), {"now": datetime.now(timezone.utc).replace(tzinfo=None)})
+        db.session.commit()
 
         self._ensure_indexes(db, inspector)
         self._backfill_receivable_tabs()

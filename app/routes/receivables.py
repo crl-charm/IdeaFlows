@@ -4,7 +4,7 @@ from math import isfinite
 
 from flask import Blueprint, jsonify, request, render_template, session
 
-from app.repositories.receivable_repository import ReceivableRepository
+from app.repositories.receivable_repository import ReceivableRepository, ReceivableTabConflict
 from app.services.receivable_service import ReceivableService
 from app.utils.auth import admin_required
 from app.core.socketio_handlers import emit_receivables_update
@@ -45,6 +45,16 @@ def api_tabs() -> tuple:
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     return jsonify({"success": True, **_service.tabs(chosen, search, page, per_page)}), 200
+
+
+@receivables_bp.get("/api/receivables/customer-suggestions")
+@admin_required
+def api_customer_suggestions() -> tuple:
+    try:
+        matches = _service.suggest_customers(request.args.get("q", ""))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    return jsonify({"success": True, "data": matches}), 200
 
 
 @receivables_bp.get("/api/receivables/tabs/<int:tab_id>")
@@ -98,11 +108,13 @@ def api_create_receivable() -> tuple:
             due_date=data.get("due_date"),
             created_by=user_id,
             session_id=data.get("session_id"),
-            approved_by_staff=data.get("approved_by_staff"),
             incurred_date=data.get("incurred_date"),
             notes=data.get("notes"),
             tab_id=data.get("tab_id"),
+            actor_role="admin",
         )
+    except ReceivableTabConflict as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     if result.get("success"):

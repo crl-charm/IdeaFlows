@@ -8,7 +8,7 @@ from flask import current_app
 
 from app.dto.serializers import serialize_user
 from app.models import Admin, User
-from app.repositories.admin_repository import AdminRepository
+from app.repositories.admin_repository import AdminRepository, STAFF_RECOVERY_WINDOW
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,13 @@ class AdminService:
         if job_role not in valid_job_roles:
             return {"error": "Invalid job role."}, 400
 
-        if User.query.filter_by(username=username).first() or Admin.query.filter_by(username=username).first():
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user and existing_user.role == "staff" and not existing_user.is_active:
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - STAFF_RECOVERY_WINDOW
+            if existing_user.deactivated_at and existing_user.deactivated_at > cutoff:
+                return {"error": "This staff account is deactivated. Select Deactivated in the staff list to reactivate it."}, 409
+            return {"error": "This username belongs to a former staff account and cannot be reused."}, 409
+        if existing_user or Admin.query.filter_by(username=username).first():
             return {"error": "Username already exists."}, 409
 
         # Password strength validation is handled in User model
@@ -50,11 +56,17 @@ class AdminService:
         self.repo.save()
         return {"message": "Staff created successfully."}, 201
 
-    def list_users(self, page: int, per_page: int):
-        pagination = self.repo.list_staff_paginated(page, per_page)
+    def list_users(self, page: int, per_page: int, *, active: bool = True):
+        pagination = self.repo.list_staff_paginated(page, per_page, active=active)
         online_user_ids = self.active_staff_ids()
         return [
-            {**serialize_user(u), "is_online": u.id in online_user_ids}
+            {
+                **serialize_user(u),
+                "is_active": u.is_active,
+                "is_online": u.id in online_user_ids,
+                "reactivate_until": (u.deactivated_at + STAFF_RECOVERY_WINDOW).isoformat() + "Z"
+                if u.deactivated_at and not u.is_active else None,
+            }
             for u in pagination.items
         ]
 
@@ -96,6 +108,18 @@ class AdminService:
         self.repo.deactivate_staff(user, datetime.now(timezone.utc).replace(tzinfo=None))
         self.repo.save()
         return {"message": "Staff deactivated."}
+
+    def reactivate_user(self, user_id: int):
+        user = self.repo.get_staff_user(user_id, active=False)
+        if not user:
+            return {"error": "Deactivated staff not found."}, 404
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - STAFF_RECOVERY_WINDOW
+        if not user.deactivated_at or user.deactivated_at <= cutoff:
+            return {"error": "The 24-hour reactivation window has expired."}, 410
+        user.is_active = True
+        user.deactivated_at = None
+        self.repo.save()
+        return {"message": "Staff reactivated."}
 
     def customer_records(self):
         sessions = self.repo.list_customer_sessions()
@@ -150,6 +174,10 @@ class AdminService:
                 "shift_role": shift.shift_role.title(),
                 "time_in": (shift.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
                 "time_out": (shift.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if shift.time_out else "Open shift",
+                "time_in_at": shift.time_in.isoformat(),
+                "time_out_at": shift.time_out.isoformat() if shift.time_out else None,
+                "time_in_date": (shift.time_in + timedelta(hours=8)).date().isoformat(),
+                "time_out_date": (shift.time_out + timedelta(hours=8)).date().isoformat() if shift.time_out else None,
                 "source": "Manual shift",
                 "sort_at": shift.time_in,
             }
@@ -162,6 +190,10 @@ class AdminService:
                 "shift_role": "Not recorded",
                 "time_in": (log.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if log.time_in else "N/A",
                 "time_out": (log.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if log.time_out else "Active",
+                "time_in_at": log.time_in.isoformat() if log.time_in else None,
+                "time_out_at": log.time_out.isoformat() if log.time_out else None,
+                "time_in_date": (log.time_in + timedelta(hours=8)).date().isoformat() if log.time_in else None,
+                "time_out_date": (log.time_out + timedelta(hours=8)).date().isoformat() if log.time_out else None,
                 "source": "Legacy login record",
                 "sort_at": log.time_in,
             }
@@ -172,6 +204,28 @@ class AdminService:
         for row in rows:
             del row["sort_at"]
         return rows
+
+    def staff_attendance_events(self, target_date=None):
+        events = []
+        for row in self.staff_attendance():
+            for action in ("time_in", "time_out"):
+                at = row[f"{action}_at"]
+                event_date = row[f"{action}_date"]
+                if not at or target_date and event_date != target_date.isoformat():
+                    continue
+                events.append({
+                    "id": f"{row['source']}:{row['id']}:{action}",
+                    "record_id": row["id"],
+                    "name": row["name"],
+                    "shift_role": row["shift_role"],
+                    "source": row["source"],
+                    "event": "Time In" if action == "time_in" else "Time Out",
+                    "event_date": event_date,
+                    "event_at": at,
+                    "time": row[action],
+                    "paired_time": row["time_out" if action == "time_in" else "time_in"],
+                })
+        return sorted(events, key=lambda event: (event["event_at"], event["id"]), reverse=True)
 
     def capacities(self):
         rows = self.repo.list_spaces_with_occupancy()

@@ -3,6 +3,7 @@ from .admin import Admin
 from .space_type import SpaceType
 from .space_price_history import SpacePriceHistory
 from .customer_session import CustomerSession
+from .session_time_event import SessionTimeEvent
 from .menu_item import MenuItem, MenuItemIngredient
 from .order import Order
 from .order_item import OrderItem
@@ -32,6 +33,7 @@ __all__ = [
     'SpaceType',
     'SpacePriceHistory',
     'CustomerSession',
+    'SessionTimeEvent',
     'MenuItem',
     'MenuItemIngredient',
     'Order',
