@@ -13,7 +13,7 @@ from app import db
 from app.models import (
     Transaction, DailySalesReport, Order, CustomerSession, Expense,
     SoftBalanceEntry, ReceivablePayment, PayablePayment, FinanceTransaction,
-    CheckoutVoidRequest,
+    CheckoutVoidRequest, CashBoxEvent,
 )
 from app.utils.dates import manila_day_bounds, inclusive_manila_bounds, manila_date
 from app.utils.payment import VALID_PAYMENT_METHODS
@@ -59,6 +59,8 @@ class SalesRepository:
                 ("payable", -1),
                 ("adjustment_expense", -1),
                 ("refund", -1),
+                ("owner_topup", 1),
+                ("cash_withdrawal", -1),
             )
         ), Decimal("0"))
 
@@ -170,12 +172,28 @@ class SalesRepository:
                     "payable_paid_methods": {m: Decimal("0") for m in METHODS},
                     "adjustment_income_methods": {m: Decimal("0") for m in METHODS},
                     "adjustment_expense_methods": {m: Decimal("0") for m in METHODS},
+                    "owner_topup_methods": {m: Decimal("0") for m in METHODS},
+                    "cash_withdrawal_methods": {m: Decimal("0") for m in METHODS},
+                    "owner_reimbursement_methods": {m: Decimal("0") for m in METHODS},
+                    "cash_box_movements": {"petty": Decimal("0"), "customer": Decimal("0"), "unknown": Decimal("0")},
+                    "cash_box_receipts": {"petty": Decimal("0"), "customer": Decimal("0"), "unknown": Decimal("0")},
+                    "cash_box_spending": {"petty": Decimal("0"), "customer": Decimal("0"), "unknown": Decimal("0")},
+                    "cash_box_topups": {"petty": Decimal("0"), "customer": Decimal("0"), "unknown": Decimal("0")},
+                    "cash_box_withdrawals": {"petty": Decimal("0"), "customer": Decimal("0"), "unknown": Decimal("0")},
+                    "cash_box_unassigned_count": 0,
                     "collection_groups": set(), "session_ids": set(), "total_orders": 0,
                 }
             return rows[day]
 
         def method(value: str | None) -> str:
             return value if value in VALID_PAYMENT_METHODS else "unclassified"
+
+        def box_move(daily: dict, amount: Decimal, box: str | None, flow: str = "receipts"):
+            assigned = box if box in {"petty", "customer"} else "unknown"
+            if assigned == "unknown":
+                daily["cash_box_unassigned_count"] += 1
+            daily["cash_box_movements"][assigned] += amount
+            daily[f"cash_box_{flow}"][assigned] += amount if flow in {"receipts", "topups"} else -amount
 
         # 1. Transactions & checkouts
         for tx in self._dated(
@@ -200,12 +218,16 @@ class SalesRepository:
                     daily = row(manila_date(tx.created_at))
                     bucket = method(tx.payment_method)
                     daily["credit_received_methods"][bucket] += Decimal(str(tx.total_bill or 0))
+                    if bucket == "cash":
+                        box_move(daily, Decimal(str(tx.total_bill or 0)), "customer")
                     continue
                 elif treatment == "refund":
                     # Sale history preserved on original day; refund event recorded on decision day
                     daily = row(manila_date(tx.created_at))
                     bucket = method(tx.payment_method)
                     daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
+                    if bucket == "cash":
+                        box_move(daily, Decimal(str(tx.total_bill or 0)), "customer")
                     daily["checkout_counts"][bucket] += 1
                     if tx.session and tx.session.service_mode != "food_only":
                         daily["session_ids"].add(tx.session_id)
@@ -214,6 +236,9 @@ class SalesRepository:
                 daily = row(manila_date(tx.created_at))
                 bucket = method(tx.payment_method)
                 daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
+                if bucket == "cash":
+                    box_move(daily, Decimal(str(tx.total_bill or 0)) - Decimal(str(tx.credit_applied or 0))
+                             - Decimal(str(tx.credit_refunded or 0)), "customer")
                 daily["checkout_counts"][bucket] += 1
                 if tx.session and tx.session.service_mode != "food_only":
                     daily["session_ids"].add(tx.session_id)
@@ -249,11 +274,15 @@ class SalesRepository:
                 daily = row(dec_day)
                 bucket = method(req.original_payment_method)
                 daily["refund_methods"][bucket] += Decimal(str(req.refund_amount))
+                if bucket == "cash":
+                    box_move(daily, -Decimal(str(req.refund_amount)), "customer", "spending")
                 daily["refund_counts"][bucket] += 1
 
         for payment in self._dated(ReceivablePayment.query, ReceivablePayment.received_at, start_date, end_date).all():
             daily = row(manila_date(payment.received_at))
             daily["collection_methods"][method(payment.payment_method)] += Decimal(str(payment.amount))
+            if method(payment.payment_method) == "cash":
+                box_move(daily, Decimal(str(payment.amount)), "customer")
             daily["collection_groups"].add(payment.payment_group_id or f"single-{payment.id}")
 
         expenses = Expense.query
@@ -281,6 +310,8 @@ class SalesRepository:
                 daily["expense_paid_methods"][bucket] += amount
                 target = "external_expense_methods" if expense.funding_source == "external" else "expense_methods"
                 daily[target][bucket] += amount
+                if bucket == "cash" and target == "expense_methods":
+                    box_move(daily, -amount, expense.cash_box, "spending")
             if expense.voided_at and expense.void_balance_before is not None:
                 void_day = manila_date(expense.voided_at)
                 if (not start_date or void_day >= start_date) and (not end_date or void_day <= end_date):
@@ -288,6 +319,8 @@ class SalesRepository:
                     daily["expense_void_methods"][bucket] += amount
                     target = "external_expense_methods" if expense.funding_source == "external" else "expense_methods"
                     daily[target][bucket] -= amount
+                    if bucket == "cash" and target == "expense_methods":
+                        box_move(daily, amount, expense.cash_box, "spending")
 
         for payment in self._dated(PayablePayment.query, PayablePayment.paid_at, start_date, end_date).all():
             daily = row(manila_date(payment.paid_at))
@@ -296,11 +329,34 @@ class SalesRepository:
             daily["payable_paid_methods"][bucket] += amount
             target = "external_payable_methods" if payment.funding_source == "external" else "payable_methods"
             daily[target][bucket] += amount
+            if payment.payable.owner_cash_event_id or payment.payable.owner_expense_id:
+                daily["owner_reimbursement_methods"][bucket] += amount
+            if bucket == "cash" and target == "payable_methods":
+                box_move(daily, -amount, payment.cash_box, "spending")
 
         for adjustment in self._dated(FinanceTransaction.query, FinanceTransaction.created_at, start_date, end_date).all():
             if adjustment._type in {"income", "expense"}:
                 bucket = "adjustment_income_methods" if adjustment._type == "income" else "adjustment_expense_methods"
                 row(manila_date(adjustment.created_at))[bucket][method(adjustment.payment_method)] += Decimal(str(adjustment._amount))
+                if method(adjustment.payment_method) == "cash":
+                    box_move(row(manila_date(adjustment.created_at)),
+                             Decimal(str(adjustment._amount)) * (1 if adjustment._type == "income" else -1),
+                             "customer", "receipts" if adjustment._type == "income" else "spending")
+
+        events = CashBoxEvent.query.filter(CashBoxEvent.kind != "opening")
+        if start_date:
+            events = events.filter(CashBoxEvent.effective_date >= start_date)
+        if end_date:
+            events = events.filter(CashBoxEvent.effective_date <= end_date)
+        for event in events.all():
+            if event.kind == "reversal" and event.reversed_entry.kind == "opening":
+                continue
+            daily = row(event.effective_date)
+            original_kind = event.reversed_entry.kind if event.kind == "reversal" else event.kind
+            box_move(daily, Decimal(str(event.effect)), event.box,
+                     "topups" if original_kind == "owner_topup" else "withdrawals")
+            bucket = "owner_topup_methods" if original_kind == "owner_topup" else "cash_withdrawal_methods"
+            daily[bucket]["cash"] += Decimal(str(event.effect)) * (1 if original_kind == "owner_topup" else -1)
 
         for order in self._dated(Order.query, Order.created_at, start_date, end_date).all():
             row(manila_date(order.created_at))["total_orders"] += 1
@@ -318,6 +374,8 @@ class SalesRepository:
             external_payable = daily["external_payable_methods"]
             other_income = daily["adjustment_income_methods"]
             budget_spend = daily["adjustment_expense_methods"]
+            owner_topup = daily["owner_topup_methods"]
+            cash_withdrawal = daily["cash_withdrawal_methods"]
 
             tot_rev = float(sum(checkout.values()))
             cowork = daily["cowork_methods"]
@@ -328,11 +386,13 @@ class SalesRepository:
                 sum(checkout.values()) - sum(credit_applied.values()) + sum(credit_received.values())
                 + sum(collection.values()) + sum(other_income.values())
                 - sum(expense.values()) - sum(payable.values()) - sum(budget_spend.values()) - sum(refund.values())
+                + sum(owner_topup.values()) - sum(cash_withdrawal.values())
             )
             cash_hand = float(
                 checkout["cash"] - credit_applied["cash"] + credit_received["cash"]
                 + collection["cash"] + other_income["cash"]
                 - expense["cash"] - payable["cash"] - budget_spend["cash"] - refund["cash"]
+                + owner_topup["cash"] - cash_withdrawal["cash"]
             )
 
             result[day] = {
@@ -353,6 +413,11 @@ class SalesRepository:
                 "total_business_expenses": float(sum(expense.values())),
                 "total_external_expenses": float(sum(external_expense.values())),
                 "total_payables_paid": float(sum(payable.values()) + sum(external_payable.values())),
+                "total_owner_reimbursements": float(sum(daily["owner_reimbursement_methods"].values())),
+                "total_supplier_payments": float(sum(payable.values()) + sum(external_payable.values())
+                                                 - sum(daily["owner_reimbursement_methods"].values())),
+                "total_owner_topups": float(sum(owner_topup.values())),
+                "total_cash_withdrawals": float(sum(cash_withdrawal.values())),
                 "total_business_payables_paid": float(sum(payable.values())),
                 "total_external_payables_paid": float(sum(external_payable.values())),
                 "total_other_income": float(sum(other_income.values())),
@@ -380,6 +445,13 @@ class SalesRepository:
                 "payable_paid_methods": {m: float(v) for m, v in daily["payable_paid_methods"].items()},
                 "adjustment_income_methods": {m: float(v) for m, v in other_income.items()},
                 "adjustment_expense_methods": {m: float(v) for m, v in budget_spend.items()},
+                "owner_topup_methods": {m: float(v) for m, v in owner_topup.items()},
+                "cash_withdrawal_methods": {m: float(v) for m, v in cash_withdrawal.items()},
+                "owner_reimbursement_methods": {m: float(v) for m, v in daily["owner_reimbursement_methods"].items()},
+                "cash_box_movements": {box: float(v) for box, v in daily["cash_box_movements"].items()},
+                "cash_box_unassigned_count": daily["cash_box_unassigned_count"],
+                **{flow: {box: float(v) for box, v in daily[flow].items()}
+                   for flow in ("cash_box_receipts", "cash_box_spending", "cash_box_topups", "cash_box_withdrawals")},
                 **{f"{m}_total": float(checkout[m]) for m in METHODS},
                 **{f"{m}_count": daily["checkout_counts"][m] for m in METHODS},
                 **{f"{m}_refund": float(refund[m]) for m in METHODS},
@@ -396,10 +468,16 @@ class SalesRepository:
             "total_refunds": 0.0, "net_revenue": 0.0,
             "total_collections": 0.0, "total_expenses": 0.0,
             "total_payables_paid": 0.0, "net_balance": 0.0,
+            "total_owner_topups": 0.0, "total_cash_withdrawals": 0.0,
+            "total_owner_reimbursements": 0.0, "total_supplier_payments": 0.0,
             "total_other_income": 0.0, "total_budget_spend": 0.0,
             "total_business_expenses": 0.0, "total_external_expenses": 0.0,
             "total_business_payables_paid": 0.0, "total_external_payables_paid": 0.0,
             "cash_on_hand": 0.0, "collection_count": 0,
+            "cash_box_movements": {"petty": 0.0, "customer": 0.0, "unknown": 0.0},
+            "cash_box_unassigned_count": 0,
+            **{flow: {"petty": 0.0, "customer": 0.0, "unknown": 0.0}
+               for flow in ("cash_box_receipts", "cash_box_spending", "cash_box_topups", "cash_box_withdrawals")},
             "total_orders": 0, "total_sessions": 0,
             **{f"{m}_total": 0.0 for m in METHODS},
             **{f"{m}_count": 0 for m in METHODS},
@@ -408,7 +486,8 @@ class SalesRepository:
                for bucket in ("checkout", "cowork", "cafe", "discount", "collection", "expense", "external_expense", "expense_paid",
                               "expense_void", "payable", "external_payable", "payable_paid",
                               "adjustment_income", "adjustment_expense", "refund",
-                              "credit_received", "credit_applied")},
+                              "credit_received", "credit_applied", "owner_topup", "cash_withdrawal",
+                              "owner_reimbursement")},
         }
 
     def payment_totals_by_dates(self, dates: list[date]) -> dict[date, dict[str, float | int]]:

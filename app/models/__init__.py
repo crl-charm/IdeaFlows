@@ -18,6 +18,7 @@ from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, In
 from .receivable import Receivable, ReceivablePayment, ReceivableTab
 from .payable import Payable, PayablePayment
 from .expense import Expense
+from .cash_box_event import CashBoxEvent
 from .staff_performance import StaffPerformanceLog
 from .daily_sales_report import DailySalesReport
 from .soft_balance import SoftBalanceEntry
@@ -52,6 +53,7 @@ __all__ = [
     'Payable',
     'PayablePayment',
     'Expense',
+    'CashBoxEvent',
     'StaffPerformanceLog',  # Note: NOT 'StaffPerformance'
     'DailySalesReport',
     'SoftBalanceEntry',

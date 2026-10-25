@@ -11,6 +11,8 @@ from app.utils.payment import VALID_PAYMENT_METHODS
 from app.models.expense import Expense
 from app.repositories.sales_repository import SalesRepository
 from app.utils.dates import manila_date
+from app.services.cash_box_service import CashBoxService, BOXES
+from app.models.payable import Payable
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,10 @@ class ExpenseService:
                 "logged_by": e.logged_by_user.username if e.logged_by_user else "Unknown",
                 "payment_method": e.payment_method or "unclassified",
                 "funding_source": e.funding_source or "legacy",
+                "cash_box": e.cash_box,
+                "box_balance_before": float(e.box_balance_before) if e.box_balance_before is not None else None,
+                "box_balance_after": float(e.box_balance_after) if e.box_balance_after is not None else None,
+                "repay_owner": e.repay_owner,
                 "balance_before": float(e.balance_before) if e.balance_before is not None else None,
                 "balance_after": float(e.balance_after) if e.balance_after is not None else None,
                 "voided_at": e.voided_at.isoformat() + "Z" if e.voided_at else None,
@@ -39,6 +45,8 @@ class ExpenseService:
                 "void_reason": e.void_reason,
                 "void_balance_before": float(e.void_balance_before) if e.void_balance_before is not None else None,
                 "void_balance_after": float(e.void_balance_after) if e.void_balance_after is not None else None,
+                "void_box_balance_before": float(e.void_box_balance_before) if e.void_box_balance_before is not None else None,
+                "void_box_balance_after": float(e.void_box_balance_after) if e.void_box_balance_after is not None else None,
             }
             for e in expenses
         ]
@@ -62,9 +70,18 @@ class ExpenseService:
         logged_by: int,
         payment_method: str,
         request_key: str | None = None,
+        cash_box: str | None = None,
+        repay_owner: bool | None = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Select a payment method."}, 400
+        if payment_method == "cash":
+            if cash_box not in (*BOXES, "owner") and not (cash_box is None and CashBoxService.opening_date() is None):
+                return {"error": "Choose Petty cash, Customer cash, or Owner paid directly."}, 400
+            if cash_box == "owner" and not isinstance(repay_owner, bool):
+                return {"error": "Choose whether the owner must be repaid."}, 400
+        elif cash_box or repay_owner:
+            return {"error": "Cash box applies only to cash expenses."}, 400
         if not isinstance(category, str) or not category.strip() or len(category) > 50:
             return {"error": "Enter a valid expense category."}, 400
         if not isinstance(description, str) or not description.strip():
@@ -88,13 +105,25 @@ class ExpenseService:
                 sales = SalesRepository()
                 daily = sales.daily_ledger(business_day, business_day).get(business_day)
                 before = sales.method_balance(daily, payment_method)
-                source = "business" if payment_method == "cash" or before >= amount_decimal else "external"
+                source = ("external" if cash_box == "owner" else "business") if payment_method == "cash" else ("business" if before >= amount_decimal else "external")
                 after = before - amount_decimal if source == "business" else before
+                box_before = None
+                if payment_method == "cash" and cash_box in BOXES:
+                    try:
+                        box_before = CashBoxService.balance(cash_box, business_day)
+                    except ValueError as exc:
+                        return {"error": str(exc)}, 400
                 expense = self.repo.create(
                     category.strip(), description.strip(), amount_decimal, date_obj, logged_by,
                     payment_method, request_key, posted_at=posted_at, funding_source=source,
                     balance_before=before, balance_after=after,
+                    cash_box=cash_box if cash_box in BOXES else None,
+                    box_balance_before=box_before,
+                    box_balance_after=box_before - amount_decimal if box_before is not None else None,
+                    repay_owner=bool(repay_owner) if cash_box == "owner" else False,
                 )
+                if expense.repay_owner:
+                    CashBoxService.owner_payable(amount_decimal, logged_by, business_day, expense=expense)
                 self.repo.save()
         except TimeoutError as exc:
             return {"error": str(exc)}, 503
@@ -116,12 +145,23 @@ class ExpenseService:
                 db.session.refresh(expense)
                 if expense.voided_at:
                     return {"error": "Expense not found or already voided"}, 404
+                owner_debt = Payable.query.filter_by(owner_expense_id=expense.id).with_for_update().first()
+                if owner_debt and owner_debt.partial_paid:
+                    return {"error": "Owner repayment already began. Correct its payments before voiding this expense."}, 409
                 sales = SalesRepository()
                 daily = sales.daily_ledger(day, day).get(day)
                 before = sales.method_balance(daily, method)
                 after = before + expense.amount if expense.funding_source != "external" else before
+                box_before = CashBoxService.balance(expense.cash_box, day) if expense.cash_box else None
                 if not self.repo.delete(expense_id, voided_by, reason.strip(), now, before, after):
                     return {"error": "Expense not found or already voided"}, 404
+                if box_before is not None:
+                    expense.void_box_balance_before = box_before
+                    expense.void_box_balance_after = box_before + expense.amount
+                if owner_debt:
+                    owner_debt.cancelled_at = now
+                    owner_debt.cancelled_by = voided_by
+                    owner_debt.cancel_reason = reason.strip()
                 self.repo.save()
         except TimeoutError as exc:
             return {"error": str(exc)}, 503

@@ -251,7 +251,7 @@
           if (response.ok) {
             showToast("Login successful! Redirecting…", "success");
             setTimeout(function () {
-              window.location.href = data.redirect || "/dashboard";
+              window.location.replace(data.redirect || "/dashboard");
             }, 1000);
           } else {
             loginBtn.disabled = false;

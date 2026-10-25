@@ -179,6 +179,7 @@
             <option value="queenbank">QueenBank</option>
           </select>
         </div>
+        <div class="mb-4 text-start d-none" id="payableCashBoxGroup"><label class="form-label" for="payableCashBox">Cash paid from *</label><select id="payableCashBox" class="form-select"><option value="">Choose box...</option><option value="petty">Petty cash box</option><option value="customer">Customer cash box</option></select></div>
 
         <div class="d-flex gap-2 justify-content-center">
           <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancel</button>
@@ -202,6 +203,9 @@
 
 {% block scripts %}
 <script>
+document.getElementById('payablePaymentMethod').addEventListener('change', () => {
+  document.getElementById('payableCashBoxGroup').classList.toggle('d-none', document.getElementById('payablePaymentMethod').value !== 'cash');
+});
 let payablesCache = [];
 let payablesLoadError = null;
 let pendingPayableId = null;
@@ -325,7 +329,7 @@ function renderPayables() {
 
   // Calculate unpaid sums on ALL payables (not just filtered)
   payablesCache.forEach(p => {
-    if (p.status !== 'Paid') {
+    if (p.status !== 'Paid' && !p.cancelled_at) {
       totalUnpaid += p.amount_owed - p.partial_paid;
       unpaidCount++;
     }
@@ -344,13 +348,13 @@ function renderPayables() {
   let cardHtml = '<div class="d-flex flex-column gap-2">';
 
   filtered.forEach(p => {
-    const statusBadge = p.status === 'Paid' 
+    const statusBadge = p.cancelled_at ? '<span class="badge bg-secondary">Cancelled</span>' : p.status === 'Paid'
       ? '<span class="badge bg-success">Paid</span>' 
       : p.status === 'Partially Paid' 
         ? '<span class="badge bg-warning text-dark">Partially Paid</span>' 
         : '<span class="badge bg-danger">Unpaid</span>';
 
-    const actionButton = p.status !== 'Paid' 
+    const actionButton = p.status !== 'Paid' && !p.cancelled_at
       ? `<button class="btn btn-sm btn-success" onclick="openMarkPayablePaidModal(${p.id})">Mark Paid</button>` 
       : '';
     const historyButton = `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="showPayableHistory(${p.id})">History</button>`;
@@ -358,7 +362,7 @@ function renderPayables() {
     // Desktop
     tbody.innerHTML += `
       <tr>
-        <td class="fw-semibold">${window.escapeHTML(p.creditor_name)}</td>
+        <td class="fw-semibold">${window.escapeHTML(p.creditor_name)}${p.kind === 'owner_reimbursement' ? '<div class="small text-primary">Owner reimbursement</div>' : ''}</td>
         <td>${window.escapeHTML(p.items)}</td>
         <td>₱${p.amount_owed.toFixed(2)}</td>
         <td>₱${p.partial_paid.toFixed(2)}</td>
@@ -502,10 +506,12 @@ function confirmMarkPayablePaid() {
 
   const isPartial = document.getElementById('paymentTypePartial').checked;
   let payload = { payment_method: document.getElementById('payablePaymentMethod').value };
+  payload.cash_box = payload.payment_method === 'cash' ? document.getElementById('payableCashBox').value : null;
   if (!payload.payment_method) {
     showToast('Select a payment method.', 'error');
     return;
   }
+  if (payload.payment_method === 'cash' && !payload.cash_box) { showToast('Choose the cash box for this payment.', 'error'); return; }
 
   if (isPartial) {
     const payVal = parseFloat(document.getElementById('payAmountInput').value);
@@ -564,7 +570,7 @@ function showPayableHistory(pId) {
     <tr><td>${new Date(payment.paid_at).toLocaleString('en-PH', {timeZone: 'Asia/Manila'})}</td>
     <td>₱${payment.amount.toFixed(2)}</td><td>${window.escapeHTML(payment.payment_method)}</td>
     <td>${window.escapeHTML(payment.paid_by)}</td>
-    <td>${payment.funding_source === 'external' ? 'External-funded' : payment.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business-funded'}</td>
+    <td>${payment.cash_box ? `${payment.cash_box === 'petty' ? 'Petty' : 'Customer'} cash box` : payment.payment_method === 'cash' ? 'Box unknown (older payment)' : payment.funding_source === 'external' ? 'External-funded' : payment.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business-funded'}${payment.box_balance_before == null ? '' : `<div class="small text-muted">Box ₱${payment.box_balance_before.toFixed(2)} → ₱${payment.box_balance_after.toFixed(2)}</div>`}</td>
     <td>₱${payment.balance_before.toFixed(2)} → ₱${payment.balance_after.toFixed(2)}</td>
     <td>${payment.method_balance_before == null ? 'Unknown' : `₱${payment.method_balance_before.toFixed(2)} → ₱${payment.method_balance_after.toFixed(2)}`}</td></tr>
   `).join('') : '<tr><td colspan="7">No dated payments recorded.</td></tr>';

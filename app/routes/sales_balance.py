@@ -73,31 +73,32 @@ def api_generate_report() -> tuple:
 @sales_bp.route("/api/reports/export-csv", methods=["GET"])
 @login_required
 def api_export_csv() -> Any:
-    start_date_str = request.args.get("start_date")
-    end_date_str = request.args.get("end_date")
-    reports = _service.list_reports()
-    if start_date_str and start_date_str.strip():
-        reports = [r for r in reports if r["report_date"] >= start_date_str]
-    if end_date_str and end_date_str.strip():
-        reports = [r for r in reports if r["report_date"] <= end_date_str]
-    return _export.export_csv(reports)
+    try:
+        return _export.export_csv(*_filtered_export_data())
+    except ValueError as exc:
+        return api_error(str(exc), status=400)
+
+
+def _filtered_export_data():
+    start = request.args.get("start_date")
+    end = request.args.get("end_date")
+    start_date = date.fromisoformat(start) if start else None
+    end_date = date.fromisoformat(end) if end else None
+    if start_date and end_date and start_date > end_date:
+        raise ValueError("Start date must be on or before end date")
+    reports = _service.list_reports(start_date, end_date)
+    soft = [s for s in _service.list_soft_balances()
+            if (not start or s["balance_date"] >= start) and (not end or s["balance_date"] <= end)]
+    return reports, soft
 
 
 @sales_bp.route("/api/reports/export-pdf", methods=["GET"])
 @login_required
 def api_export_pdf() -> Any:
     try:
-        start_date_str = request.args.get("start_date")
-        end_date_str = request.args.get("end_date")
-        reports = _service.list_reports()
-        soft_entries = _service.list_soft_balances()
-        if start_date_str and start_date_str.strip():
-            reports = [r for r in reports if r["report_date"] >= start_date_str]
-            soft_entries = [s for s in soft_entries if s["balance_date"] >= start_date_str]
-        if end_date_str and end_date_str.strip():
-            reports = [r for r in reports if r["report_date"] <= end_date_str]
-            soft_entries = [s for s in soft_entries if s["balance_date"] <= end_date_str]
-        return _export.export_pdf(reports, soft_entries)
+        return _export.export_pdf(*_filtered_export_data())
+    except ValueError as exc:
+        return api_error(str(exc), status=400)
     except Exception as e:
         return api_error(f"Failed to export PDF: {str(e)}", status=500)
 
@@ -106,14 +107,9 @@ def api_export_pdf() -> Any:
 @login_required
 def api_export_excel() -> Any:
     try:
-        start_date_str = request.args.get("start_date")
-        end_date_str = request.args.get("end_date")
-        reports = _service.list_reports()
-        if start_date_str and start_date_str.strip():
-            reports = [r for r in reports if r["report_date"] >= start_date_str]
-        if end_date_str and end_date_str.strip():
-            reports = [r for r in reports if r["report_date"] <= end_date_str]
-        return _export.export_excel(reports)
+        return _export.export_excel(*_filtered_export_data())
+    except ValueError as exc:
+        return api_error(str(exc), status=400)
     except Exception as e:
         return api_error(f"Failed to export Excel: {str(e)}", status=500)
 
@@ -168,11 +164,18 @@ def api_today_stats() -> tuple:
     from sqlalchemy.orm import selectinload
     from decimal import Decimal
     from app.utils.dates import manila_date
+    from app.services.cash_box_service import CashBoxService
 
     now = datetime.utcnow()
     today = manila_date(now)
     live = _service.repo.daily_ledger(today, today).get(today) or _service.repo.daily_ledger_empty(today)
     cash_on_hand = Decimal(str(live["cash_on_hand"]))
+    cash_boxes = CashBoxService.summaries(today).get(today)
+    cash_received = (live["checkout_methods"]["cash"] - live["credit_applied_methods"]["cash"]
+                     + live["credit_received_methods"]["cash"] + live["collection_methods"]["cash"]
+                     + live["adjustment_income_methods"]["cash"])
+    cash_spent = (live["expense_methods"]["cash"] + live["payable_methods"]["cash"]
+                  + live["adjustment_expense_methods"]["cash"] + live["refund_methods"]["cash"])
 
     # Still to collect here is limited to customers currently checked in.
     pending_balance_sum = Decimal("0.00")
@@ -208,6 +211,13 @@ def api_today_stats() -> tuple:
 
     return api_ok({
         "cash_on_hand": float(cash_on_hand),
+        "cash_flow_parts": {
+            "received": cash_received,
+            "owner_added": live["owner_topup_methods"]["cash"],
+            "spent_refunded": cash_spent,
+            "taken_out": live["cash_withdrawal_methods"]["cash"],
+        },
+        "cash_boxes": cash_boxes,
         "expected_to_collect": float(expected_to_collect),
         "expected_cash_on_hand": float(expected_cash_on_hand),
         "receivables_paid_today": live["collection_count"],

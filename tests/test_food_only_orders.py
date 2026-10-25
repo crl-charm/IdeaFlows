@@ -152,7 +152,7 @@ def test_food_checkout_reconciles_cash_gcash_and_daily_balance(app, client):
     assert row["total_sessions"] == 0
     csv = client.get(f"/staff/daily-balance/api/reports/export-csv?start_date={day}&end_date={day}")
     assert csv.status_code == 200
-    assert "₱144.00" in csv.data.decode("utf-8")
+    assert "Checkout Sales,,144.00,PHP" in csv.data.decode("utf-8")
 
     records = client.get("/api/checkout-records").get_json()
     assert len(records) == 2

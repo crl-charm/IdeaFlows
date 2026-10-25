@@ -105,6 +105,8 @@
               <option value="queenbank">QueenBank</option>
             </select>
           </div>
+          <div class="mb-3 d-none" id="expenseCashGroup"><label class="form-label" for="expenseCashBox">Cash paid from *</label><select id="expenseCashBox" class="form-select"><option value="">Choose source...</option><option value="petty">Petty cash box</option><option value="customer">Customer cash box</option><option value="owner">Owner paid directly</option></select></div>
+          <div class="mb-3 d-none" id="expenseRepayGroup"><label class="form-label" for="expenseRepayOwner">Must the business repay the owner? *</label><select id="expenseRepayOwner" class="form-select"><option value="">Choose Yes or No...</option><option value="yes">Yes, create owner payable</option><option value="no">No</option></select></div>
           <div class="modal-footer px-0 pb-0 pt-3">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
             <button type="submit" class="btn btn-warning fw-semibold" id="saveExpenseBtn">
@@ -133,6 +135,13 @@
 </style>
 
 <script>
+function updateExpenseCashChoices() {
+  const cash = document.getElementById('expensePaymentMethod').value === 'cash';
+  document.getElementById('expenseCashGroup').classList.toggle('d-none', !cash);
+  document.getElementById('expenseRepayGroup').classList.toggle('d-none', !cash || document.getElementById('expenseCashBox').value !== 'owner');
+}
+document.getElementById('expensePaymentMethod').addEventListener('change', updateExpenseCashChoices);
+document.getElementById('expenseCashBox').addEventListener('change', updateExpenseCashChoices);
 function manilaExpenseDate() {
   return new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
 }
@@ -221,9 +230,9 @@ function renderExpenses() {
   const tbody = document.getElementById('expenses-table-body');
   const cards = document.getElementById('expenses-card-container');
   tbody.innerHTML = filtered.map(exp => {
-    const funding = exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
-    const balance = exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`;
-    const voidBalance = exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`;
+    const funding = exp.cash_box ? `${exp.cash_box === 'petty' ? 'Petty' : 'Customer'} cash box` : exp.payment_method === 'cash' && exp.funding_source === 'external' ? `Owner paid directly${exp.repay_owner ? ' · repay owner' : ''}` : exp.payment_method === 'cash' ? 'Box unknown (older entry)' : exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
+    const balance = `${exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`}${exp.box_balance_before == null ? '' : `<div class="small text-muted">Box balance ₱${exp.box_balance_before.toFixed(2)} → ₱${exp.box_balance_after.toFixed(2)}</div>`}`;
+    const voidBalance = `${exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`}${exp.void_box_balance_before == null ? '' : `<div class="small text-muted">Box on void ₱${exp.void_box_balance_before.toFixed(2)} → ₱${exp.void_box_balance_after.toFixed(2)}</div>`}`;
     return `<tr class="${exp.business_date === today ? 'today-expense' : ''}">
       <td>${escapeHTML(exp.category)}</td><td>${escapeHTML(exp.description)}</td>
       <td class="fw-semibold">₱${exp.amount.toFixed(2)}</td>
@@ -234,9 +243,9 @@ function renderExpenses() {
     </tr>`;
   }).join('') || '<tr><td colspan="7" class="text-center text-muted py-4">No expenses for this range.</td></tr>';
   cards.innerHTML = filtered.map(exp => {
-    const funding = exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
-    const balance = exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`;
-    const voidBalance = exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`;
+    const funding = exp.cash_box ? `${exp.cash_box === 'petty' ? 'Petty' : 'Customer'} cash box` : exp.payment_method === 'cash' && exp.funding_source === 'external' ? `Owner paid directly${exp.repay_owner ? ' · repay owner' : ''}` : exp.payment_method === 'cash' ? 'Box unknown (older entry)' : exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
+    const balance = `${exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`}${exp.box_balance_before == null ? '' : `<div class="small text-muted">Box balance ₱${exp.box_balance_before.toFixed(2)} → ₱${exp.box_balance_after.toFixed(2)}</div>`}`;
+    const voidBalance = `${exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`}${exp.void_box_balance_before == null ? '' : `<div class="small text-muted">Box on void ₱${exp.void_box_balance_before.toFixed(2)} → ₱${exp.void_box_balance_after.toFixed(2)}</div>`}`;
     return `<div class="record-card mb-2">
       <div class="record-card-header"><div><div class="record-card-title">${escapeHTML(exp.category)}</div><div class="record-card-subtitle">${escapeHTML(exp.description)}</div></div></div>
       <div class="record-card-body small">${exp.business_date} · ${escapeHTML(exp.payment_method.toUpperCase())} · ${funding}<br>
@@ -252,6 +261,8 @@ async function createExpense() {
   const amountVal = document.getElementById('expenseAmount').value;
   const expenseDate = document.getElementById('expenseDate').value;
   const paymentMethod = document.getElementById('expensePaymentMethod').value;
+  const cashBox = paymentMethod === 'cash' ? document.getElementById('expenseCashBox').value : null;
+  const repayChoice = document.getElementById('expenseRepayOwner').value;
   const saveBtn = document.getElementById('saveExpenseBtn');
 
   if (!category || !description || !amountVal || !expenseDate || !paymentMethod) {
@@ -272,6 +283,9 @@ async function createExpense() {
     }
     return;
   }
+  if (paymentMethod === 'cash' && (!cashBox || (cashBox === 'owner' && !repayChoice))) {
+    showToast('Choose the cash source and whether the owner must be repaid.', 'warning'); return;
+  }
 
   try {
     const body = await runButtonAction(saveBtn, {
@@ -288,7 +302,9 @@ async function createExpense() {
         description: description,
         amount: amount,
         expense_date: expenseDate,
-        payment_method: paymentMethod
+        payment_method: paymentMethod,
+        cash_box: cashBox,
+        repay_owner: cashBox === 'owner' ? repayChoice === 'yes' : null
       })
     }));
     if (!body) return;

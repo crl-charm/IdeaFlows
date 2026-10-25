@@ -221,6 +221,27 @@ def test_second_browser_is_blocked_and_logout_releases_account(app):
     assert _login(second_browser).status_code == 200
 
 
+def test_installed_app_relaunch_resumes_its_login(app):
+    _enable_single_session(app)
+    phone = app.test_client()
+    other_device = app.test_client()
+
+    login = _login(phone)
+    assert login.status_code == 200
+    assert "Expires=" in login.headers["Set-Cookie"]
+    assert phone.get("/welcome").headers["Location"] == "/login"
+    reopened = phone.get("/welcome", follow_redirects=True)
+    assert reopened.status_code == 200
+    assert reopened.request.path == "/dashboard"
+    assert phone.get("/api/session-status").status_code == 200
+    assert _login(other_device).status_code == 409
+
+    assert app.extensions["session_leases"].revoke("staff:1") is True
+    expired = phone.get("/welcome", follow_redirects=True)
+    assert expired.request.path == "/login"
+    assert b"Sign In" in expired.data
+
+
 def test_socket_disconnect_keeps_staff_pages_and_other_device_blocked(app):
     _enable_single_session(app)
     first_browser = app.test_client()
@@ -265,6 +286,7 @@ def test_admin_account_can_sign_in_on_two_devices(app):
     responses = [browser.post("/api/login", json={"username": "owner", "password": "OwnerPassword123!"})
                  for browser in browsers]
     assert [response.status_code for response in responses] == [200, 200, 409]
+    assert browsers[0].get("/welcome", follow_redirects=True).request.path == "/admin"
     assert browsers[0].get("/admin").status_code == 200
     assert browsers[1].get("/admin").status_code == 200
     assert browsers[0].get("/logout").status_code == 302

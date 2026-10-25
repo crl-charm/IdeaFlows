@@ -52,7 +52,8 @@ class PayableRepository:
 
     def record_payment(self, payable: Payable, paid: Decimal, payment_method: str, paid_by: int,
                        request_key: str | None, paid_at: datetime, funding_source: str,
-                       method_balance_before: Decimal, method_balance_after: Decimal) -> PayablePayment:
+                       method_balance_before: Decimal, method_balance_after: Decimal,
+                       cash_box: str | None = None, box_balance_before: Decimal | None = None) -> PayablePayment:
         before = payable.amount_owed - payable.partial_paid
         payable.partial_paid += paid
         payable.status = "Paid" if payable.partial_paid == payable.amount_owed else "Partially Paid"
@@ -61,6 +62,8 @@ class PayableRepository:
             paid_by=paid_by, balance_before=before, balance_after=before - paid,
             request_key=request_key, paid_at=paid_at, funding_source=funding_source,
             method_balance_before=method_balance_before, method_balance_after=method_balance_after,
+            cash_box=cash_box, box_balance_before=box_balance_before,
+            box_balance_after=box_balance_before-paid if box_balance_before is not None else None,
         )
         db.session.add(payment)
         return payment

@@ -8,6 +8,7 @@ from typing import Any, Optional
 from app.core.interfaces import Clock
 from app.repositories.sales_repository import SalesRepository
 from app.utils.dates import manila_date
+from app.services.cash_box_service import CashBoxService
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,12 @@ class SalesService:
         days = set(live) | set(saved)
         if start_date and start_date == end_date:
             days.add(start_date)
+        opening = CashBoxService.opening_date()
+        today = manila_date(datetime.utcnow())
+        cash_end = min(end_date, today) if end_date else (today if opening else max(days, default=None))
+        cash = CashBoxService.summaries(cash_end) if cash_end else {}
+        days.update(day for day in cash if (not start_date or day >= start_date)
+                    and (not end_date or day <= end_date))
         result = []
         for day in sorted(days, reverse=True):
             row = live.get(day) or self.repo.daily_ledger_empty(day)
@@ -77,11 +84,23 @@ class SalesService:
                 "generated_by": snapshot.generated_by_user.username if snapshot and snapshot.generated_by_user else "Not generated",
                 "generated_at": snapshot.generated_at.isoformat() + "Z" if snapshot else None,
                 "notes": snapshot.notes if snapshot else None,
+                "cash_boxes": cash.get(day),
+                "snapshot_cash_movement": float(snapshot.cash_movement) if snapshot and snapshot.cash_movement is not None else None,
+                "snapshot_petty_cash_closing": float(snapshot.petty_cash_closing) if snapshot and snapshot.petty_cash_closing is not None else None,
+                "snapshot_customer_cash_closing": float(snapshot.customer_cash_closing) if snapshot and snapshot.customer_cash_closing is not None else None,
+                "petty_cash_snapshot_difference": (cash[day]["closing"]["petty"] - float(snapshot.petty_cash_closing)
+                                                   if snapshot and snapshot.petty_cash_closing is not None and day in cash else None),
+                "customer_cash_snapshot_difference": (cash[day]["closing"]["customer"] - float(snapshot.customer_cash_closing)
+                                                      if snapshot and snapshot.customer_cash_closing is not None and day in cash else None),
+                "cash_snapshot_difference": (cash[day]["total_closing"] - float(snapshot.petty_cash_closing + snapshot.customer_cash_closing)
+                                             if snapshot and snapshot.petty_cash_closing is not None
+                                             and snapshot.customer_cash_closing is not None and day in cash else None),
             })
         return result
 
     def list_soft_balances(self) -> list[dict[str, Any]]:
         entries = self.repo.list_soft_balances()
+        cash = CashBoxService.summaries(max(e.balance_date for e in entries)) if entries else {}
         return [
             {
                 "id": row.id,
@@ -94,6 +113,16 @@ class SalesService:
                 "total_other_income": float(row.total_other_income or 0),
                 "total_budget_spend": float(row.total_budget_spend or 0),
                 "net_balance": float(row.net_balance or 0),
+                "petty_cash_closing": float(row.petty_cash_closing) if row.petty_cash_closing is not None else None,
+                "customer_cash_closing": float(row.customer_cash_closing) if row.customer_cash_closing is not None else None,
+                "cash_movement": float(row.cash_movement) if row.cash_movement is not None else None,
+                "petty_cash_live_difference": (cash[row.balance_date]["closing"]["petty"] - float(row.petty_cash_closing)
+                                               if row.balance_date in cash and row.petty_cash_closing is not None else None),
+                "customer_cash_live_difference": (cash[row.balance_date]["closing"]["customer"] - float(row.customer_cash_closing)
+                                                  if row.balance_date in cash and row.customer_cash_closing is not None else None),
+                "live_cash_difference": (cash[row.balance_date]["total_closing"] - float(row.petty_cash_closing + row.customer_cash_closing)
+                                         if row.balance_date in cash and row.petty_cash_closing is not None
+                                         and row.customer_cash_closing is not None else None),
                 "generated_by": row.generated_by_user.username if row.generated_by_user else "Unknown",
                 "notes": row.notes,
                 "generated_at": row.generated_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -107,7 +136,7 @@ class SalesService:
         generated_by: int,
         notes: Optional[str],
     ) -> dict[str, Any]:
-        live = self.repo.daily_ledger(report_date, report_date).get(report_date) or self.repo.daily_ledger_empty(report_date)
+        live = self.list_reports(report_date, report_date)[0]
         total_revenue = Decimal(str(live["total_revenue"]))
         total_expenses = Decimal(str(live["total_expenses"]))
         total_collections = Decimal(str(live["total_collections"]))
@@ -146,6 +175,10 @@ class SalesService:
                 generated_by=generated_by,
                 notes=notes,
             )
+        boxes = live.get("cash_boxes")
+        report.petty_cash_closing = Decimal(str(boxes["closing"]["petty"])) if boxes else None
+        report.customer_cash_closing = Decimal(str(boxes["closing"]["customer"])) if boxes else None
+        report.cash_movement = Decimal(str(boxes["total_movement"])) if boxes else None
         self.repo.save()
 
         from app.core.socketio_handlers import emit_daily_sales_closed
@@ -182,7 +215,7 @@ class SalesService:
         generated_by: int,
         notes: Optional[str],
     ) -> dict[str, Any]:
-        live = self.repo.daily_ledger(balance_date, balance_date).get(balance_date) or self.repo.daily_ledger_empty(balance_date)
+        live = self.list_reports(balance_date, balance_date)[0]
         total_revenue = Decimal(str(live["total_revenue"]))
         total_expenses = Decimal(str(live["total_expenses"]))
         total_collections = Decimal(str(live["total_collections"]))
@@ -204,6 +237,10 @@ class SalesService:
             generated_by=generated_by,
             notes=notes,
         )
+        boxes = live.get("cash_boxes")
+        entry.petty_cash_closing = Decimal(str(boxes["closing"]["petty"])) if boxes else None
+        entry.customer_cash_closing = Decimal(str(boxes["closing"]["customer"])) if boxes else None
+        entry.cash_movement = Decimal(str(boxes["total_movement"])) if boxes else None
         self.repo.save()
         return {
             "success": True,

@@ -112,9 +112,10 @@ def test_grouped_staff_collection_reconciles_across_history_and_daily_balance(ap
     assert (generated.get_json()["data"]["total_revenue"],
             generated.get_json()["data"]["total_collections"]) == (0, 40)
     csv_response = client.get(f"/admin/daily-balance/api/reports/export-csv?start_date={day}&end_date={day}")
-    csv_row = next(csv.DictReader(StringIO(csv_response.data.decode("utf-8-sig"))))
-    assert csv_row["Debt Collected"] == "₱40.00"
-    assert csv_row[f"Collection {method.title()}"] == "₱40.00"
+    csv_rows = list(csv.DictReader(StringIO(csv_response.data.decode("utf-8-sig"))))
+    assert any(row["Item"] == "Debt Collected" and row["Amount"] == "40.00" for row in csv_rows)
+    assert any(row["Section"] == "Payment detail" and row["Method"] == method
+               and row["Item"] == "Debt collected" and row["Amount"] == "40.00" for row in csv_rows)
 
 
 def test_admin_partial_payment_history_and_retry_after_cache_expiry(app, monkeypatch):
@@ -220,6 +221,5 @@ def test_manila_midnight_and_later_spending_use_only_todays_collection(app, monk
     assert export.status_code == 200
     workbook = load_workbook(BytesIO(export.data))
     rows = list(workbook["Payment Methods"].values)
-    gcash_column = rows[0].index("gcash")
-    assert next(row[gcash_column] for row in rows if row[1] == "collection") == 40
+    assert any(row[1:] == ("gcash", "Debt collected", 40) for row in rows)
     assert client.get("/admin/daily-balance/api/reports/export-pdf?start_date=2026-09-25&end_date=2026-09-25").data.startswith(b"%PDF")

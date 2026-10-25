@@ -85,7 +85,7 @@ def api_mark_paid(p_id: int) -> tuple:
         return jsonify({"success": False, "error": "Enter a valid payment."}), 400
     result = _service.mark_paid(
         p_id, data.get("amount"), data.get("payment_method"), session["user_id"],
-        request.headers.get("Idempotency-Key"),
+        request.headers.get("Idempotency-Key"), data.get("cash_box"),
     )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]

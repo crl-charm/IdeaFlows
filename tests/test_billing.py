@@ -202,20 +202,18 @@ def test_queenbank_daily_balance_exports(app):
         csv_response = service.export_csv([report])
         csv_response.direct_passthrough = False
         csv_text = csv_response.get_data(as_text=True)
-        assert 'QueenBank' in csv_text
-        assert '₱30.00' in csv_text
+        assert 'QUEENBANK' in csv_text
+        assert 'QUEENBANK,,30.00,PHP' in csv_text
 
         excel_response = service.export_excel([report])
         excel_response.direct_passthrough = False
         workbook = load_workbook(BytesIO(excel_response.get_data()))
-        assert workbook['Summary']['A15'].value == 'QueenBank Payments:'
-        assert workbook['Summary']['B15'].value == 30
-        assert workbook['Daily Reports']['H1'].value == 'QueenBank'
-        assert workbook['Daily Reports']['H2'].value == 30
+        assert dict(workbook['Summary'].values)['QUEENBANK checkout sales'] == 30
+        assert any(row[1:]== ('Checkout methods', 'QUEENBANK', 30) for row in workbook['Report Details'].values)
 
         pdf_context = service.build_pdf_context([report], [])
         pdf_html = render_template(service.PDF_TEMPLATE, **pdf_context)
-        assert 'QueenBank Payments' in pdf_html
+        assert 'QUEENBANK' in pdf_html
         assert 'Php 30.00' in pdf_html
         pdf_response = service.export_pdf([report], [])
         assert pdf_response.get_data().startswith(b'%PDF')

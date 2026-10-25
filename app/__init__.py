@@ -1,6 +1,6 @@
-from flask import Flask, request, g, render_template, send_from_directory
+from flask import Flask, request, g, render_template, send_from_directory, session, redirect
 from flask_sqlalchemy import SQLAlchemy
-from app.utils.auth import register_admin_blueprint, enforce_admin_access, enforce_staff_management_access, is_admin_path
+from app.utils.auth import register_admin_blueprint, enforce_admin_access, enforce_staff_management_access, is_admin_path, _check_session_auth
 from flask_socketio import SocketIO
 from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
@@ -128,12 +128,14 @@ def create_app():
     from app.routes.auth_routes import bp as auth_bp
     from app.routes.user_routes import user_bp
     from app.routes.staff_shifts import bp as staff_shifts_bp
+    from app.routes.cash_boxes import bp as cash_boxes_bp
     from app.routes.admin_routes import admin_bp
     from app.controllers.management_controller import ManagementController
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(user_bp)
     app.register_blueprint(staff_shifts_bp)
+    app.register_blueprint(cash_boxes_bp)
     register_admin_blueprint(app, admin_bp)
 
     # 2. POS Operations & Space Management Module
@@ -247,6 +249,11 @@ def create_app():
 
     @app.route("/welcome")
     def portal_intro():
+        if session.get("user_id"):
+            denied = _check_session_auth()
+            if denied is not None:
+                return denied
+            return redirect("/login")
         return render_template("landing.html")
 
     if app.config.get("AUTO_MIGRATE_ON_STARTUP", True) and app.config.get("FLASK_ENV") != "testing":

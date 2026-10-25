@@ -254,18 +254,3 @@ class AdminService:
         space.capacity = cap
         self.repo.save()
         return {"message": "Capacity updated.", "capacity": space.capacity}
-
-    def analytics(self):
-        rows = self.repo.staff_analytics()
-        result = [
-            {
-                "id": r.id,
-                "name": r.full_name,
-                "job_role": r.job_role or "general",
-                "orders_count": int(r.orders_count or 0),
-                "customers_count": int(r.customers_count or 0),
-            }
-            for r in rows
-        ]
-        result.sort(key=lambda r: (r["customers_count"], r["orders_count"]), reverse=True)
-        return result

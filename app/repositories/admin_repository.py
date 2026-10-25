@@ -143,21 +143,6 @@ class AdminRepository:
     def get_space(self, space_id: int):
         return SpaceType.query.get(space_id)
 
-    def staff_analytics(self):
-        return (
-            db.session.query(
-                User.id,
-                User.full_name,
-                User.job_role,
-                func.count(Order.id).label("orders_count"),
-                func.count(func.distinct(Order.customer_session_id)).label("customers_count"),
-            )
-            .outerjoin(Order, Order.handled_by == User.id)
-            .filter(User.role == "staff")
-            .group_by(User.id, User.full_name, User.job_role)
-            .all()
-        )
-
     def save(self) -> None:
         db.session.commit()
 

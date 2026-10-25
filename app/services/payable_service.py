@@ -13,6 +13,7 @@ from app.repositories.sales_repository import SalesRepository
 from app.models.payable import Payable
 from app.utils.dates import manila_date
 from app.utils.payment import VALID_PAYMENT_METHODS
+from app.services.cash_box_service import CashBoxService, BOXES
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,9 @@ class PayableService:
                 "due_date": p.due_date.strftime("%Y-%m-%d"),
                 "incurred_date": p.incurred_date.strftime("%Y-%m-%d"),
                 "status": p.status,
+                "kind": "owner_reimbursement" if p.owner_cash_event_id or p.owner_expense_id else "supplier",
+                "cancelled_at": p.cancelled_at.isoformat() + "Z" if p.cancelled_at else None,
+                "cancel_reason": p.cancel_reason,
                 "created_by": p.created_by_user.username if p.created_by_user else "Unknown",
                 "payments": [
                     {
@@ -45,6 +49,9 @@ class PayableService:
                         "funding_source": payment.funding_source or "legacy",
                         "method_balance_before": float(payment.method_balance_before) if payment.method_balance_before is not None else None,
                         "method_balance_after": float(payment.method_balance_after) if payment.method_balance_after is not None else None,
+                        "cash_box": payment.cash_box,
+                        "box_balance_before": float(payment.box_balance_before) if payment.box_balance_before is not None else None,
+                        "box_balance_after": float(payment.box_balance_after) if payment.box_balance_after is not None else None,
                     }
                     for payment in sorted(p.payments, key=lambda entry: (entry.paid_at, entry.id))
                 ],
@@ -79,11 +86,16 @@ class PayableService:
         self.repo.save()
         return {"success": True, "data": {"id": payable.id}}
 
-    def mark_paid(self, payable_id: int, amount: Any, payment_method: str, paid_by: int, request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
+    def mark_paid(self, payable_id: int, amount: Any, payment_method: str, paid_by: int, request_key: str | None = None,
+                  cash_box: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Invalid payment method"}, 400
         if request_key and len(request_key) > 200:
             return {"error": "Invalid request key."}, 400
+        if payment_method == "cash" and cash_box not in BOXES and not (cash_box is None and CashBoxService.opening_date() is None):
+            return {"error": "Choose Petty cash or Customer cash for a cash payment."}, 400
+        if payment_method != "cash" and cash_box:
+            return {"error": "Cash box applies only to cash payments."}, 400
         try:
             payment_amount = None if amount is None else Decimal(str(amount))
             if payment_amount is not None and (
@@ -97,6 +109,7 @@ class PayableService:
         def replay(payment):
             if (payment.payable_id != payable_id or payment.paid_by != paid_by
                     or payment.payment_method != payment_method
+                    or payment.cash_box != cash_box
                     or (payment_amount is None and payment.balance_after != 0)
                     or (payment_amount is not None and payment.amount != payment_amount)):
                 return {"error": "This request key belongs to a different payment."}, 409
@@ -116,6 +129,8 @@ class PayableService:
                 payable = self.repo.get_for_update(payable_id)
                 if not payable:
                     return {"error": "Payable not found"}, 404
+                if payable.cancelled_at:
+                    return {"error": "This payable was cancelled."}, 409
                 debt_before = payable.amount_owed - payable.partial_paid
                 paid = debt_before if payment_amount is None else payment_amount
                 if debt_before <= 0 or paid <= 0 or paid > debt_before:
@@ -123,11 +138,18 @@ class PayableService:
                 sales = SalesRepository()
                 daily = sales.daily_ledger(day, day).get(day)
                 before = sales.method_balance(daily, payment_method)
-                source = "business" if payment_method == "cash" or before >= paid else "external"
+                source = "business" if (payment_method == "cash" or payable.owner_cash_event_id
+                                        or payable.owner_expense_id or before >= paid) else "external"
                 after = before - paid if source == "business" else before
+                box_before = None
+                if cash_box:
+                    try:
+                        box_before = CashBoxService.balance(cash_box, day)
+                    except ValueError as exc:
+                        return {"error": str(exc)}, 400
                 payment = self.repo.record_payment(
                     payable, paid, payment_method, paid_by, request_key, paid_at,
-                    source, before, after,
+                    source, before, after, cash_box, box_before,
                 )
                 self.repo.save()
         except IntegrityError:
@@ -142,10 +164,11 @@ class PayableService:
         return {"success": True, "payment_id": payment.id, "funding_source": source}
 
     def get_due_count(self) -> int:
-        today = date.today()
+        today = manila_date(datetime.utcnow())
         three_days_later = today + timedelta(days=3)
         count = Payable.query.filter(
             Payable.status != "Paid",
+            Payable.cancelled_at.is_(None),
             Payable.due_date <= three_days_later
         ).count()
         return count

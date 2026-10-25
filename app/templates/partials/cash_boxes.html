@@ -1,0 +1,87 @@
+<style>
+  #cashBoxesModal .modal-content, #cashBoxesModal .modal-body, #cashBoxesModal .modal-body * { min-width: 0; }
+  #cashBoxesModal .modal-body { overflow-wrap: anywhere; }
+  #cashBoxesModal input, #cashBoxesModal select, #cashBoxesModal textarea { max-width: 100%; }
+  #cashBoxesModal button, #cashBoxesModal input, #cashBoxesModal select { min-height: 44px; }
+  #cashBoxesModal summary { cursor: pointer; }
+  #cashBoxesModal summary:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 3px; border-radius: .3rem; }
+  .cash-entry { border: 1px solid #dce2e9; border-radius: .65rem; background: #fff; }
+  .cash-entry > summary { padding: .85rem; }
+  .cash-entry[open] > summary { border-bottom: 1px solid #e5e7eb; }
+  .cash-entry-heading { display: inline; font-weight: 600; }
+  .cash-entry-meta { display: block; color: #64748b; font-size: .8rem; margin-top: .3rem; }
+  .cash-entry-body { padding: .85rem; }
+  .cash-entry-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-bottom: .75rem; }
+  .cash-entry-fields dt { font-size: .8rem; font-weight: 400; color: #64748b; }
+  .cash-entry-fields dd { margin: 0; }
+  .cash-entry-note { white-space: pre-wrap; margin-bottom: .75rem; }
+  .cash-date-filter { display: grid; gap: .65rem; }
+  @media (min-width: 576px) { .cash-date-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 575.98px) { #cashBoxesModal .cash-primary { width: 100%; } }
+</style>
+<div class="modal fade" id="cashBoxesModal" tabindex="-1" aria-labelledby="cashBoxesTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title h5" id="cashBoxesTitle">Cash Boxes</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <div class="modal-body">
+      <p id="cashBoxesError" class="alert alert-danger d-none" role="alert" tabindex="-1"></p>
+      <p id="cashBoxesSuccess" class="alert alert-success d-none" role="status"></p>
+      <button type="button" id="cashReload" class="btn btn-outline-secondary mb-3 d-none">Refresh cash boxes</button>
+      <div class="rounded border bg-light p-3 mb-3" aria-live="polite">
+        <div class="text-muted small">Petty cash available</div><div id="cashPettyBalance" class="fs-3 fw-bold">—</div>
+        <p class="small text-muted mb-0" id="cashBalanceStatus">Loading cash balance...</p>
+      </div>
+      <form id="cashTopupForm">
+        <fieldset id="cashTopupFields" disabled>
+          <legend class="h6">Add petty cash</legend>
+          <div class="mb-3"><label class="form-label" for="cashAmount">Amount (₱)</label><input class="form-control" type="number" min="0.01" step="0.01" inputmode="decimal" id="cashAmount" required></div>
+          <div class="mb-3"><label class="form-label" for="cashRepay">Does the business need to pay the owner back?</label><select class="form-select" id="cashRepay" required><option value="">Choose Yes or No</option><option value="yes">Yes — add the amount owed to Payables</option><option value="no">No — no repayment is needed</option></select></div>
+          <details id="cashExtraDetails" class="mb-2"><summary>Change date or add a note</summary>
+            <div class="mt-2"><label class="form-label" for="cashDate">Manila cash date</label><input class="form-control" type="date" id="cashDate" required></div>
+            <div class="mt-2"><label class="form-label" for="cashNote">Note (optional)</label><textarea class="form-control" id="cashNote" rows="2" maxlength="255"></textarea></div>
+          </details>
+          <p class="text-muted small" id="cashDateNotice"></p>
+          <button class="btn btn-warning cash-primary" id="cashTopupSubmit" type="submit">Add petty cash</button>
+        </fieldset>
+      </form>
+      <hr>
+      <section aria-labelledby="cashHistoryHeading">
+        <h3 class="h6" id="cashHistoryHeading">Cash entry history</h3>
+        <p class="small text-muted">Cash additions, withdrawals, and corrections. Payments and spending have their own histories in Checkout Records, Receivables, Expenses, and Payables.</p>
+        <div class="d-flex flex-wrap gap-2 mb-2"><button type="button" class="btn btn-sm btn-outline-secondary" id="cashHistoryToday" aria-pressed="true">Today</button><button type="button" class="btn btn-sm btn-outline-secondary" id="cashHistoryAll" aria-pressed="false">All history</button></div>
+        <details id="cashHistoryDates" class="mb-3"><summary>Choose dates</summary>
+          <form id="cashHistoryFilter" class="cash-date-filter mt-2">
+            <div><label class="form-label" for="cashHistoryStart">From</label><input type="date" class="form-control" id="cashHistoryStart"></div>
+            <div><label class="form-label" for="cashHistoryEnd">Through</label><input type="date" class="form-control" id="cashHistoryEnd"></div>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Apply dates</button>
+          </form>
+        </details>
+        <p id="cashHistoryStatus" class="text-muted small" role="status">Loading history...</p>
+        <div id="cashHistoryBody" class="d-grid gap-2"></div>
+      </section>
+      <details id="cashOtherActions" class="mt-4" hidden><summary>Other actions</summary>
+        <form id="cashWithdrawalForm" class="mt-3">
+          <fieldset id="cashWithdrawalFields" disabled>
+            <legend class="h6">Record cash taken out</legend>
+            <p class="small text-muted">Record cash handed out here. Use Expenses for business purchases.</p>
+            <div class="mb-2"><label class="form-label" for="cashBoxChoice">Cash box</label><select class="form-select" id="cashBoxChoice" required><option value="">Choose a box</option><option value="petty">Petty cash</option><option value="customer">Customer cash</option></select><p id="cashWithdrawalBalance" class="small text-muted mt-1" role="status">Choose a box to see its available cash.</p></div>
+            <div class="mb-2"><label class="form-label" for="cashWithdrawalAmount">Amount (₱)</label><input class="form-control" type="number" min="0.01" step="0.01" inputmode="decimal" id="cashWithdrawalAmount" required></div>
+            <div class="mb-2"><label class="form-label" for="cashRecipient">Who received it?</label><input class="form-control" id="cashRecipient" maxlength="100" required></div>
+            <div class="mb-2"><label class="form-label" for="cashWithdrawalNote">Purpose</label><textarea class="form-control" id="cashWithdrawalNote" maxlength="255" rows="2" required></textarea></div>
+            <div class="mb-2"><label class="form-label" for="cashWithdrawalDate">Manila cash date</label><input class="form-control" type="date" id="cashWithdrawalDate" required></div>
+            <div class="mb-2"><label class="form-label" for="cashOwnerDebt">Is this repayment of a recorded owner debt?</label><select class="form-select" id="cashOwnerDebt" required><option value="">Choose Yes or No</option><option value="yes">Yes — record it in Payables instead</option><option value="no">No — ordinary cash withdrawal</option></select><p class="small text-muted mt-1" id="cashOwnerDebtAdvice" hidden>Pay the recorded owner debt through <a href="{{ '/staff/payables' if session.get('role') == 'staff' else '/admin/payables' }}">Payables</a> so its balance is updated.</p></div>
+            <button class="btn btn-outline-warning cash-primary" id="cashWithdrawalSubmit" type="submit">Review cash withdrawal</button>
+          </fieldset>
+        </form>
+        <div id="cashWithdrawalConfirmHost"></div>
+      </details>
+      <div id="cashConfirmationHome" class="d-none">
+        <form id="cashBoxesConfirmForm" class="alert alert-warning mt-3 d-none" aria-labelledby="cashConfirmTitle">
+          <h4 id="cashConfirmTitle" class="h6 alert-heading"></h4><p id="cashConfirmMessage" class="mb-2"></p>
+          <div id="cashCorrectionReasonGroup" class="d-none mb-2"><label class="form-label" for="cashCorrectionReason">Reason for correction</label><input class="form-control" id="cashCorrectionReason" maxlength="255" required disabled><small class="text-muted">The original entry and this reason stay in history.</small></div>
+          <div id="cashReplacementGroup" class="d-none mb-2"><label class="form-label" for="cashReplacementAmount">Correct opening count (₱)</label><input class="form-control" type="number" min="0" step="0.01" id="cashReplacementAmount" required disabled></div>
+          <div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-outline-secondary" id="cashConfirmCancel">Cancel</button><button type="submit" class="btn btn-danger" id="cashConfirmSubmit">Confirm</button></div>
+        </form>
+      </div>
+    </div>
+  </div></div>
+</div>

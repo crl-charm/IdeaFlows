@@ -18,6 +18,7 @@ RESET_TABLES = {
     "boardroom_bookings",
     "booking_changes",
     "checkout_void_requests",
+    "cash_box_events",
     "customer_sessions",
     "daily_sales_reports",
     "expenses",

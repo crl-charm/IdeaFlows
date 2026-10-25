@@ -558,38 +558,7 @@
     </div>
   </div>
 
-  <!-- STAFF ANALYTICS -->
-  <div class="section-card">
-    <div class="section-header d-flex justify-content-between">
-      <div>
-        <h5>Performance Rankings</h5>
-        <small>Top performers this period</small>
-      </div>
-    </div>
-    <div class="section-body">
-      <div class="table-responsive">
-        <table class="modern-table">
-          <thead>
-            <tr>
-              <th>Rank</th>
-              <th>Name</th>
-              <th>Role</th>
-              <th>Customers Served</th>
-              <th>Orders Handled</th>
-            </tr>
-          </thead>
-          <tbody id="analytics-table-body">
-            <tr>
-              <td colspan="5" class="text-center text-muted py-4">Loading analytics...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
 </div>
-
 
 <!-- EDIT SPACE PRICE MODAL -->
 <div class="modal fade" id="editSpacePriceModal" tabindex="-1">
@@ -1086,37 +1055,6 @@
     loadStaffAttendanceData();
   }
 
-  function loadStaffAnalytics() {
-    fetch("/api/admin/staff-analytics", { credentials: "include" })
-      .then(res => res.json())
-      .then(data => {
-        const tbody = document.getElementById("analytics-table-body");
-        if (!Array.isArray(data) || !data.length) {
-          tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No analytics data yet.</td></tr>`;
-          return;
-        }
-
-        tbody.innerHTML = data.map((row, idx) => {
-          const rankBadge = idx === 0
-            ? `<span class="badge text-bg-warning text-dark">#1</span>`
-            : `<span class="badge text-bg-light border text-dark">#${idx + 1}</span>`;
-          return `
-          <tr>
-            <td class="ps-4">${rankBadge}</td>
-            <td class="fw-semibold">${row.name}</td>
-            <td>${jobRoleBadge(row.job_role)}</td>
-            <td>${row.customers_count}</td>
-            <td>${row.orders_count}</td>
-          </tr>
-        `;
-        }).join("");
-      })
-      .catch(() => {
-        const tbody = document.getElementById("analytics-table-body");
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-4">Failed to load analytics.</td></tr>`;
-      });
-  }
-
   function loadCapacity() {
     fetch("/api/admin/space-capacity", { credentials: "include" })
       .then(res => res.json())
@@ -1474,7 +1412,6 @@
   // INIT
   loadUsers();
   loadCustomerStats();
-  loadStaffAnalytics();
   loadCapacity();
   loadSpacePrices();
   window.createSmartPoller(loadUsers, 30000, { runImmediately: false });
@@ -1483,7 +1420,6 @@
       return loadActiveSessions(false);
     }
   }, 30000, { runImmediately: false });
-  window.createSmartPoller(loadStaffAnalytics, 60000, { runImmediately: false });
   window.createSmartPoller(loadCapacity, 60000, { runImmediately: false });
   window.createSmartPoller(loadSpacePrices, 120000, { runImmediately: false });
 
@@ -1491,7 +1427,6 @@
   const socket = window.getIdeaFlowSocket();
   const refreshStaffStatus = window.createDebouncedRefresh(function () {
     loadUsers();
-    loadStaffAnalytics();
     if (document.getElementById("activeSessionsModal")?.classList.contains("show")) {
       loadActiveSessions(false);
     }

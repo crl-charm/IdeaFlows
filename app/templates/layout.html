@@ -344,6 +344,9 @@
         <i class="bi bi-clock-history fs-5 text-secondary" aria-hidden="true"></i>
       </button>
       {% endif %}
+      {% if session.get("role") in ("admin", "staff") %}<button type="button" class="btn btn-link nav-link p-1" onclick="openCashBoxes()" aria-label="Cash Boxes" title="Cash Boxes">
+        <i class="bi bi-cash-stack fs-5 text-secondary" aria-hidden="true"></i>
+      </button>{% endif %}
       <a class="nav-link p-1 position-relative" href="/orders" aria-label="Orders">
         <i class="bi bi-bag fs-5 text-secondary"></i>
         <span id="orders-badge-mobile"
@@ -362,6 +365,7 @@
         {% if session.get("role") == "staff" %}
         <button type="button" class="btn btn-link text-decoration-none nav-link top-nav-link d-inline me-3" onclick="openStaffShift()">Time In / Out</button>
         {% endif %}
+        {% if session.get("role") in ("admin", "staff") %}<button type="button" class="btn btn-link text-decoration-none nav-link top-nav-link d-inline me-3" onclick="openCashBoxes()">Cash Boxes</button>{% endif %}
         <a class="nav-link top-nav-link d-inline me-3" href="/orders">
           Orders
           <span id="orders-badge" class="badge text-bg-warning ms-2"
@@ -569,6 +573,8 @@
 
   </div>
 
+
+  {% include 'partials/cash_boxes.html' %}
 
   {% if session.get("role") == "staff" %}
   <div class="modal fade" id="staffShiftModal" tabindex="-1" aria-labelledby="staffShiftModalTitle" aria-hidden="true">
@@ -1080,6 +1086,8 @@
 
   {% block scripts %}
   {% endblock %}
+
+  <script src="{{ url_for('static', filename='js/cash-boxes.js') }}?v=2"></script>
 
   <script>
     (function enableSpaNav() {

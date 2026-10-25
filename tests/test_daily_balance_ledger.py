@@ -1,8 +1,9 @@
 """The live screen, snapshot and export must agree on one Manila business day."""
 
+from csv import DictReader
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import pytest
 from flask import render_template
@@ -31,8 +32,66 @@ def app():
 
 def test_pdf_hides_empty_unknown_method_without_losing_older_amounts():
     assert all(row["method"] != "unclassified" for row in DailyBalanceExportService._method_rows([{}]))
+    rounding = {"expense_methods": {"unclassified": 0.1 + 0.2 - 0.3}}
+    assert all(row["method"] != "unclassified" for row in DailyBalanceExportService._method_rows([rounding]))
     rows = DailyBalanceExportService._method_rows([{"expense_methods": {"unclassified": 5}}])
     assert next(row for row in rows if row["method"] == "unclassified")["expense"] == 5
+
+
+def test_narrow_exports_keep_saved_balances_and_notes_as_text(app):
+    long_note = "=SUM(A1:A2) " + "Reference1234567890" * 60
+    report = SalesRepository.daily_ledger_empty(date(2026, 10, 5))
+    report.update(id=7, generated_by="Reviewer", generated_at="2026-10-05T09:00:00Z",
+                  notes=long_note, snapshot_cash_movement=0,
+                  snapshot_petty_cash_closing=100, snapshot_customer_cash_closing=200,
+                  petty_cash_snapshot_difference=50, customer_cash_snapshot_difference=-50,
+                  cash_snapshot_difference=0)
+    report["external_expense_methods"]["bdo"] = 25
+    report["checkout_methods"]["cash"] = report["expense_methods"]["cash"] = 100
+    report["cash_boxes"] = {"opening":{"petty":100,"customer":200},
+                            "closing":{"petty":150,"customer":150},
+                            "unassigned_cash_movement":0}
+    snapshot = {"id":3,"balance_date":"2026-10-05","period":"PM","total_revenue":100,
+                "net_balance":0,"petty_cash_closing":100,"customer_cash_closing":200,
+                "petty_cash_live_difference":50,"customer_cash_live_difference":-50,
+                "live_cash_difference":0,"generated_by":"Reviewer","notes":"=SUM(A1:A2)"}
+    service = DailyBalanceExportService(db)
+    with app.test_request_context():
+        csv = service.export_csv([report], [snapshot])
+        csv.direct_passthrough = False
+        rows = list(DictReader(StringIO(csv.get_data().decode("utf-8-sig"))))
+        assert any(r["Item"] == "Notes" and r["Notes"] == "'" + long_note for r in rows)
+        assert any(r["Section"].startswith("Saved snapshot / PM #3") and r["Item"] == "Saved Petty Closing"
+                   and r["Amount"] == "100.00" for r in rows)
+        assert any(r["Item"] == "Customer Snapshot Difference" and r["Amount"] == "-50.00" for r in rows)
+        excel = service.export_excel([report], [snapshot])
+        excel.direct_passthrough = False
+        workbook = load_workbook(BytesIO(excel.get_data()))
+        notes = [row[3] for row in workbook["Report Details"] if str(row[2].value).startswith("Notes")]
+        assert all(note.data_type == "s" and len(note.value) <= 400 for note in notes)
+        assert "".join(note.value for note in notes) == long_note
+        assert any(row[2].value == "Saved Petty Closing" and row[3].value == 100
+                   for row in workbook["Report Details"])
+        assert workbook["Daily Reports"]["A2"].data_type == "d"
+        assert workbook["Soft Balances"].max_column == 4
+        assert any(row[1] == "PM #3" and row[2] == "Cash snapshot: Saved Petty Closing" and row[3] == 100
+                   for row in workbook["Soft Balances"].values)
+        methods = service.build_pdf_context([report], [snapshot])["method_rows"]
+        assert service.build_pdf_context([], [snapshot])["period_label"] == "2026-10-05 to 2026-10-05"
+        cash = next(m for m in methods if m["method"] == "cash")
+        assert cash["active"] and cash["received"] == cash["paid_out"] == 100 and cash["net"] == 0
+        assert next(m for m in methods if m["method"] == "bdo")["active"]
+
+
+@pytest.mark.parametrize("format", ["csv", "excel", "pdf"])
+def test_export_filters_reject_invalid_or_reversed_dates(app, format):
+    client = app.test_client()
+    with client.session_transaction() as auth:
+        auth.update(user_id=1, username="test_user", role="staff",
+                    last_activity=datetime.now(timezone.utc).timestamp())
+    base = f"/staff/daily-balance/api/reports/export-{format}"
+    assert client.get(base + "?start_date=bad-date").status_code == 400
+    assert client.get(base + "?start_date=2026-10-06&end_date=2026-10-05").status_code == 400
 
 
 def test_live_ledger_reconciles_midnight_payments_and_export(app):
@@ -137,7 +196,8 @@ def test_live_ledger_reconciles_midnight_payments_and_export(app):
     export = client.get("/admin/daily-balance/api/reports/export-csv?start_date=2026-09-24&end_date=2026-09-24")
     assert export.status_code == 200
     assert "Debt Collected" in export.data.decode("utf-8")
-    assert "₱65.00" in export.data.decode("utf-8")
+    csv_rows = list(DictReader(StringIO(export.data.decode("utf-8-sig"))))
+    assert any(row["Item"] == "Net Movement (all methods)" and row["Amount"] == "65.00" for row in csv_rows)
 
     voided = client.delete(f"/admin/expenses/api/expenses/{expense_id}", json={"reason": "Duplicate receipt"},
                            headers={"Idempotency-Key": "ledger-expense-void"})
@@ -295,19 +355,22 @@ def test_cowork_cafe_discount_split_reconciles_with_daily_balance_and_exports(ap
     assert api.get_json()["data"][0]["cafe_bill"] == 60
     csv_response = client.get(f"/admin/daily-balance/api/reports/export-csv?{query}")
     assert csv_response.status_code == 200
-    assert "Cowork Bill,Cafe Bill,Discounts,Checkout Sales,Refunds Paid" in csv_response.data.decode("utf-8")
-    assert "₱100.00,₱415.00,₱28.00,₱487.00,₱0.00" in csv_response.data.decode("utf-8")
+    csv_rows = list(DictReader(StringIO(csv_response.data.decode("utf-8-sig"))))
+    assert list(csv_rows[0]) == ["Date", "Section", "Item", "Method", "Amount", "Notes"]
+    first_sales = {row["Item"]: Decimal(row["Amount"]) for row in csv_rows
+                   if row["Date"] == first_day.isoformat() and row["Section"] == "Daily summary / Sales"}
+    assert [first_sales[key] for key in ("Cowork Bill", "Cafe Bill", "Discounts", "Checkout Sales", "Refunds Paid")] == [100, 415, 28, 487, 0]
     excel_response = client.get(f"/admin/daily-balance/api/reports/export-excel?{query}")
     assert excel_response.status_code == 200
     workbook = load_workbook(BytesIO(excel_response.data), read_only=True, data_only=True)
-    assert workbook["Summary"]["B24"].value == 100
-    assert workbook["Summary"]["B25"].value == 475
-    assert [workbook["Daily Reports"].cell(row=1, column=column).value for column in range(24, 29)] == [
-        "Cowork Bill", "Cafe Bill", "Discounts", "Refunds Paid", "Sales Reconciliation Difference",
-    ]
-    assert [workbook["Daily Reports"].cell(row=3, column=column).value for column in range(24, 28)] == [
-        100, 415, 28, 0,
-    ]
+    summary = dict(workbook["Summary"].values)
+    assert summary["Cowork Bill"] == 100
+    assert summary["Cafe Bill"] == 475
+    first_details = {row[2]: row[3] for row in workbook["Report Details"].values
+                     if str(row[0])[:10] == first_day.isoformat() and row[1] == "Sales"}
+    assert [first_details[key] for key in ("Cowork Bill", "Cafe Bill", "Discounts", "Refunds Paid")] == [100, 415, 28, 0]
+    assert workbook["Daily Reports"].max_column == 5
+    assert workbook["Payment Methods"].max_column == 4
     pdf_response = client.get(f"/admin/daily-balance/api/reports/export-pdf?{query}")
     assert pdf_response.status_code == 200
     assert pdf_response.data.startswith(b"%PDF")

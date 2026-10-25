@@ -6,11 +6,27 @@
 
 <style>
   #main-content { min-width: 0; }
-  .daily-balance-page, .daily-balance-table-card { min-width: 0; }
-  .daily-balance-table-scroll { max-width: 100%; }
-  .daily-balance-table-scroll th,
-  .daily-balance-table-scroll td { white-space: nowrap; }
-  .daily-balance-table-scroll .report-notes { white-space: normal; min-width: 10rem; max-width: 18rem; }
+  .daily-balance-page, .daily-balance-page * { min-width: 0; }
+  .daily-balance-page { overflow-wrap: anywhere; }
+  .daily-balance-page h1 { font-size: clamp(1.6rem, 3vw, 2.5rem); }
+  .daily-balance-page .display-6 { font-size: clamp(1.65rem, 3vw, 2.5rem); }
+  .balance-date-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+  .balance-date-range input { width: 100%; }
+  .balance-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: .75rem; }
+  .balance-detail { border: 1px solid #dce2e9; border-radius: .75rem; background: #fff; }
+  .balance-detail > summary { padding: 1rem; cursor: pointer; border-radius: .75rem; }
+  .balance-detail > summary:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+  .balance-detail[open] > summary { border-bottom: 1px solid #e5e7eb; }
+  .balance-title { display: inline; font-weight: 600; }
+  .balance-subtitle { display: block; color: #64748b; font-size: .8rem; margin: .35rem 0 .75rem; }
+  .balance-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem 1rem; margin: .5rem 0 0; }
+  .balance-metrics dt { color: #64748b; font-size: .8rem; font-weight: 400; }
+  .balance-metrics dd { margin: 0; font-weight: 600; }
+  .balance-detail-body { padding: 0 1rem 1rem; }
+  .balance-detail-body h6 { margin: 1rem 0 .5rem; }
+  .balance-hint { display: block; color: #64748b; font-size: .75rem; margin-top: .75rem; }
+  .balance-review { display: block; margin-top: .5rem; color: #9a3412; font-size: .8rem; }
+  .balance-audit { white-space: pre-wrap; font-size: .85rem; margin-bottom: 0; }
   @media (max-width: 767.98px) {
     .daily-balance-page { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
   }
@@ -19,17 +35,17 @@
 <div class="container-fluid daily-balance-page">
   <div class="d-flex flex-column flex-md-row justify-content-md-between align-items-md-start gap-2 gap-md-3 mb-4">
     <h1 class="mb-0 mb-md-0" style="flex: 0 0 auto;">Daily Sales Balance</h1>
-    <div class="daily-balance-export-buttons d-flex flex-wrap flex-md-nowrap gap-2 justify-content-start justify-content-md-end" style="flex: 1 1 auto;">
-      <button class="btn btn-danger btn-sm" onclick="exportPDF()">
+    <div class="daily-balance-export-buttons d-flex flex-wrap gap-2 justify-content-start justify-content-md-end" style="flex: 1 1 auto;">
+      <button class="btn btn-danger btn-sm" onclick="exportPDF()" aria-label="Export PDF">
         <i class="bi bi-file-earmark-pdf"></i> <span class="d-none d-sm-inline">Export PDF</span>
       </button>
-      <button class="btn btn-outline-success btn-sm" onclick="exportExcel()">
+      <button class="btn btn-outline-success btn-sm" onclick="exportExcel()" aria-label="Export Excel">
         <i class="bi bi-file-earmark-excel"></i> <span class="d-none d-sm-inline">Excel</span>
       </button>
-      <button class="btn btn-info btn-sm" onclick="exportCSV()">
+      <button class="btn btn-info btn-sm" onclick="exportCSV()" aria-label="Export CSV">
         <i class="bi bi-download"></i> <span class="d-none d-sm-inline">Export CSV</span>
       </button>
-      {% if session.get("role") in ("admin", "staff") %}<button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal">
+      {% if session.get("role") in ("admin", "staff") %}<button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal" aria-label="Generate report">
         <i class="bi bi-plus"></i> <span class="d-none d-sm-inline">Generate Report</span>
       </button>{% endif %}
     </div>
@@ -44,10 +60,9 @@
         <div class="col-12 col-md-auto">
           <span class="fw-semibold text-secondary small"><i class="bi bi-funnel me-1"></i> Filter Reports & Summaries:</span>
         </div>
-        <div class="col-12 col-sm-auto d-flex align-items-center gap-2">
-          <input type="date" id="filterStartDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="loadReports()">
-          <span class="text-muted small">to</span>
-          <input type="date" id="filterEndDate" class="form-control form-control-sm" style="max-width: 160px;" onchange="loadReports()">
+        <div class="col-12 col-lg-auto balance-date-range">
+          <div><label for="filterStartDate" class="small text-muted">From</label><input type="date" id="filterStartDate" class="form-control form-control-sm" onchange="loadReports()"></div>
+          <div><label for="filterEndDate" class="small text-muted">Through</label><input type="date" id="filterEndDate" class="form-control form-control-sm" onchange="loadReports()"></div>
         </div>
         <div class="col-12 col-md-auto ms-md-auto d-flex flex-wrap gap-1">
           <button class="btn btn-sm btn-outline-secondary" onclick="setDateFilterPreset('today')">Today</button>
@@ -73,6 +88,7 @@
             <div class="text-muted small">
               <span class="badge bg-warning text-dark fw-semibold" id="today-receivables-count">0</span> payment(s) today
             </div>
+            <div class="text-muted small mt-1">Customer debt payments received today. These are collections of utang, not new checkout sales.</div>
           </div>
         </div>
       </div>
@@ -84,11 +100,11 @@
         <div class="card-body d-flex flex-column justify-content-between p-4">
           <div>
             <span class="text-emerald-100 fw-bold text-uppercase tracking-wider" style="font-size: 0.75rem; letter-spacing: 0.05em; opacity: 0.9;">Current Cash Flow</span>
-            <h5 class="card-title mb-3">Cash on Hand</h5>
+            <h5 class="card-title mb-3">Today's Cash Movement</h5>
           </div>
           <div>
             <div class="display-6 fw-bold mb-1">₱<span id="today-cash-on-hand">0.00</span></div>
-            <div class="small" style="opacity: 0.9;">Today's recorded cash inflows − cash outflows; excludes opening cash</div>
+            <div class="small" style="opacity: 0.9;">Cash received ₱<span id="today-cash-received">0.00</span> + owner cash added ₱<span id="today-owner-added">0.00</span> − spending/refunds ₱<span id="today-cash-spent">0.00</span> − cash taken out ₱<span id="today-cash-taken">0.00</span>. Opening counts excluded.</div>
           </div>
         </div>
       </div>
@@ -101,7 +117,7 @@
           <div><span class="fw-bold text-uppercase" style="font-size:0.75rem;letter-spacing:0.05em;color:#9a6700;">Unpaid</span>
             <h5 class="card-title mb-3">Still to Collect</h5></div>
           <div><div class="display-6 fw-bold mb-1">₱<span id="today-expected-collections">0.00</span></div>
-            <div class="text-muted small">Active customer sessions only</div></div>
+            <div class="text-muted small">Active customer sessions only: current time and food bills before checkout and discounts.</div></div>
         </div>
       </div>
     </div>
@@ -116,19 +132,26 @@
           </div>
           <div>
             <div class="display-6 fw-bold text-primary mb-1">₱<span id="today-expected-cash">0.00</span></div>
-            <div class="text-muted small">Cash on hand + active session bills (estimate)</div>
+            <div class="text-muted small">Today's cash movement ₱<span id="projected-current-cash">0.00</span> + active session bills ₱<span id="projected-unpaid">0.00</span>. Estimate if those bills are paid in cash; not physical cash held.</div>
           </div>
         </div>
       </div>
     </div>
   </div>
 
+  <div class="d-flex justify-content-end mb-2">
+    <button type="button" class="btn btn-sm btn-outline-primary" onclick="openCashBoxes()" aria-controls="cashBoxesModal">Cash Boxes</button>
+  </div>
+  <div class="row g-3 mb-4" id="cash-held-cards" aria-live="polite">
+    <div class="col-12"><div class="alert alert-secondary mb-0">Cash box opening counts have not been set. Open Cash Boxes to begin tracking held cash.</div></div>
+  </div>
+
   <h5 class="mb-3 text-muted">Live Summary (Asia/Manila) <small id="sales-summary-period" class="d-block fw-normal"></small></h5>
   <div class="row g-3 mb-2">
-    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Cowork bill</small><div class="fs-5 fw-bold">₱<span id="cowork-bill">0.00</span></div><small class="text-muted">Space and time, before discounts</small></div></div></div>
-    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Cafe bill</small><div class="fs-5 fw-bold">₱<span id="cafe-bill">0.00</span></div><small class="text-muted">Menu items, before discounts</small></div></div></div>
-    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Discounts</small><div class="fs-5 fw-bold">−₱<span id="discounts-total">0.00</span></div><small class="text-muted">Cowork ₱<span id="cowork-discounts">0.00</span> · Cafe ₱<span id="cafe-discounts">0.00</span></small></div></div></div>
-    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Checkout sales</small><div class="fs-5 fw-bold">₱<span id="total-revenue">0.00</span></div><small class="text-muted">Cowork + Cafe − Discounts</small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Cowork bill</small><div class="fs-5 fw-bold">₱<span id="cowork-bill">0.00</span></div><small class="text-muted">Space and time charged on completed checkouts in the selected dates, before discounts.</small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Cafe bill</small><div class="fs-5 fw-bold">₱<span id="cafe-bill">0.00</span></div><small class="text-muted">Menu items charged on those completed checkouts, before discounts.</small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Discounts</small><div class="fs-5 fw-bold">−₱<span id="discounts-total">0.00</span></div><small class="text-muted">Checkout discounts: Cowork ₱<span id="cowork-discounts">0.00</span> + Cafe ₱<span id="cafe-discounts">0.00</span>.</small></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card bg-light border-0 shadow-sm h-100"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Checkout sales</small><div class="fs-5 fw-bold">₱<span id="total-revenue">0.00</span></div><small class="text-muted">Cowork ₱<span id="sales-cowork">0.00</span> + Cafe ₱<span id="sales-cafe">0.00</span> − Discounts ₱<span id="sales-discounts">0.00</span>. Paid checkouts only.</small></div></div></div>
   </div>
   <p id="sales-reconciliation-warning" class="text-danger small d-none" role="alert">One or more payment methods differ from the Cowork + Cafe − Discounts breakdown by a combined ₱<span id="sales-reconciliation-difference">0.00</span>. Review older checkout records.</p>
   <div class="row g-3 mb-4">
@@ -137,7 +160,7 @@
         <div class="card-body p-3">
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Refunds paid</small>
           <div class="fs-5 fw-bold text-danger mt-1">₱<span id="total-refunds">0.00</span></div>
-          <small class="text-muted">Shown on the day refunded, separate from checkout sales</small>
+          <small class="text-muted">Cash and digital refunds approved in the selected dates. The original checkout stays on its sale date.</small>
         </div>
       </div>
     </div>
@@ -146,24 +169,27 @@
         <div class="card-body p-3">
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total Expenses</small>
           <div class="fs-5 fw-bold text-danger mt-1">₱<span id="total-expenses">0.00</span></div>
-          <small class="text-muted">Business ₱<span id="total-business-expenses">0.00</span> · External-funded ₱<span id="total-external-expenses">0.00</span></small>
+          <small class="text-muted">Business ₱<span id="total-business-expenses">0.00</span> + External-funded ₱<span id="total-external-expenses">0.00</span> recorded in the selected dates.</small>
         </div>
       </div>
     </div>
     <div class="col-12 col-md-4">
       <div class="card bg-light border-0 shadow-sm">
         <div class="card-body p-3">
-          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Net Cash Movement</small>
+          <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Net movement (all methods)</small>
           <div class="fs-5 fw-bold text-success mt-1">₱<span id="net-balance">0.00</span></div>
+          <small class="text-muted">Added ₱<span id="net-added">0.00</span> (sales, credit received, debt collected, other income, owner cash) − deductions ₱<span id="net-deducted">0.00</span> (credit used, business expenses and debt paid, budget spending, refunds, withdrawals). External-funded costs excluded.</small>
         </div>
       </div>
     </div>
   </div>
 
   <div class="row g-3 mb-4">
-    <div class="col-12"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Supplier Payments</small><div class="fs-5 fw-bold">₱<span id="total-payables-paid">0.00</span></div><small class="text-muted">Business ₱<span id="total-business-payables-paid">0.00</span> · External-funded ₱<span id="total-external-payables-paid">0.00</span></small></div></div></div>
+    <div class="col-12"><div class="card bg-light border-0 shadow-sm"><div class="card-body p-3"><small class="text-muted text-uppercase fw-bold">Payments of debt</small><div class="fs-5 fw-bold">₱<span id="total-payables-paid">0.00</span></div><small class="text-muted">Supplier payments ₱<span id="total-supplier-payments">0.00</span> + owner reimbursements ₱<span id="total-owner-reimbursements">0.00</span>. Funded by business ₱<span id="total-business-payables-paid">0.00</span> + externally ₱<span id="total-external-payables-paid">0.00</span>. Payment date, not the date the debt began.</small></div></div></div>
   </div>
-  <p class="text-muted small">Net movement = checkout sales − credit applied + credit received + customer debt collected + other income − business expenses − business supplier payments − budget spending − refunds paid. Debt collection and other income are separate from sales revenue.</p>
+  <p class="text-muted small">Owner cash added ₱<span id="total-owner-topups">0.00</span> · Cash taken out ₱<span id="total-cash-withdrawals">0.00</span>. These change held cash, not sales or other income. Net movement also includes these transfers and subtracts owner debt repayments once.</p>
+
+  <section class="card mb-4" aria-labelledby="cash-box-heading"><div class="card-header"><h2 class="h6 mb-0" id="cash-box-heading">Cash boxes by Manila day</h2></div><div class="card-body"><p id="cash-box-status" class="text-muted small" role="status">Loading cash boxes...</p><div id="cash-box-report-body" class="balance-card-grid"></div><p id="cash-box-warning" class="text-danger small mt-3 mb-0 d-none" role="alert">Some older cash entries have no known box. Review the source payment histories before reconciling this date.</p></div></section>
 
   <h6 class="mb-2 text-muted fw-semibold">Payment Breakdown</h6>
   <div class="row g-2 mb-4">
@@ -173,6 +199,7 @@
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total Cash (Checked Out)</small>
           <div class="fs-6 fw-semibold text-dark mt-1">₱<span id="total-cash">0.00</span></div>
           <small class="text-muted" style="font-size: 0.75rem;"><span id="cash-count">0</span> checkouts</small>
+          <small class="text-muted d-block">Completed checkouts marked Cash. Customer credit used and debt collections are separate below.</small>
         </div>
       </div>
     </div>
@@ -182,6 +209,7 @@
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total GCash (Checked Out)</small>
           <div class="fs-6 fw-semibold text-dark mt-1">₱<span id="total-gcash">0.00</span></div>
           <small class="text-muted" style="font-size: 0.75rem;"><span id="gcash-count">0</span> checkouts</small>
+          <small class="text-muted d-block">Completed checkouts marked GCash; customer credit used and debt collections are separate below.</small>
         </div>
       </div>
     </div>
@@ -191,6 +219,7 @@
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total BDO (Checked Out)</small>
           <div class="fs-6 fw-semibold text-dark mt-1">₱<span id="total-bdo">0.00</span></div>
           <small class="text-muted" style="font-size: 0.75rem;"><span id="bdo-count">0</span> checkouts</small>
+          <small class="text-muted d-block">Completed checkouts marked BDO; customer credit used and debt collections are separate below.</small>
         </div>
       </div>
     </div>
@@ -200,6 +229,7 @@
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total BPI (Checked Out)</small>
           <div class="fs-6 fw-semibold text-dark mt-1">₱<span id="total-bpi">0.00</span></div>
           <small class="text-muted" style="font-size: 0.75rem;"><span id="bpi-count">0</span> checkouts</small>
+          <small class="text-muted d-block">Completed checkouts marked BPI; customer credit used and debt collections are separate below.</small>
         </div>
       </div>
     </div>
@@ -209,86 +239,29 @@
           <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total QueenBank (Checked Out)</small>
           <div class="fs-6 fw-semibold text-dark mt-1">₱<span id="total-queenbank">0.00</span></div>
           <small class="text-muted" style="font-size: 0.75rem;"><span id="queenbank-count">0</span> checkouts</small>
+          <small class="text-muted d-block">Completed checkouts marked QueenBank; customer credit used and debt collections are separate below.</small>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="card mb-4 daily-balance-table-card">
-    <div class="card-header"><strong>Payment method reconciliation</strong><small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small></div>
-    <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Payment method reconciliation table" tabindex="0">
-      <table class="table table-sm mb-0"><thead><tr><th>Method</th><th>Checkout sales</th><th>Credit applied</th><th>Credit received</th><th>Debt collected</th><th>Other income</th><th>Business expenses</th><th>External-funded expenses</th><th>Business supplier paid</th><th>External-funded supplier paid</th><th>Budget spent</th><th>Refunds paid</th><th>Net movement</th></tr></thead><tbody id="method-reconciliation-body"></tbody></table>
+  <section class="card mb-4" aria-labelledby="method-heading">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <h2 class="h6 mb-0" id="method-heading">Payment method reconciliation</h2>
+      <label class="small d-flex gap-2 align-items-center"><input type="checkbox" id="show-all-methods" onchange="renderFilteredReports()">Show all methods</label>
     </div>
-  </div>
+    <div class="card-body"><p class="text-muted small">Money received − money paid out = net movement. Open a method for its full breakdown.</p><p id="method-status" class="text-muted small" role="status">Loading payment methods...</p><div id="method-reconciliation-body" class="balance-card-grid"></div></div>
+  </section>
 
-  <div class="card daily-balance-table-card">
-    <div class="card-header">
-      <h5>Daily Reports</h5>
-      <small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small>
-    </div>
-    <div class="card-body p-2 p-md-3">
-      <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Daily reports table" tabindex="0">
-        <table class="table table-hover">
-          <thead>
-            <tr>
-              <th>Report Date</th>
-              <th>Cowork bill</th>
-              <th>Cafe bill</th>
-              <th>Discounts</th>
-              <th>Checkout sales</th>
-              <th>Refunds paid</th>
-              <th>Debt Collected</th>
-              <th>Other Income</th>
-              <th>Cash</th>
-              <th>GCash</th>
-              <th>BDO</th>
-              <th>BPI</th>
-              <th>QueenBank</th>
-              <th>Expenses</th>
-              <th>Supplier Paid</th>
-              <th>Budget Spent</th>
-              <th>Net</th>
-              <th>Orders</th>
-              <th>Timed Sessions</th>
-              <th>Generated By</th>
-              <th>Notes</th>
-            </tr>
-          </thead>
-          <tbody id="reports-table-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <section class="card mb-4" aria-labelledby="reports-heading">
+    <div class="card-header"><h2 class="h5 mb-0" id="reports-heading">Daily Reports</h2></div>
+    <div class="card-body"><p class="text-muted small">Live totals for each Manila day. Open a date for payment details and its saved cash snapshot.</p><p id="reports-status" class="text-muted small" role="status">Loading daily reports...</p><div id="reports-table-body" class="d-grid gap-3"></div></div>
+  </section>
 
-  <div class="card mt-4 daily-balance-table-card">
-    <div class="card-header">
-      <h5>Soft Balancing History (AM/PM)</h5>
-      <small class="d-block d-md-none text-muted">Swipe sideways to see all columns</small>
-    </div>
-    <div class="card-body p-2 p-md-3">
-      <div class="table-responsive daily-balance-table-scroll" role="region" aria-label="Soft balancing history table" tabindex="0">
-        <table class="table table-hover">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Period</th>
-              <th>Revenue</th>
-              <th>Expenses</th>
-              <th>Debt Collected</th>
-              <th>Other Income</th>
-              <th>Supplier Paid</th>
-              <th>Budget Spent</th>
-              <th>Net</th>
-              <th>Generated By</th>
-              <th>Created At</th>
-              <th>Notes</th>
-            </tr>
-          </thead>
-          <tbody id="soft-balance-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <section class="card" aria-labelledby="soft-heading">
+    <div class="card-header"><h2 class="h5 mb-0" id="soft-heading">Soft Balancing History (AM/PM)</h2></div>
+    <div class="card-body"><p class="text-muted small">Saved snapshots at the time each AM or PM balance was recorded. Differences show later cash changes.</p><p id="soft-status" class="text-muted small" role="status">Loading soft balances...</p><div id="soft-balance-body" class="d-grid gap-3"></div></div>
+  </section>
 </div>
 
 {% if session.get("role") in ("admin", "staff") %}
@@ -335,6 +308,67 @@ let softBalancesCache = [];
 let reportsRequest = 0;
 let lastManilaToday = '';
 const failedBalanceLoads = new Set();
+const balanceMethods = ['cash', 'gcash', 'bdo', 'bpi', 'queenbank', 'unclassified'];
+const balanceFlows = ['checkout', 'credit_applied', 'credit_received', 'collection', 'adjustment_income', 'owner_topup', 'cash_withdrawal', 'expense', 'external_expense', 'payable', 'external_payable', 'adjustment_expense', 'refund', 'owner_reimbursement', 'expense_paid', 'expense_void', 'payable_paid'];
+const balanceCurrency = new Intl.NumberFormat('en-PH', {style:'currency', currency:'PHP'});
+const balanceDateTime = new Intl.DateTimeFormat('en-PH', {timeZone:'Asia/Manila', dateStyle:'medium', timeStyle:'short'});
+const balanceMoney = value => value == null ? '—' : balanceCurrency.format(value);
+const balanceText = value => window.escapeHTML(String(value ?? '—'));
+function balanceMetrics(rows) {
+  return `<dl class="balance-metrics">${rows.map(([label, value, text]) => `<div><dt>${balanceText(label)}</dt><dd>${text ? balanceText(value) : balanceMoney(value)}</dd></div>`).join('')}</dl>`;
+}
+function balanceGroup(title, rows) { return `<h6>${balanceText(title)}</h6>${balanceMetrics(rows)}`; }
+function balanceCard(key, title, subtitle, rows, body, review = false) {
+  return `<details class="balance-detail" data-key="${balanceText(key)}"><summary><span class="balance-title">${balanceText(title)}</span><span class="balance-subtitle">${balanceText(subtitle)}</span>${balanceMetrics(rows)}${review ? '<span class="balance-review">Review: cash differs from the saved snapshot.</span>' : ''}<span class="balance-hint">Open / close breakdown</span></summary><div class="balance-detail-body">${body}</div></details>`;
+}
+function replaceBalanceCards(id, html) {
+  const container = document.getElementById(id);
+  if (container.dataset.rendered === html) return;
+  const open = new Set(Array.from(container.querySelectorAll('details[open]')).map(el => el.dataset.key));
+  const focused = container.contains(document.activeElement) ? document.activeElement.closest('details')?.dataset.key : null;
+  container.innerHTML = html;
+  container.dataset.rendered = html;
+  container.querySelectorAll('details').forEach(el => {
+    el.open = open.has(el.dataset.key);
+    if (el.dataset.key === focused) el.querySelector('summary').focus({preventScroll:true});
+  });
+}
+function balanceRecordedAt(value) {
+  if (!value) return 'Not generated';
+  const at = new Date(value.endsWith('Z') ? value : value.replace(' ', 'T') + 'Z');
+  return Number.isNaN(at.getTime()) ? value : balanceDateTime.format(at);
+}
+function balanceMethodValues(report, method) {
+  return Object.fromEntries(balanceFlows.map(flow => [flow, report[`${flow}_methods`]?.[method] || 0]));
+}
+function balanceMethodCard(method, v, prefix) {
+  const received = v.checkout - v.credit_applied + v.credit_received + v.collection + v.adjustment_income + v.owner_topup;
+  const paid = v.cash_withdrawal + v.expense + v.payable + v.adjustment_expense + v.refund;
+  return balanceCard(`${prefix}-${method}`, method === 'unclassified' ? 'Older records (method unknown)' : method.toUpperCase(), prefix === 'period' ? 'Selected Manila dates' : prefix,
+    [['Net movement', received - paid], ['Checkout sales', v.checkout], ['Money received', received], ['Money paid out', paid]],
+    balanceGroup('Sales and credit', [['Checkout sales',v.checkout],['Customer credit applied',v.credit_applied],['Customer credit received',v.credit_received]]) +
+    balanceGroup('Other money received', [['Debt collected',v.collection],['Other income',v.adjustment_income],['Owner cash added',v.owner_topup]]) +
+    balanceGroup('Money paid out', [['Business expenses',v.expense],['Business debt paid',v.payable],['Budget spending',v.adjustment_expense],['Refunds paid',v.refund],['Cash taken out',v.cash_withdrawal]]) +
+    balanceGroup('Additional context', [['External-funded expenses',v.external_expense],['External-funded debt paid',v.external_payable],['Owner repaid (part of debt paid)',v.owner_reimbursement],['Expense payments before reversals',v.expense_paid],['Expense reversals',v.expense_void],['All debt payments',v.payable_paid]]) +
+    '<p class="small text-muted mt-3 mb-0">Received = sales − credit applied + credit received + debt collected + other income + owner cash added. External-funded costs are shown for reference. Owner repayment is already included in debt paid.</p>');
+}
+function balanceAudit(report) {
+  return balanceGroup('Recorded snapshot', [['Recorded by',report.generated_by,true],['Recorded at (Manila)',balanceRecordedAt(report.generated_at),true]]) +
+    `<h6>Notes</h6><p class="balance-audit">${balanceText(report.notes || 'No notes')}</p>`;
+}
+function dailyReportCard(r) {
+  const box = r.cash_boxes;
+  const methods = balanceMethods.filter(m => balanceFlows.some(flow => Math.abs(r[`${flow}_methods`]?.[m] || 0) >= .005)).map(m => balanceMethodCard(m,balanceMethodValues(r,m),r.report_date)).join('');
+  return balanceCard(`report-${r.report_date}`, r.report_date, r.id == null ? 'Live totals · no saved report' : 'Live totals · saved cash snapshot available',
+    [['Checkout sales',r.total_revenue],['Debt collected',r.total_collections],['Business expenses',r.total_business_expenses],['Net movement (all methods)',r.net_balance]],
+    balanceGroup('Sales', [['Cowork bill',r.cowork_bill],['Cafe bill',r.cafe_bill],['Discounts',r.discounts_total],['Cowork discounts',r.cowork_discounts],['Cafe discounts',r.cafe_discounts],['Refunds paid',r.total_refunds],['Sales reconciliation difference',r.sales_reconciliation_difference]]) +
+    balanceGroup('Other money received', [['Debt collected',r.total_collections],['Other income',r.total_other_income],['Owner cash added',r.total_owner_topups]]) +
+    balanceGroup('Spending and transfers', [['Total expenses',r.total_expenses],['Business expenses',r.total_business_expenses],['External-funded expenses',r.total_external_expenses],['All debt paid',r.total_payables_paid],['Business debt paid',r.total_business_payables_paid],['External-funded debt paid',r.total_external_payables_paid],['Supplier payments',r.total_supplier_payments],['Owner repaid (part of debt paid)',r.total_owner_reimbursements],['Budget spent',r.total_budget_spend],['Cash taken out',r.total_cash_withdrawals]]) +
+    balanceGroup('Cash and original snapshot', [['Cash movement today',r.cash_on_hand],['Petty closing',box?.closing.petty],['Customer closing',box?.closing.customer],['Saved cash movement',r.snapshot_cash_movement],['Saved petty closing',r.snapshot_petty_cash_closing],['Saved customer closing',r.snapshot_customer_cash_closing],['Petty snapshot difference',r.petty_cash_snapshot_difference],['Customer snapshot difference',r.customer_cash_snapshot_difference],['Combined snapshot difference',r.cash_snapshot_difference]]) +
+    balanceGroup('Activity', [['Orders',r.total_orders,true],['Timed sessions',r.total_sessions,true],['Debt payments',r.collection_count,true]]) +
+    `<h6>Payment methods</h6><div class="d-grid gap-2">${methods || '<p class="text-muted small mb-0">No payment activity.</p>'}</div>` + balanceAudit(r),
+    [r.petty_cash_snapshot_difference,r.customer_cash_snapshot_difference,r.cash_snapshot_difference].some(v => Math.abs(v || 0) >= .005));
+}
 
 function setBalanceLoadFailure(section, failed) {
   if (failed) failedBalanceLoads.add(section);
@@ -342,6 +376,12 @@ function setBalanceLoadFailure(section, failed) {
   const banner = document.getElementById('daily-balance-load-error');
   banner.hidden = failedBalanceLoads.size === 0;
   banner.textContent = banner.hidden ? '' : `Could not load ${Array.from(failedBalanceLoads).join(', ')}. Please refresh the page.`;
+  const states = section === 'Daily Balance reports' ? ['reports-status','method-status','cash-box-status'] : section === 'soft balances' ? ['soft-status'] : [];
+  states.forEach(id => {
+    const status = document.getElementById(id);
+    status.hidden = !failed;
+    status.textContent = failed ? 'Could not refresh this section. Any previously loaded values may be out of date.' : '';
+  });
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -430,8 +470,22 @@ function loadReports() {
     document.getElementById('today-receivables-collected').textContent = stats.receivables_collected_today.toFixed(2);
     document.getElementById('today-receivables-count').textContent = stats.receivables_paid_today;
     document.getElementById('today-cash-on-hand').textContent = stats.cash_on_hand.toFixed(2);
+    const flow = stats.cash_flow_parts;
+    document.getElementById('today-cash-received').textContent = flow.received.toFixed(2);
+    document.getElementById('today-owner-added').textContent = flow.owner_added.toFixed(2);
+    document.getElementById('today-cash-spent').textContent = flow.spent_refunded.toFixed(2);
+    document.getElementById('today-cash-taken').textContent = flow.taken_out.toFixed(2);
+    if (stats.cash_boxes) {
+      const boxes = stats.cash_boxes;
+      const card = (title, amount, detail) => `<div class="col-12 col-md-4"><div class="card h-100 shadow-sm"><div class="card-body"><small class="text-muted">${title}</small><div class="fs-4 fw-bold ${amount < 0 ? 'text-danger' : ''}">₱${amount.toFixed(2)}</div><small class="text-muted d-block">${detail}</small>${amount < 0 ? '<small class="text-danger">Tracked balance is negative. Review the entries and opening count.</small>' : ''}</div></div></div>`;
+      const held = box => `Opening ₱${boxes.opening[box].toFixed(2)} + cash received ₱${boxes.receipts[box].toFixed(2)} + owner added ₱${boxes.topups[box].toFixed(2)} − spending/refunds ₱${boxes.spending[box].toFixed(2)} − taken out ₱${boxes.withdrawals[box].toFixed(2)}. Opening carries forward earlier days.`;
+      document.getElementById('cash-held-cards').innerHTML =
+        card('Petty cash held', boxes.closing.petty, held('petty'));
+    }
     document.getElementById('today-expected-collections').textContent = stats.expected_to_collect.toFixed(2);
     document.getElementById('today-expected-cash').textContent = stats.expected_cash_on_hand.toFixed(2);
+    document.getElementById('projected-current-cash').textContent = stats.cash_on_hand.toFixed(2);
+    document.getElementById('projected-unpaid').textContent = stats.expected_to_collect.toFixed(2);
     setBalanceLoadFailure('today\'s totals', false);
   }).catch(() => {
     setBalanceLoadFailure('today\'s totals', true);
@@ -439,6 +493,8 @@ function loadReports() {
   });
 
 }
+
+window.addEventListener('cash-boxes-updated', loadReports);
 
 function renderFilteredReports() {
   const startDateVal = document.getElementById('filterStartDate').value;
@@ -451,14 +507,12 @@ function renderFilteredReports() {
     return true;
   });
 
-  const tbody = document.getElementById('reports-table-body');
-  tbody.innerHTML = '';
-
   let sumCowork = 0, sumCafe = 0, sumDiscounts = 0, sumCoworkDiscounts = 0, sumCafeDiscounts = 0, sumRevenue = 0, sumRefunds = 0, sumDifference = 0;
   let sumExpenses = 0, sumBusinessExpenses = 0, sumExternalExpenses = 0, sumPayables = 0, sumBusinessPayables = 0, sumExternalPayables = 0, sumNet = 0, sumCash = 0, sumGcash = 0, sumBdo = 0, sumBpi = 0, sumQueenbank = 0;
+  let sumOwnerTopups = 0, sumWithdrawals = 0, sumOwnerReimbursements = 0, sumSupplierPayments = 0;
   let cashCount = 0, gcashCount = 0, bdoCount = 0, bpiCount = 0, queenbankCount = 0;
-  const methods = ['cash', 'gcash', 'bdo', 'bpi', 'queenbank', 'unclassified'];
-  const flows = ['checkout', 'credit_applied', 'credit_received', 'collection', 'adjustment_income', 'expense', 'external_expense', 'payable', 'external_payable', 'adjustment_expense', 'refund'];
+  const methods = balanceMethods;
+  const flows = balanceFlows;
   const methodTotals = Object.fromEntries(methods.map(m => [m, Object.fromEntries(flows.map(flow => [flow, 0]))]));
 
   filteredReports.forEach(report => {
@@ -474,6 +528,10 @@ function renderFilteredReports() {
     sumBusinessExpenses += report.total_business_expenses || 0;
     sumExternalExpenses += report.total_external_expenses || 0;
     sumPayables += report.total_payables_paid;
+    sumOwnerTopups += report.total_owner_topups || 0;
+    sumWithdrawals += report.total_cash_withdrawals || 0;
+    sumOwnerReimbursements += report.total_owner_reimbursements || 0;
+    sumSupplierPayments += report.total_supplier_payments || 0;
     sumBusinessPayables += report.total_business_payables_paid || 0;
     sumExternalPayables += report.total_external_payables_paid || 0;
     sumNet += report.net_balance;
@@ -493,43 +551,18 @@ function renderFilteredReports() {
       });
     });
     
-    // Report table row
-    tbody.innerHTML += `
-      <tr>
-        <td>${report.report_date}</td>
-        <td>₱${(report.cowork_bill || 0).toFixed(2)}</td>
-        <td>₱${(report.cafe_bill || 0).toFixed(2)}</td>
-        <td>₱${(report.discounts_total || 0).toFixed(2)}</td>
-        <td>₱${report.total_revenue.toFixed(2)}</td>
-        <td>₱${(report.total_refunds || 0).toFixed(2)}</td>
-        <td>₱${report.total_collections.toFixed(2)}</td>
-        <td>₱${report.total_other_income.toFixed(2)}</td>
-        <td>₱${(report.cash_total || 0).toFixed(2)}</td>
-        <td>₱${(report.gcash_total || 0).toFixed(2)}</td>
-        <td>₱${(report.bdo_total || 0).toFixed(2)}</td>
-        <td>₱${(report.bpi_total || 0).toFixed(2)}</td>
-        <td>₱${(report.queenbank_total || 0).toFixed(2)}</td>
-        <td>₱${report.total_expenses.toFixed(2)}</td>
-        <td>₱${report.total_payables_paid.toFixed(2)}</td>
-        <td>₱${report.total_budget_spend.toFixed(2)}</td>
-        <td>₱${report.net_balance.toFixed(2)}</td>
-        <td>${report.total_orders}</td>
-        <td>${report.total_sessions}</td>
-        <td>${window.escapeHTML(report.generated_by)}${report.generated_at ? `<br><small>${window.escapeHTML(report.generated_at)}</small>` : ''}</td>
-        <td class="report-notes">${window.escapeHTML(report.notes || '-')}</td>
-      </tr>
-    `;
   });
 
-  if (filteredReports.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="21" class="text-center text-muted py-3">No activity found for this range.</td></tr>';
-  }
+  replaceBalanceCards('reports-table-body', filteredReports.map(dailyReportCard).join('') || '<p class="text-muted mb-0">No activity found for this range.</p>');
 
   document.getElementById('sales-summary-period').textContent = startDateVal && endDateVal
     ? (startDateVal === endDateVal ? startDateVal : `${startDateVal} to ${endDateVal}`)
     : (startDateVal ? `From ${startDateVal}` : (endDateVal ? `Through ${endDateVal}` : 'All recorded dates'));
   document.getElementById('cowork-bill').textContent = sumCowork.toFixed(2);
   document.getElementById('cafe-bill').textContent = sumCafe.toFixed(2);
+  document.getElementById('sales-cowork').textContent = sumCowork.toFixed(2);
+  document.getElementById('sales-cafe').textContent = sumCafe.toFixed(2);
+  document.getElementById('sales-discounts').textContent = sumDiscounts.toFixed(2);
   document.getElementById('discounts-total').textContent = sumDiscounts.toFixed(2);
   document.getElementById('cowork-discounts').textContent = sumCoworkDiscounts.toFixed(2);
   document.getElementById('cafe-discounts').textContent = sumCafeDiscounts.toFixed(2);
@@ -541,9 +574,16 @@ function renderFilteredReports() {
   document.getElementById('total-business-expenses').textContent = sumBusinessExpenses.toFixed(2);
   document.getElementById('total-external-expenses').textContent = sumExternalExpenses.toFixed(2);
   document.getElementById('total-payables-paid').textContent = sumPayables.toFixed(2);
+  document.getElementById('total-owner-topups').textContent = sumOwnerTopups.toFixed(2);
+  document.getElementById('total-cash-withdrawals').textContent = sumWithdrawals.toFixed(2);
+  document.getElementById('total-owner-reimbursements').textContent = sumOwnerReimbursements.toFixed(2);
+  document.getElementById('total-supplier-payments').textContent = sumSupplierPayments.toFixed(2);
   document.getElementById('total-business-payables-paid').textContent = sumBusinessPayables.toFixed(2);
   document.getElementById('total-external-payables-paid').textContent = sumExternalPayables.toFixed(2);
   document.getElementById('net-balance').textContent = sumNet.toFixed(2);
+  const totalFlow = flow => methods.reduce((sum, method) => sum + methodTotals[method][flow], 0);
+  document.getElementById('net-added').textContent = (sumRevenue + totalFlow('credit_received') + totalFlow('collection') + totalFlow('adjustment_income') + sumOwnerTopups).toFixed(2);
+  document.getElementById('net-deducted').textContent = (totalFlow('credit_applied') + sumBusinessExpenses + sumBusinessPayables + totalFlow('adjustment_expense') + sumRefunds + sumWithdrawals).toFixed(2);
   document.getElementById('total-cash').textContent = sumCash.toFixed(2);
   document.getElementById('total-gcash').textContent = sumGcash.toFixed(2);
   document.getElementById('total-bdo').textContent = sumBdo.toFixed(2);
@@ -555,13 +595,20 @@ function renderFilteredReports() {
   document.getElementById('bpi-count').textContent = bpiCount;
   document.getElementById('queenbank-count').textContent = queenbankCount;
 
-  document.getElementById('method-reconciliation-body').innerHTML = methods.filter(m =>
-    m !== 'unclassified' || flows.some(flow => methodTotals[m][flow] !== 0)
-  ).map(m => {
-    const v = methodTotals[m];
-    const net = v.checkout - v.credit_applied + v.credit_received + v.collection + v.adjustment_income - v.expense - v.payable - v.adjustment_expense - v.refund;
-    return `<tr><th>${m === 'unclassified' ? 'Older records (method unknown)' : m.toUpperCase()}</th><td>₱${v.checkout.toFixed(2)}</td><td>₱${v.credit_applied.toFixed(2)}</td><td>₱${v.credit_received.toFixed(2)}</td><td>₱${v.collection.toFixed(2)}</td><td>₱${v.adjustment_income.toFixed(2)}</td><td>₱${v.expense.toFixed(2)}</td><td>₱${v.external_expense.toFixed(2)}</td><td>₱${v.payable.toFixed(2)}</td><td>₱${v.external_payable.toFixed(2)}</td><td>₱${v.adjustment_expense.toFixed(2)}</td><td>₱${v.refund.toFixed(2)}</td><td>₱${net.toFixed(2)}</td></tr>`;
-  }).join('');
+  const cashRows = filteredReports.filter(r => r.cash_boxes);
+  replaceBalanceCards('cash-box-report-body', cashRows.length ? cashRows.flatMap(r => ['petty', 'customer'].map(box => {
+    const b = r.cash_boxes;
+    const difference = r[`${box}_cash_snapshot_difference`];
+    return balanceCard(`cash-${r.report_date}-${box}`, box === 'petty' ? 'Petty cash' : 'Customer cash', r.report_date,
+      [['Opening',b.opening[box]],['Closing',b.closing[box]]],
+      balanceGroup('Cash movements', [['Cash received',b.receipts[box]],['Owner cash added',b.topups[box]],['Spending / refunds',b.spending[box]],['Cash taken out',b.withdrawals[box]],['Daily change',b.movement[box]],['Original snapshot difference',difference],['Unassigned cash movement (both boxes)',b.unassigned_cash_movement]]) + '<p class="small text-muted mt-3 mb-0">Closing = opening + received + owner added − spending/refunds − taken out. The next day carries this closing balance forward.</p>',Math.abs(difference || 0) >= .005);
+  })).join('') : '<p class="text-muted mb-0">Set opening cash counts to see held cash for these dates.</p>');
+  document.getElementById('cash-box-warning').classList.toggle('d-none', !cashRows.some(r => r.cash_boxes.unassigned_cash_entries));
+
+  const showAll = document.getElementById('show-all-methods').checked;
+  replaceBalanceCards('method-reconciliation-body', methods.filter(m =>
+    flows.some(flow => Math.abs(methodTotals[m][flow]) >= .005) || (showAll && m !== 'unclassified')
+  ).map(m => balanceMethodCard(m,methodTotals[m],'period')).join('') || '<p class="text-muted mb-0">No payment activity in these dates. Select Show all methods to view zero balances.</p>');
 
   renderFilteredSoftBalances(startDateVal, endDateVal);
 }
@@ -587,30 +634,11 @@ function renderFilteredSoftBalances(startDate, endDate) {
     return true;
   });
 
-  const tbody = document.getElementById('soft-balance-body');
-  tbody.innerHTML = '';
-
-  filteredSoft.forEach(row => {
-    tbody.innerHTML += `
-    <tr>
-      <td>${row.balance_date}</td>
-      <td>${window.escapeHTML(row.period)}</td>
-      <td>₱${row.total_revenue.toFixed(2)}</td>
-      <td>₱${row.total_expenses.toFixed(2)}</td>
-      <td>₱${row.total_collections.toFixed(2)}</td>
-      <td>₱${row.total_other_income.toFixed(2)}</td>
-      <td>₱${row.total_payables_paid.toFixed(2)}</td>
-      <td>₱${row.total_budget_spend.toFixed(2)}</td>
-      <td>₱${row.net_balance.toFixed(2)}</td>
-      <td>${window.escapeHTML(row.generated_by)}</td>
-      <td>${window.escapeHTML(row.generated_at)}</td>
-      <td class="report-notes">${window.escapeHTML(row.notes || '-')}</td>
-    </tr>`;
-  });
-
-  if (filteredSoft.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No soft balances found for this range.</td></tr>';
-  }
+  replaceBalanceCards('soft-balance-body', filteredSoft.map(row => balanceCard(`soft-${row.id}`, `${row.balance_date} · ${row.period}`, 'Saved snapshot',
+    [['Checkout sales',row.total_revenue],['Expenses',row.total_expenses],['Net movement',row.net_balance],['Cash difference now',row.live_cash_difference]],
+    balanceGroup('Saved amounts', [['Debt collected',row.total_collections],['Other income',row.total_other_income],['Debt paid',row.total_payables_paid],['Budget spent',row.total_budget_spend],['Cash movement',row.cash_movement]]) +
+    balanceGroup('Cash snapshot and later changes', [['Saved petty closing',row.petty_cash_closing],['Saved customer closing',row.customer_cash_closing],['Petty difference now',row.petty_cash_live_difference],['Customer difference now',row.customer_cash_live_difference],['Combined difference now',row.live_cash_difference]]) + balanceAudit(row),
+    [row.petty_cash_live_difference,row.customer_cash_live_difference,row.live_cash_difference].some(v => Math.abs(v || 0) >= .005))).join('') || '<p class="text-muted mb-0">No soft balances found for this range.</p>');
 }
 
 let balanceSubmitPending = false;

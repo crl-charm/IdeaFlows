@@ -323,12 +323,3 @@ def get_space_price_history(space_id):
         "space_name": space.name,
         "data": data
     }), 200
-
-
-# ── Staff Analytics ──────────────────────────────────────────────────────────
-
-@admin_bp.route("/api/admin/staff-analytics", methods=["GET"])
-@login_required
-@admin_required
-def staff_analytics():
-    return jsonify(_service.analytics())

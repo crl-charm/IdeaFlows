@@ -284,6 +284,16 @@
   {% block content %}
   {% endblock %}
 
+  <script>
+    window.addEventListener("pageshow", async function (event) {
+      if (!event.persisted) return;
+      try {
+        const response = await fetch("/api/session-status", { credentials: "include", cache: "no-store" });
+        if (response.ok) window.location.replace("/login");
+      } catch (_) { }
+    });
+  </script>
+
 </body>
 
 </html>

@@ -156,16 +156,15 @@ def test_payables_reconcile_by_method_history_and_exports(app, admin_client):
     assert context["total_external_payables_paid"] == 850
     assert next(row for row in context["method_rows"] if row["method"] == "gcash")["net"] == 350
     csv_data = client.get(f"/admin/daily-balance/api/reports/export-csv?start_date={day}&end_date={day}").data.decode("utf-8")
-    assert "External-funded Supplier Paid" in csv_data and "₱850.00" in csv_data
+    assert "External-funded Debt Paid,,850.00,PHP" in csv_data
     pdf = client.get(f"/admin/daily-balance/api/reports/export-pdf?start_date={day}&end_date={day}")
     assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF")
     excel = client.get(f"/admin/daily-balance/api/reports/export-excel?start_date={day}&end_date={day}")
     assert excel.status_code == 200
     workbook = load_workbook(BytesIO(excel.data))
-    assert workbook["Summary"]["B23"].value == 850
+    assert dict(workbook["Summary"].values)["External-funded Debt Paid"] == 850
     method_rows = list(workbook["Payment Methods"].values)
-    gcash_col = method_rows[0].index("gcash")
-    assert any(row[1] == "external_payable" and row[gcash_col] == 400 for row in method_rows)
+    assert any(row[1:] == ("gcash", "External-funded debt paid", 400) for row in method_rows)
 
 
 def test_payable_new_day_starts_at_zero_and_legacy_keeps_old_effect(app, admin_client):

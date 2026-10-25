@@ -118,6 +118,8 @@
             <option value="queenbank">QueenBank</option>
           </select>
         </div>
+        <div class="mb-3 d-none" id="expenseCashGroup"><label class="form-label" for="expenseCashBox">Cash paid from *</label><select id="expenseCashBox" class="form-select"><option value="">Choose source...</option><option value="petty">Petty cash box</option><option value="customer">Customer cash box</option><option value="owner">Owner paid directly</option></select></div>
+        <div class="mb-3 d-none" id="expenseRepayGroup"><label class="form-label" for="expenseRepayOwner">Must the business repay the owner? *</label><select id="expenseRepayOwner" class="form-select"><option value="">Choose Yes or No...</option><option value="yes">Yes, create owner payable</option><option value="no">No</option></select></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -132,6 +134,13 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/expense-summary.js') }}"></script>
 <script>
+function updateExpenseCashChoices() {
+  const cash = document.getElementById('expensePaymentMethod').value === 'cash';
+  document.getElementById('expenseCashGroup').classList.toggle('d-none', !cash);
+  document.getElementById('expenseRepayGroup').classList.toggle('d-none', !cash || document.getElementById('expenseCashBox').value !== 'owner');
+}
+document.getElementById('expensePaymentMethod').addEventListener('change', updateExpenseCashChoices);
+document.getElementById('expenseCashBox').addEventListener('change', updateExpenseCashChoices);
 // Socket.IO for real-time updates
 const socket = window.getIdeaFlowSocket();
 const refreshExpenses = window.createDebouncedRefresh(loadExpenses, 150);
@@ -224,9 +233,9 @@ function renderFilteredExpenses() {
   const tbody = document.getElementById('expenses-table-body');
   tbody.innerHTML = '';
   filtered.forEach(exp => {
-    const funding = exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
-    const balance = exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`;
-    const voidBalance = exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`;
+    const funding = exp.cash_box ? `${exp.cash_box === 'petty' ? 'Petty' : 'Customer'} cash box` : exp.payment_method === 'cash' && exp.funding_source === 'external' ? `Owner paid directly${exp.repay_owner ? ' · repay owner' : ''}` : exp.payment_method === 'cash' ? 'Box unknown (older entry)' : exp.funding_source === 'external' ? 'Owner/external funded' : exp.funding_source === 'legacy' ? 'Legacy / funding unknown' : 'Business';
+    const balance = `${exp.balance_before == null ? '' : `<div class="small text-muted">Business balance ₱${exp.balance_before.toFixed(2)} → ₱${exp.balance_after.toFixed(2)}</div>`}${exp.box_balance_before == null ? '' : `<div class="small text-muted">Box balance ₱${exp.box_balance_before.toFixed(2)} → ₱${exp.box_balance_after.toFixed(2)}</div>`}`;
+    const voidBalance = `${exp.void_balance_before == null ? '' : `<div class="small text-muted">Balance on void ₱${exp.void_balance_before.toFixed(2)} → ₱${exp.void_balance_after.toFixed(2)}</div>`}${exp.void_box_balance_before == null ? '' : `<div class="small text-muted">Box on void ₱${exp.void_box_balance_before.toFixed(2)} → ₱${exp.void_box_balance_after.toFixed(2)}</div>`}`;
     tbody.innerHTML += `
       <tr>
         <td>${exp.business_date}${exp.expense_date !== exp.business_date ? `<div class="small text-muted">Receipt: ${exp.expense_date}</div>` : ''}</td>
@@ -255,6 +264,8 @@ async function createExpense() {
     amount: document.getElementById('amount').value,
     expense_date: document.getElementById('expenseDate').value,
     payment_method: document.getElementById('expensePaymentMethod').value,
+    cash_box: document.getElementById('expensePaymentMethod').value === 'cash' ? document.getElementById('expenseCashBox').value : null,
+    repay_owner: document.getElementById('expensePaymentMethod').value === 'cash' && document.getElementById('expenseCashBox').value === 'owner' ? document.getElementById('expenseRepayOwner').value === 'yes' : null,
   };
 
   if (!payload.category || !payload.description.trim() || !payload.amount || !payload.expense_date || !payload.payment_method) {
@@ -264,6 +275,9 @@ async function createExpense() {
   if (!Number.isFinite(Number(payload.amount)) || Number(payload.amount) <= 0) {
     showToast('Please enter a valid amount greater than 0.', 'warning');
     return;
+  }
+  if (payload.payment_method === 'cash' && (!payload.cash_box || (payload.cash_box === 'owner' && !document.getElementById('expenseRepayOwner').value))) {
+    showToast('Choose the cash source and whether the owner must be repaid.', 'warning'); return;
   }
 
   const button = document.getElementById('logExpenseBtn');

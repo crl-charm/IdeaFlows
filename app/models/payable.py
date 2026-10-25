@@ -16,8 +16,13 @@ class Payable(db.Model):
     partial_paid = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    owner_cash_event_id = db.Column(db.Integer, db.ForeignKey("cash_box_events.id"), unique=True)
+    owner_expense_id = db.Column(db.Integer, db.ForeignKey("expenses.id"), unique=True)
+    cancelled_at = db.Column(db.DateTime)
+    cancelled_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    cancel_reason = db.Column(db.String(255))
 
-    created_by_user = db.relationship("User", backref="payables")
+    created_by_user = db.relationship("User", foreign_keys=[created_by], backref="payables")
 
 
 class PayablePayment(db.Model):
@@ -35,6 +40,9 @@ class PayablePayment(db.Model):
     funding_source = db.Column(db.String(20), nullable=True)
     method_balance_before = db.Column(db.Numeric(12, 2), nullable=True)
     method_balance_after = db.Column(db.Numeric(12, 2), nullable=True)
+    cash_box = db.Column(db.String(20), nullable=True)
+    box_balance_before = db.Column(db.Numeric(12, 2), nullable=True)
+    box_balance_after = db.Column(db.Numeric(12, 2), nullable=True)
     request_key = db.Column(db.String(200), unique=True, nullable=True)
 
     payable = db.relationship("Payable", backref="payments")

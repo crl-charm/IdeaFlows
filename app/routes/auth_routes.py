@@ -182,6 +182,9 @@ def login_api():
 
             # Clear existing session and start a fresh one
             session.clear()
+            # Keep the same signed session cookie when a home-screen app closes.
+            # The server still enforces the one-hour idle deadline and Redis lease.
+            session.permanent = True
             session.modified = True
 
             session["user_id"] = session_user_id

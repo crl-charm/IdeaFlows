@@ -12,6 +12,7 @@ from app.models.space_price_history import SpacePriceHistory
 from app.models.payable import Payable
 from app.models.menu_category import MenuCategory
 from app.models.checkout_void import CheckoutVoidRequest
+from app.models.cash_box_event import CashBoxEvent
 
 
 class SchemaMigrator:
@@ -23,7 +24,7 @@ class SchemaMigrator:
 
     def run(self) -> None:
         db = self._db
-        _ = (FinanceBudget, FinanceTransaction, SoftBalanceEntry, SpacePriceHistory, Payable, MenuCategory, CheckoutVoidRequest)
+        _ = (FinanceBudget, FinanceTransaction, SoftBalanceEntry, SpacePriceHistory, Payable, MenuCategory, CheckoutVoidRequest, CashBoxEvent)
         try:
             db.create_all()
             # Phase 3: Drop the obsolete reservations table if it exists
@@ -197,21 +198,43 @@ class SchemaMigrator:
             ("expenses", "funding_source", "ALTER TABLE expenses ADD COLUMN funding_source VARCHAR(20) NULL"),
             ("expenses", "balance_before", "ALTER TABLE expenses ADD COLUMN balance_before DECIMAL(12,2) NULL"),
             ("expenses", "balance_after", "ALTER TABLE expenses ADD COLUMN balance_after DECIMAL(12,2) NULL"),
+            ("expenses", "cash_box", "ALTER TABLE expenses ADD COLUMN cash_box VARCHAR(20) NULL"),
+            ("expenses", "box_balance_before", "ALTER TABLE expenses ADD COLUMN box_balance_before DECIMAL(12,2) NULL"),
+            ("expenses", "box_balance_after", "ALTER TABLE expenses ADD COLUMN box_balance_after DECIMAL(12,2) NULL"),
+            ("expenses", "repay_owner", "ALTER TABLE expenses ADD COLUMN repay_owner BOOLEAN NOT NULL DEFAULT FALSE"),
             ("expenses", "void_balance_before", "ALTER TABLE expenses ADD COLUMN void_balance_before DECIMAL(12,2) NULL"),
             ("expenses", "void_balance_after", "ALTER TABLE expenses ADD COLUMN void_balance_after DECIMAL(12,2) NULL"),
+            ("expenses", "void_box_balance_before", "ALTER TABLE expenses ADD COLUMN void_box_balance_before DECIMAL(12,2) NULL"),
+            ("expenses", "void_box_balance_after", "ALTER TABLE expenses ADD COLUMN void_box_balance_after DECIMAL(12,2) NULL"),
             ("payable_payments", "funding_source", "ALTER TABLE payable_payments ADD COLUMN funding_source VARCHAR(20) NULL"),
             ("payable_payments", "method_balance_before", "ALTER TABLE payable_payments ADD COLUMN method_balance_before DECIMAL(12,2) NULL"),
             ("payable_payments", "method_balance_after", "ALTER TABLE payable_payments ADD COLUMN method_balance_after DECIMAL(12,2) NULL"),
+            ("payable_payments", "cash_box", "ALTER TABLE payable_payments ADD COLUMN cash_box VARCHAR(20) NULL"),
+            ("payable_payments", "box_balance_before", "ALTER TABLE payable_payments ADD COLUMN box_balance_before DECIMAL(12,2) NULL"),
+            ("payable_payments", "box_balance_after", "ALTER TABLE payable_payments ADD COLUMN box_balance_after DECIMAL(12,2) NULL"),
+            ("payables", "owner_cash_event_id", "ALTER TABLE payables ADD COLUMN owner_cash_event_id INTEGER NULL"),
+            ("payables", "owner_expense_id", "ALTER TABLE payables ADD COLUMN owner_expense_id INTEGER NULL"),
+            ("payables", "cancelled_at", "ALTER TABLE payables ADD COLUMN cancelled_at DATETIME NULL"),
+            ("payables", "cancelled_by", "ALTER TABLE payables ADD COLUMN cancelled_by INTEGER NULL"),
+            ("payables", "cancel_reason", "ALTER TABLE payables ADD COLUMN cancel_reason VARCHAR(255) NULL"),
+            ("cash_box_events", "replaces_id", "ALTER TABLE cash_box_events ADD COLUMN replaces_id INTEGER NULL"),
+            ("cash_box_events", "payment_method", "ALTER TABLE cash_box_events ADD COLUMN payment_method VARCHAR(20) NOT NULL DEFAULT 'cash'"),
             ("finance_transactions", "payment_method", "ALTER TABLE finance_transactions ADD COLUMN payment_method VARCHAR(50) NULL"),
             ("finance_transactions", "actor_id", "ALTER TABLE finance_transactions ADD COLUMN actor_id INTEGER NULL"),
             ("finance_transactions", "request_key", "ALTER TABLE finance_transactions ADD COLUMN request_key VARCHAR(200) NULL"),
             ("daily_sales_reports", "total_collections", "ALTER TABLE daily_sales_reports ADD COLUMN total_collections DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("daily_sales_reports", "total_payables_paid", "ALTER TABLE daily_sales_reports ADD COLUMN total_payables_paid DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("daily_sales_reports", "petty_cash_closing", "ALTER TABLE daily_sales_reports ADD COLUMN petty_cash_closing DECIMAL(12,2) NULL"),
+            ("daily_sales_reports", "customer_cash_closing", "ALTER TABLE daily_sales_reports ADD COLUMN customer_cash_closing DECIMAL(12,2) NULL"),
+            ("daily_sales_reports", "cash_movement", "ALTER TABLE daily_sales_reports ADD COLUMN cash_movement DECIMAL(12,2) NULL"),
             ("daily_sales_reports", "total_other_income", "ALTER TABLE daily_sales_reports ADD COLUMN total_other_income DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("daily_sales_reports", "total_budget_spend", "ALTER TABLE daily_sales_reports ADD COLUMN total_budget_spend DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("daily_sales_reports", "total_refunds", "ALTER TABLE daily_sales_reports ADD COLUMN total_refunds DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_collections", "ALTER TABLE soft_balance_entries ADD COLUMN total_collections DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_payables_paid", "ALTER TABLE soft_balance_entries ADD COLUMN total_payables_paid DECIMAL(12,2) NOT NULL DEFAULT 0"),
+            ("soft_balance_entries", "petty_cash_closing", "ALTER TABLE soft_balance_entries ADD COLUMN petty_cash_closing DECIMAL(12,2) NULL"),
+            ("soft_balance_entries", "customer_cash_closing", "ALTER TABLE soft_balance_entries ADD COLUMN customer_cash_closing DECIMAL(12,2) NULL"),
+            ("soft_balance_entries", "cash_movement", "ALTER TABLE soft_balance_entries ADD COLUMN cash_movement DECIMAL(12,2) NULL"),
             ("soft_balance_entries", "total_other_income", "ALTER TABLE soft_balance_entries ADD COLUMN total_other_income DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_budget_spend", "ALTER TABLE soft_balance_entries ADD COLUMN total_budget_spend DECIMAL(12,2) NOT NULL DEFAULT 0"),
             ("soft_balance_entries", "total_refunds", "ALTER TABLE soft_balance_entries ADD COLUMN total_refunds DECIMAL(12,2) NOT NULL DEFAULT 0"),
@@ -274,6 +297,20 @@ class SchemaMigrator:
         db.session.commit()
 
         self._ensure_indexes(db, inspector)
+        # Cash custody must not start with a partially migrated financial schema.
+        required_cash_columns = {
+            "cash_box_events": {"kind", "box", "payment_method", "effect", "effective_date", "reverses_id", "replaces_id", "request_key"},
+            "expenses": {"cash_box", "box_balance_before", "box_balance_after", "repay_owner"},
+            "payables": {"owner_cash_event_id", "owner_expense_id", "cancelled_at"},
+            "payable_payments": {"cash_box", "box_balance_before", "box_balance_after"},
+            "daily_sales_reports": {"petty_cash_closing", "customer_cash_closing", "cash_movement"},
+            "soft_balance_entries": {"petty_cash_closing", "customer_cash_closing", "cash_movement"},
+        }
+        current = inspect(db.engine)
+        for table, required in required_cash_columns.items():
+            found = {column["name"] for column in current.get_columns(table)} if current.has_table(table) else set()
+            if missing := required - found:
+                raise RuntimeError(f"Cash box migration incomplete: {table} missing {', '.join(sorted(missing))}")
         self._backfill_receivable_tabs()
         if db.engine.dialect.name == "mysql" and not any(
             "tab_id" in fk.get("constrained_columns", [])
@@ -348,6 +385,16 @@ class SchemaMigrator:
         """Create performance indexes idempotently (MySQL/SQLite)."""
         indexes = [
             (
+                "payables",
+                "uq_payables_owner_cash_event_id",
+                "CREATE UNIQUE INDEX uq_payables_owner_cash_event_id ON payables (owner_cash_event_id)",
+            ),
+            (
+                "payables",
+                "uq_payables_owner_expense_id",
+                "CREATE UNIQUE INDEX uq_payables_owner_expense_id ON payables (owner_expense_id)",
+            ),
+            (
                 "finance_transactions",
                 "uq_finance_transactions_request_key",
                 "CREATE UNIQUE INDEX uq_finance_transactions_request_key ON finance_transactions (request_key)",
@@ -417,6 +464,12 @@ class SchemaMigrator:
                 "idx_expenses_date_cat",
                 "CREATE INDEX idx_expenses_date_cat ON expenses (expense_date, category)",
             ),
+            ("expenses", "idx_expenses_created_at", "CREATE INDEX idx_expenses_created_at ON expenses (created_at)"),
+            ("expenses", "idx_expenses_voided_at", "CREATE INDEX idx_expenses_voided_at ON expenses (voided_at)"),
+            ("receivable_payments", "idx_receivable_payments_received_at", "CREATE INDEX idx_receivable_payments_received_at ON receivable_payments (received_at)"),
+            ("finance_transactions", "idx_finance_transactions_created_at", "CREATE INDEX idx_finance_transactions_created_at ON finance_transactions (created_at)"),
+            ("checkout_void_requests", "idx_checkout_void_requests_decided_at", "CREATE INDEX idx_checkout_void_requests_decided_at ON checkout_void_requests (decided_at)"),
+            ("orders", "idx_orders_created_at", "CREATE INDEX idx_orders_created_at ON orders (created_at)"),
             (
                 "orders",
                 "idx_orders_status_created",

@@ -118,15 +118,14 @@ def test_method_funding_and_void_reconcile_across_history_report_and_exports(app
     assert context["total_external_expenses"] == 275
     assert next(row for row in context["method_rows"] if row["method"] == "gcash")["net"] == 50
     csv_data = client.get(f"/admin/daily-balance/api/reports/export-csv?start_date={day}&end_date={day}").data.decode("utf-8")
-    assert "External-funded Expenses" in csv_data and "₱275.00" in csv_data
+    assert "External-funded Expenses,,275.00,PHP" in csv_data
     pdf = client.get(f"/admin/daily-balance/api/reports/export-pdf?start_date={day}&end_date={day}")
     assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF")
     excel = client.get(f"/admin/daily-balance/api/reports/export-excel?start_date={day}&end_date={day}")
     assert excel.status_code == 200
     methods_sheet = load_workbook(BytesIO(excel.data))["Payment Methods"]
     excel_rows = list(methods_sheet.values)
-    bdo_column = excel_rows[0].index("bdo")
-    assert any(row[1] == "external_expense" and row[bdo_column] == 200 for row in excel_rows)
+    assert any(row[1:] == ("bdo", "External-funded expenses", 200) for row in excel_rows)
 
     for key in ("gcash-business", "gcash-owner"):
         response = client.delete(f"/admin/expenses/api/expenses/{ids[key]}",

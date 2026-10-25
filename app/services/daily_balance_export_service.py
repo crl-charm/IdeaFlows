@@ -1,474 +1,291 @@
 from __future__ import annotations
 
 import csv
+import textwrap
 from datetime import date, datetime
+from decimal import Decimal
 from io import BytesIO, StringIO
-from typing import Any
+from math import ceil
+from numbers import Real
 
 from flask import Response, send_file
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.services.export_service import ExportService
+from app.utils.dates import manila_date
 
 
 class DailyBalanceExportService(ExportService):
-    """CSV, PDF, and Excel exports for daily sales balance reports."""
+    """Readable exports of the same live ledger and saved cash snapshots."""
 
     PDF_TEMPLATE = "admin/daily_balance_report_pdf.html"
     METHODS = ("cash", "gcash", "bdo", "bpi", "queenbank", "unclassified")
-    FLOWS = ("checkout", "collection", "adjustment_income", "expense", "external_expense",
-             "expense_paid", "expense_void", "payable", "external_payable", "payable_paid",
-             "adjustment_expense", "refund", "credit_received", "credit_applied")
+    FLOW_LABELS = {
+        "checkout": "Checkout sales", "credit_applied": "Customer credit applied",
+        "credit_received": "Customer credit received", "collection": "Debt collected",
+        "adjustment_income": "Other income", "owner_topup": "Owner cash added",
+        "cash_withdrawal": "Cash taken out", "expense": "Business expenses",
+        "external_expense": "External-funded expenses", "payable": "Business debt paid",
+        "external_payable": "External-funded debt paid", "adjustment_expense": "Budget spent",
+        "refund": "Refunds paid", "owner_reimbursement": "Owner repaid (part of debt paid)",
+        "expense_paid": "Expense payments before reversals", "expense_void": "Expense reversals",
+        "payable_paid": "All debt payments",
+    }
+    FLOWS = tuple(FLOW_LABELS)
+    REPORT_GROUPS = {
+        "Sales": (("Cowork Bill", "cowork_bill"), ("Cafe Bill", "cafe_bill"),
+                  ("Discounts", "discounts_total"), ("Cowork Discounts", "cowork_discounts"),
+                  ("Cafe Discounts", "cafe_discounts"), ("Checkout Sales", "total_revenue"),
+                  ("Refunds Paid", "total_refunds"),
+                  ("Sales Reconciliation Difference", "sales_reconciliation_difference")),
+        "Other money received": (("Debt Collected", "total_collections"),
+                                 ("Other Income", "total_other_income"), ("Owner Cash Added", "total_owner_topups")),
+        "Spending and transfers": (("Total Expenses", "total_expenses"),
+                                   ("Business Expenses", "total_business_expenses"),
+                                   ("External-funded Expenses", "total_external_expenses"),
+                                   ("Debt Paid", "total_payables_paid"), ("Business Debt Paid", "total_business_payables_paid"),
+                                   ("External-funded Debt Paid", "total_external_payables_paid"),
+                                   ("Supplier Payments", "total_supplier_payments"),
+                                   ("Owner Reimbursements (included in Debt Paid)", "total_owner_reimbursements"),
+                                   ("Budget Spent", "total_budget_spend"), ("Cash Taken Out", "total_cash_withdrawals")),
+        "Totals": (("Net Movement (all methods)", "net_balance"), ("Cash Movement", "cash_on_hand")),
+        "Activity": (("Total Orders", "total_orders"), ("Timed Sessions", "total_sessions"),
+                     ("Debt Payment Count", "collection_count")),
+    }
+    MONEY_FORMAT = '"₱"#,##0.00;[Red]("₱"#,##0.00);"₱"0.00'
 
     @staticmethod
-    def _period_label(reports: list[dict[str, Any]]) -> str:
-        if not reports:
-            return ""
-        return f"{reports[-1]['report_date']} to {reports[0]['report_date']}"
+    def _period_label(reports, soft_entries=()):
+        days = sorted([str(r["report_date"]) for r in reports]
+                      + [str(s["balance_date"]) for s in soft_entries])
+        return f"{days[0]} to {days[-1]}" if days else "No recorded dates"
 
     @staticmethod
-    def _payment_totals(reports: list[dict[str, Any]]) -> dict[str, float | int]:
-        return {
-            "total_cash": sum(r.get("cash_total", 0) for r in reports),
-            "total_gcash": sum(r.get("gcash_total", 0) for r in reports),
-            "total_bdo": sum(r.get("bdo_total", 0) for r in reports),
-            "total_bpi": sum(r.get("bpi_total", 0) for r in reports),
-            "total_queenbank": sum(r.get("queenbank_total", 0) for r in reports),
-            "cash_count": sum(r.get("cash_count", 0) for r in reports),
-            "gcash_count": sum(r.get("gcash_count", 0) for r in reports),
-            "bdo_count": sum(r.get("bdo_count", 0) for r in reports),
-            "bpi_count": sum(r.get("bpi_count", 0) for r in reports),
-            "queenbank_count": sum(r.get("queenbank_count", 0) for r in reports),
-        }
+    def _payment_totals(reports):
+        return {**{f"total_{m}": sum(r.get(f"{m}_total", 0) for r in reports)
+                   for m in DailyBalanceExportService.METHODS[:-1]},
+                **{f"{m}_count": sum(r.get(f"{m}_count", 0) for r in reports)
+                   for m in DailyBalanceExportService.METHODS[:-1]}}
 
     @staticmethod
-    def _method_rows(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _method_rows(reports):
         rows = []
         for method in DailyBalanceExportService.METHODS:
             values = {flow: sum(r.get(f"{flow}_methods", {}).get(method, 0) for r in reports)
                       for flow in DailyBalanceExportService.FLOWS}
-            if method == "unclassified" and not any(values.values()):
+            active = any(abs(value) >= 0.005 for value in values.values())
+            if method == "unclassified" and not active:
                 continue
-            net = (
-                values["checkout"] - values.get("credit_applied", 0) + values.get("credit_received", 0)
-                + values["collection"] + values["adjustment_income"]
-                - values["expense"] - values["payable"] - values["adjustment_expense"]
-                - values.get("refund", 0)
-            )
-            rows.append({"method": method, **values, "net": net})
+            received = (values["checkout"] - values["credit_applied"] + values["credit_received"]
+                        + values["collection"] + values["adjustment_income"] + values["owner_topup"])
+            paid_out = (values["cash_withdrawal"] + values["expense"] + values["payable"]
+                        + values["adjustment_expense"] + values["refund"])
+            rows.append({"method": method, **values, "received": received, "paid_out": paid_out,
+                         "net": received - paid_out, "active": active})
         return rows
 
-    def build_pdf_context(
-        self,
-        reports: list[dict[str, Any]],
-        soft_entries: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        payments = self._payment_totals(reports)
+    @classmethod
+    def report_sections(cls, report):
+        sections = {group: [(label, report.get(key, 0)) for label, key in fields]
+                    for group, fields in cls.REPORT_GROUPS.items()}
+        sections["Checkout methods"] = [(method.upper(), report.get(f"{method}_total", 0)) for method in cls.METHODS
+                                        if method != "unclassified" or report.get("unclassified_total", 0)]
+        sections["Checkout counts"] = [(method.upper(), report.get(f"{method}_count", 0)) for method in cls.METHODS
+                                       if method != "unclassified" or report.get("unclassified_count", 0)]
+        boxes = report.get("cash_boxes")
+        for label, box in (("Petty", "petty"), ("Customer", "customer")):
+            sections[f"{label} cash"] = [
+                (f"{label} {title}", boxes.get(key, {}).get(box) if boxes else None)
+                for title, key in (("Opening", "opening"), ("Received", "receipts"), ("Top-ups", "topups"),
+                                   ("Spending", "spending"), ("Withdrawn", "withdrawals"), ("Closing", "closing"))
+            ]
+        sections["Saved cash snapshot"] = [
+            ("Saved Cash Movement", report.get("snapshot_cash_movement")),
+            ("Saved Petty Closing", report.get("snapshot_petty_cash_closing")),
+            ("Saved Customer Closing", report.get("snapshot_customer_cash_closing")),
+            ("Cash Snapshot Difference", report.get("cash_snapshot_difference")),
+            ("Petty Snapshot Difference", report.get("petty_cash_snapshot_difference")),
+            ("Customer Snapshot Difference", report.get("customer_cash_snapshot_difference")),
+            ("Unassigned Cash Movement", boxes.get("unassigned_cash_movement", 0) if boxes else None),
+        ]
+        sections["Audit"] = [("Report Status", "Live totals; saved cash snapshot" if report.get("id") is not None else "Live totals; no saved report"),
+                             ("Generated By", report.get("generated_by", "Not generated")),
+                             ("Generated At (UTC)", report.get("generated_at")), ("Notes", report.get("notes"))]
+        return sections
+
+    @staticmethod
+    def soft_sections(entry):
         return {
-            "reports": reports,
-            "soft_entries": soft_entries,
-            "total_revenue": sum(r["total_revenue"] for r in reports),
-            "cowork_bill": sum(r.get("cowork_bill", 0) for r in reports),
-            "cafe_bill": sum(r.get("cafe_bill", 0) for r in reports),
-            "discounts_total": sum(r.get("discounts_total", 0) for r in reports),
-            "sales_reconciliation_difference": sum(r.get("sales_reconciliation_difference", 0) for r in reports),
-            "total_refunds": sum(r.get("total_refunds", 0) for r in reports),
-            "total_expenses": sum(r["total_expenses"] for r in reports),
-            "total_business_expenses": sum(r.get("total_business_expenses", 0) for r in reports),
-            "total_external_expenses": sum(r.get("total_external_expenses", 0) for r in reports),
-            "total_collections": sum(r.get("total_collections", 0) for r in reports),
-            "total_payables_paid": sum(r.get("total_payables_paid", 0) for r in reports),
-            "total_business_payables_paid": sum(r.get("total_business_payables_paid", 0) for r in reports),
-            "total_external_payables_paid": sum(r.get("total_external_payables_paid", 0) for r in reports),
-            "total_other_income": sum(r.get("total_other_income", 0) for r in reports),
-            "total_budget_spend": sum(r.get("total_budget_spend", 0) for r in reports),
-            "net_balance": sum(r["net_balance"] for r in reports),
-            "method_rows": self._method_rows(reports),
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "period_label": self._period_label(reports),
-            **payments,
+            "Saved totals": [("Checkout Sales", entry.get("total_revenue", 0)),
+                             ("Total Expenses", entry.get("total_expenses", 0)),
+                             ("Debt Collected", entry.get("total_collections", 0)),
+                             ("Other Income", entry.get("total_other_income", 0)),
+                             ("Debt Paid", entry.get("total_payables_paid", 0)),
+                             ("Budget Spent", entry.get("total_budget_spend", 0)),
+                             ("Net Movement", entry.get("net_balance", 0))],
+            "Cash snapshot": [("Saved Petty Closing", entry.get("petty_cash_closing")),
+                              ("Saved Customer Closing", entry.get("customer_cash_closing")),
+                              ("Saved Cash Movement", entry.get("cash_movement")),
+                              ("Petty Difference Now", entry.get("petty_cash_live_difference")),
+                              ("Customer Difference Now", entry.get("customer_cash_live_difference")),
+                              ("Combined Difference Now", entry.get("live_cash_difference"))],
+            "Audit": [("Generated By", entry.get("generated_by")),
+                      ("Generated At (UTC)", entry.get("generated_at")), ("Notes", entry.get("notes"))],
         }
 
-    def export_pdf(
-        self,
-        reports: list[dict[str, Any]],
-        soft_entries: list[dict[str, Any]],
-    ) -> Response:
-        pdf_bytes = self.render_pdf_bytes(
-            self.PDF_TEMPLATE,
-            **self.build_pdf_context(reports, soft_entries),
-        )
-        filename = f"daily_sales_balance_{date.today().isoformat()}.pdf"
-        return Response(
-            pdf_bytes,
-            mimetype="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
-        )
+    def build_pdf_context(self, reports, soft_entries):
+        totals = {key: sum(r.get(key, 0) for r in reports)
+                  for fields in self.REPORT_GROUPS.values() for _, key in fields}
+        return {
+            **totals, **self._payment_totals(reports), "reports": reports, "soft_entries": soft_entries,
+            "method_rows": self._method_rows(reports), "flow_labels": self.FLOW_LABELS,
+            "report_details": [(r, self.report_sections(r)) for r in reports],
+            "soft_details": [(s, self.soft_sections(s)) for s in soft_entries],
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            "period_label": self._period_label(reports, soft_entries),
+            "pdf_text_lines": self._pdf_text_lines,
+            "text_parts": self._text_parts,
+        }
 
     @staticmethod
-    def export_csv(reports: list[dict[str, Any]]):
-        output = StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=[
-                "Report Date",
-                "Cowork Bill",
-                "Cafe Bill",
-                "Discounts",
-                "Checkout Sales",
-                "Refunds Paid",
-                "Sales Reconciliation Difference",
-                "Debt Collected",
-                "Cash",
-                "GCash",
-                "BDO",
-                "BPI",
-                "QueenBank",
-                "Unclassified Checkout",
-                "Total Expenses",
-                "Business Expenses",
-                "External-funded Expenses",
-                "Supplier Paid",
-                "Business Supplier Paid",
-                "External-funded Supplier Paid",
-                "Other Income",
-                "Budget Spent",
-                "Net Balance",
-                "Total Orders",
-                "Timed Sessions",
-                "Generated By",
-                "Generated At",
-                "Notes",
-            ] + [f"{flow.title()} {method.title()}" for flow in DailyBalanceExportService.FLOWS
-                 for method in DailyBalanceExportService.METHODS],
-        )
-        writer.writeheader()
-        for report in reports:
-            values = {
-                "Report Date": report["report_date"],
-                "Cowork Bill": f"₱{report.get('cowork_bill', 0):.2f}",
-                "Cafe Bill": f"₱{report.get('cafe_bill', 0):.2f}",
-                "Discounts": f"₱{report.get('discounts_total', 0):.2f}",
-                "Checkout Sales": f"₱{report['total_revenue']:.2f}",
-                "Refunds Paid": f"₱{report.get('total_refunds', 0):.2f}",
-                "Sales Reconciliation Difference": f"₱{report.get('sales_reconciliation_difference', 0):.2f}",
-                "Debt Collected": f"₱{report.get('total_collections', 0):.2f}",
-                "Cash": f"₱{report.get('cash_total', 0):.2f}",
-                "GCash": f"₱{report.get('gcash_total', 0):.2f}",
-                "BDO": f"₱{report.get('bdo_total', 0):.2f}",
-                "BPI": f"₱{report.get('bpi_total', 0):.2f}",
-                "QueenBank": f"₱{report.get('queenbank_total', 0):.2f}",
-                "Unclassified Checkout": f"₱{report.get('unclassified_total', 0):.2f}",
-                "Total Expenses": f"₱{report['total_expenses']:.2f}",
-                "Business Expenses": f"₱{report.get('total_business_expenses', 0):.2f}",
-                "External-funded Expenses": f"₱{report.get('total_external_expenses', 0):.2f}",
-                "Supplier Paid": f"₱{report.get('total_payables_paid', 0):.2f}",
-                "Business Supplier Paid": f"₱{report.get('total_business_payables_paid', 0):.2f}",
-                "External-funded Supplier Paid": f"₱{report.get('total_external_payables_paid', 0):.2f}",
-                "Other Income": f"₱{report.get('total_other_income', 0):.2f}",
-                "Budget Spent": f"₱{report.get('total_budget_spend', 0):.2f}",
-                "Net Balance": f"₱{report['net_balance']:.2f}",
-                "Total Orders": report["total_orders"],
-                "Timed Sessions": report["total_sessions"],
-                "Generated By": report["generated_by"],
-                "Generated At": report.get("generated_at") or "",
-                "Notes": report["notes"] or "",
-            }
-            values.update({f"{flow.title()} {method.title()}": f"₱{report.get(f'{flow}_methods', {}).get(method, 0):.2f}"
-                           for flow in DailyBalanceExportService.FLOWS
-                           for method in DailyBalanceExportService.METHODS})
-            writer.writerow(values)
-        output.seek(0)
-        bytes_output = BytesIO(output.getvalue().encode("utf-8"))
-        return send_file(
-            bytes_output,
-            mimetype="text/csv",
-            as_attachment=True,
-            download_name="sales_report.csv",
-        )
+    def _text_parts(value):
+        return [value[i:i + 400] for i in range(0, len(value), 400)] if isinstance(value, str) and len(value) > 400 else [value]
 
-    def export_excel(self, reports: list[dict[str, Any]]):
+    @staticmethod
+    def _pdf_text_lines(value):
+        # The fallback renderer does not wrap long words in table cells.
+        return [part for line in str(value).splitlines()
+                for part in textwrap.wrap(line, 28, replace_whitespace=False, drop_whitespace=False) or [""]]
+
+    def export_pdf(self, reports, soft_entries):
+        pdf_bytes = self.render_pdf_bytes(self.PDF_TEMPLATE, **self.build_pdf_context(reports, soft_entries))
+        filename = f"daily_sales_balance_{manila_date(datetime.utcnow())}.pdf"
+        return Response(pdf_bytes, mimetype="application/pdf",
+                        headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+    @staticmethod
+    def _csv_text(value):
+        text = str(value or "")
+        return "'" + text if text.startswith(("=", "+", "-", "@", "\t", "\r")) else text
+
+    @classmethod
+    def export_csv(cls, reports, soft_entries=None):
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Date", "Section", "Item", "Method", "Amount", "Notes"])
+        writer.writerow(["", "Guide", "Amounts in PHP; Activity and Checkout counts are counts", "", "",
+                         "Daily summaries, payment details, cash balances and saved snapshots overlap. Filter by Section; do not sum different sections together."])
+        for report in reports:
+            for section, items in cls.report_sections(report).items():
+                for label, value in items:
+                    numeric = isinstance(value, (Real, Decimal))
+                    unit = "Count" if section in {"Activity", "Checkout counts"} else "PHP"
+                    writer.writerow([report["report_date"], f"Daily summary / {section}", label, "",
+                                     f"{value:.2f}" if numeric else "",
+                                     unit if numeric else cls._csv_text(value)])
+            for method in cls._method_rows([report]):
+                for flow, label in cls.FLOW_LABELS.items():
+                    writer.writerow([report["report_date"], "Payment detail", label, method["method"], f"{method[flow]:.2f}", "PHP; included in daily summaries"])
+        for entry in soft_entries or []:
+            for section, items in cls.soft_sections(entry).items():
+                for label, value in items:
+                    numeric = isinstance(value, (Real, Decimal))
+                    writer.writerow([entry["balance_date"], f"Saved snapshot / {entry['period']} #{entry['id']} / {section}",
+                                     label, "", f"{value:.2f}" if numeric else "",
+                                     "PHP; snapshot, not additional activity" if numeric else cls._csv_text(value)])
+        return send_file(BytesIO(output.getvalue().encode("utf-8-sig")), mimetype="text/csv",
+                         as_attachment=True, download_name="daily_balance_details_v2.csv")
+
+    @classmethod
+    def _sheet(cls, wb, name, headers, rows, widths, money_columns=()):
+        ws = wb.create_sheet(name)
+        ws.append(headers)
+        for row in rows:
+            for index, part in enumerate(cls._text_parts(row[-1])):
+                values = [*row[:-1], part]
+                if index and len(values) > 2:
+                    values[-2] = f"{values[-2]} (continued)"
+                ws.append(values)
+        for cells in ws:
+            for cell in cells:
+                if cell.row > 1 and headers[cell.column - 1] == "Date" and isinstance(cell.value, str):
+                    cell.value = date.fromisoformat(cell.value)
+                    cell.number_format = "yyyy-mm-dd"
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.font = Font(name="Calibri", size=11, color="1F2937")
+                if cell.row > 1 and cell.column in money_columns and isinstance(cell.value, (Real, Decimal)):
+                    cell.number_format = cls.MONEY_FORMAT
+        for cell in ws[1]:
+            cell.fill = PatternFill("solid", fgColor="23354D")
+            cell.font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+        for column, width in widths.items():
+            ws.column_dimensions[column].width = width
+        for cells in ws:
+            lines = max(sum(max(1, ceil(len(line) / (widths.get(cell.column_letter, 20) - 3)))
+                            for line in str(cell.value or "").split("\n")) for cell in cells)
+            ws.row_dimensions[cells[0].row].height = max(24, min(409, lines * 15 + 6))
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        ws.sheet_view.showGridLines = False
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.orientation = "portrait"
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.print_title_rows = "1:1"
+        return ws
+
+    def export_excel(self, reports, soft_entries=None):
         wb = Workbook()
         wb.remove(wb.active)
-
-        ws_summary = wb.create_sheet("Summary")
-        self._create_summary_sheet(ws_summary, reports)
-
-        ws_details = wb.create_sheet("Daily Reports")
-        self._create_details_sheet(ws_details, reports)
-
-        ws_methods = wb.create_sheet("Payment Methods")
-        ws_methods.append(["Date", "Flow", *self.METHODS])
-        for report in reports:
-            for flow in self.FLOWS:
-                ws_methods.append([report["report_date"], flow,
-                                   *(report.get(f"{flow}_methods", {}).get(m, 0) for m in self.METHODS)])
-
+        summary = [["Period (Asia/Manila)", self._period_label(reports, soft_entries or [])]]
+        summary.extend([label, sum(r.get(key, 0) for r in reports)]
+                       for group, fields in self.REPORT_GROUPS.items() if group != "Activity" for label, key in fields)
+        summary.extend([label, sum(r.get(key, 0) for r in reports)] for label, key in self.REPORT_GROUPS["Activity"])
+        activity_start = len(summary) - len(self.REPORT_GROUPS["Activity"]) + 2
+        summary.extend([f"{m.upper()} checkout sales", sum(r.get(f"{m}_total", 0) for r in reports)]
+                       for m in self.METHODS if m != "unclassified" or any(r.get("unclassified_total", 0) for r in reports))
+        self._sheet(wb, "Summary", ["Item", "Value"], summary, {"A": 43, "B": 28}, (2,))
+        # Activity counts are not currency.
+        for row in range(activity_start, activity_start + len(self.REPORT_GROUPS["Activity"])):
+            wb["Summary"].cell(row, 2).number_format = "0"
+        daily = [[r["report_date"], r["total_revenue"], r.get("total_collections", 0),
+                  r.get("total_business_expenses", 0), r["net_balance"]] for r in reports]
+        self._sheet(wb, "Daily Reports", ["Date", "Checkout Sales", "Debt Collected", "Business Expenses", "Net Movement"],
+                    daily, {"A": 14, "B": 17, "C": 17, "D": 18, "E": 18}, (2, 3, 4, 5))
+        details = [[r["report_date"], section, label, value]
+                   for r in reports for section, items in self.report_sections(r).items() for label, value in items]
+        ws = self._sheet(wb, "Report Details", ["Date", "Section", "Item", "Value"], details,
+                         {"A": 14, "B": 23, "C": 35, "D": 28}, (4,))
+        for row in ws.iter_rows(min_row=2):
+            if row[1].value in {"Activity", "Checkout counts"}:
+                row[3].number_format = "0"
+        methods = [[r["report_date"], m["method"], label, m[flow]]
+                   for r in reports for m in self._method_rows([r]) for flow, label in self.FLOW_LABELS.items()]
+        self._sheet(wb, "Payment Methods", ["Date", "Method", "Flow", "Amount"], methods,
+                    {"A": 14, "B": 16, "C": 43, "D": 20}, (4,))
+        soft = [[s["balance_date"], f"{s['period']} #{s['id']}", f"{section}: {label}", value]
+                for s in soft_entries or [] for section, items in self.soft_sections(s).items() for label, value in items]
+        self._sheet(wb, "Soft Balances", ["Date", "Snapshot", "Item", "Value"], soft,
+                    {"A": 14, "B": 15, "C": 40, "D": 28}, (4,))
         if len(reports) >= 2:
-            ws_comparison = wb.create_sheet("Period Comparison")
-            self._create_comparison_sheet(ws_comparison, reports)
-
-        ws_trends = wb.create_sheet("Trends")
-        self._create_trends_sheet(ws_trends, reports)
-
-        bytes_output = BytesIO()
-        wb.save(bytes_output)
-        bytes_output.seek(0)
-        return send_file(
-            bytes_output,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name=f"sales_report_{date.today().isoformat()}.xlsx",
-        )
-
-    @staticmethod
-    def _create_summary_sheet(ws, reports: list[dict[str, Any]]) -> None:
-        ws["A1"] = "SALES SUMMARY REPORT"
-        ws["A1"].font = Font(bold=True, size=14)
-        ws.merge_cells("A1:H1")
-
-        ws["A3"] = "Key Metrics"
-        ws["A3"].font = Font(bold=True, size=11)
-
-        total_revenue = sum(r["total_revenue"] for r in reports)
-        total_expenses = sum(r["total_expenses"] for r in reports)
-        total_net = sum(r["net_balance"] for r in reports)
-        total_cash = sum(r.get("cash_total", 0) for r in reports)
-        total_gcash = sum(r.get("gcash_total", 0) for r in reports)
-        total_bdo = sum(r.get("bdo_total", 0) for r in reports)
-        total_bpi = sum(r.get("bpi_total", 0) for r in reports)
-        total_queenbank = sum(r.get("queenbank_total", 0) for r in reports)
-
-        ws["A4"] = "Checkout Sales:"
-        ws["B4"] = total_revenue
-        ws["B4"].number_format = "₱#,##0.00"
-
-        ws["A5"] = "Cash Payments:"
-        ws["B5"] = total_cash
-        ws["B5"].number_format = "₱#,##0.00"
-
-        ws["A6"] = "GCash Payments:"
-        ws["B6"] = total_gcash
-        ws["B6"].number_format = "₱#,##0.00"
-
-        ws["A7"] = "BDO Payments:"
-        ws["B7"] = total_bdo
-        ws["B7"].number_format = "₱#,##0.00"
-
-        ws["A8"] = "BPI Payments:"
-        ws["B8"] = total_bpi
-        ws["B8"].number_format = "₱#,##0.00"
-
-        ws["A9"] = "Total Expenses:"
-        ws["B9"] = total_expenses
-        ws["B9"].number_format = "₱#,##0.00"
-
-        ws["A10"] = "Net Balance:"
-        ws["B10"] = total_net
-        ws["B10"].number_format = "₱#,##0.00"
-        ws["B10"].font = Font(bold=True, color="008000")
-
-        ws["A11"] = "Total Orders:"
-        ws["B11"] = sum(r["total_orders"] for r in reports)
-
-        ws["A12"] = "Timed Sessions:"
-        ws["B12"] = sum(r["total_sessions"] for r in reports)
-
-        ws["A15"] = "QueenBank Payments:"
-        ws["B15"] = total_queenbank
-        ws["B15"].number_format = "₱#,##0.00"
-
-        ws["A13"] = "Period:"
+            current, previous = reports[:2]
+            comparison = [[label, current.get(key, 0), previous.get(key, 0), current.get(key, 0) - previous.get(key, 0)]
+                          for label, key in self.REPORT_GROUPS["Totals"] + self.REPORT_GROUPS["Sales"]]
+            self._sheet(wb, "Period Comparison", ["Item", current["report_date"], previous["report_date"], "Change"],
+                        comparison, {"A": 35, "B": 18, "C": 18, "D": 18}, (2, 3, 4))
+        trends = [["Days represented", len(reports)]]
         if reports:
-            ws["B13"] = DailyBalanceExportService._period_label(reports)
-        ws["A16"] = "Debt Collected:"
-        ws["B16"] = sum(r.get("total_collections", 0) for r in reports)
-        ws["A17"] = "Supplier Paid:"
-        ws["B17"] = sum(r.get("total_payables_paid", 0) for r in reports)
-        ws["A18"] = "Other Income:"
-        ws["B18"] = sum(r.get("total_other_income", 0) for r in reports)
-        ws["A19"] = "Budget Spent:"
-        ws["B19"] = sum(r.get("total_budget_spend", 0) for r in reports)
-        ws["A20"] = "Business Expenses:"
-        ws["B20"] = sum(r.get("total_business_expenses", 0) for r in reports)
-        ws["A21"] = "External-funded Expenses:"
-        ws["B21"] = sum(r.get("total_external_expenses", 0) for r in reports)
-        ws["A22"] = "Business Supplier Paid:"
-        ws["B22"] = sum(r.get("total_business_payables_paid", 0) for r in reports)
-        ws["A23"] = "External-funded Supplier Paid:"
-        ws["B23"] = sum(r.get("total_external_payables_paid", 0) for r in reports)
-        for row, label, key in (
-            (24, "Cowork Bill:", "cowork_bill"),
-            (25, "Cafe Bill:", "cafe_bill"),
-            (26, "Discounts:", "discounts_total"),
-            (27, "Refunds Paid:", "total_refunds"),
-            (28, "Sales Reconciliation Difference:", "sales_reconciliation_difference"),
-        ):
-            ws.cell(row=row, column=1, value=label)
-            ws.cell(row=row, column=2, value=sum(r.get(key, 0) for r in reports)).number_format = "₱#,##0.00"
-
-    @staticmethod
-    def _create_details_sheet(ws, reports: list[dict[str, Any]]) -> None:
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-        border = Border(
-            left=Side(style="thin"),
-            right=Side(style="thin"),
-            top=Side(style="thin"),
-            bottom=Side(style="thin"),
-        )
-
-        headers = [
-            "Report Date",
-            "Checkout Sales",
-            "Debt Collected",
-            "Cash",
-            "GCash",
-            "BDO",
-            "BPI",
-            "QueenBank",
-            "Unclassified Checkout",
-            "Expenses",
-            "Supplier Paid",
-            "Net Balance",
-            "Orders",
-            "Timed Sessions",
-            "Generated By",
-            "Generated At",
-            "Notes",
-            "Other Income",
-            "Budget Spent",
-            "Business Expenses",
-            "External-funded Expenses",
-            "Business Supplier Paid",
-            "External-funded Supplier Paid",
-            "Cowork Bill",
-            "Cafe Bill",
-            "Discounts",
-            "Refunds Paid",
-            "Sales Reconciliation Difference",
-        ]
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col)
-            cell.value = header
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = border
-
-        for row_idx, report in enumerate(reports, 2):
-            values = [
-                report["report_date"],
-                report["total_revenue"],
-                report.get("total_collections", 0),
-                report.get("cash_total", 0),
-                report.get("gcash_total", 0),
-                report.get("bdo_total", 0),
-                report.get("bpi_total", 0),
-                report.get("queenbank_total", 0),
-                report.get("unclassified_total", 0),
-                report["total_expenses"],
-                report.get("total_payables_paid", 0),
-                report["net_balance"],
-                report["total_orders"],
-                report["total_sessions"],
-                report["generated_by"],
-                report.get("generated_at") or "",
-                report["notes"] or "",
-                report.get("total_other_income", 0),
-                report.get("total_budget_spend", 0),
-                report.get("total_business_expenses", 0),
-                report.get("total_external_expenses", 0),
-                report.get("total_business_payables_paid", 0),
-                report.get("total_external_payables_paid", 0),
-                report.get("cowork_bill", 0),
-                report.get("cafe_bill", 0),
-                report.get("discounts_total", 0),
-                report.get("total_refunds", 0),
-                report.get("sales_reconciliation_difference", 0),
-            ]
-            for col, value in enumerate(values, 1):
-                cell = ws.cell(row=row_idx, column=col)
-                cell.value = value
-                cell.border = border
-                if 2 <= col <= 12 or col in (18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28):
-                    cell.number_format = "₱#,##0.00"
-
-        for col, width in zip("ABCDEFGHIJKLMNOPQRSTUVW", [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 10, 10, 15, 25, 25, 15, 15, 15, 15, 15, 15]):
-            ws.column_dimensions[col].width = width
-        for col in ("X", "Y", "Z", "AA"):
-            ws.column_dimensions[col].width = 15
-        ws.column_dimensions["AB"].width = 32
-
-    @staticmethod
-    def _create_comparison_sheet(ws, reports: list[dict[str, Any]]) -> None:
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-
-        ws["A1"] = "Period Comparison"
-        ws["A1"].font = Font(bold=True, size=12)
-
-        current = reports[0]
-        previous = reports[1] if len(reports) > 1 else None
-
-        for col, label in enumerate(["Metric", "Current Period", "Previous Period", "Change", "% Change"], 1):
-            cell = ws.cell(row=3, column=col)
-            cell.value = label
-            cell.fill = header_fill
-            cell.font = header_font
-
-        metrics = [
-            ("Revenue", "total_revenue"),
-            ("Expenses", "total_expenses"),
-            ("Net Balance", "net_balance"),
-            ("Orders", "total_orders"),
-            ("Timed Sessions", "total_sessions"),
-        ]
-
-        for row_idx, (label, key) in enumerate(metrics, 4):
-            ws.cell(row=row_idx, column=1).value = label
-            ws.cell(row=row_idx, column=2).value = current[key]
-            prev_val = previous[key] if previous else 0
-            ws.cell(row=row_idx, column=3).value = prev_val
-            change = current[key] - prev_val
-            ws.cell(row=row_idx, column=4).value = change
-            pct_change = (change / prev_val * 100) if prev_val else 0
-            ws.cell(row=row_idx, column=5).value = pct_change
-            ws.cell(row=row_idx, column=5).number_format = '0.0"%"'
-            if isinstance(current[key], float):
-                for c in (2, 3, 4):
-                    ws.cell(row=row_idx, column=c).number_format = "₱#,##0.00"
-
-    @staticmethod
-    def _create_trends_sheet(ws, reports: list[dict[str, Any]]) -> None:
-        ws["A1"] = "Trends & Analysis"
-        ws["A1"].font = Font(bold=True, size=12)
-        ws["A3"] = "Analysis"
-        ws["A3"].font = Font(bold=True, size=11)
-
-        if not reports:
-            return
-
-        n = len(reports)
-        ws["A4"] = "Average Daily Revenue:"
-        ws["B4"] = sum(r["total_revenue"] for r in reports) / n
-        ws["B4"].number_format = "₱#,##0.00"
-
-        ws["A5"] = "Average Daily Expenses:"
-        ws["B5"] = sum(r["total_expenses"] for r in reports) / n
-        ws["B5"].number_format = "₱#,##0.00"
-
-        ws["A6"] = "Average Daily Orders:"
-        ws["B6"] = sum(r["total_orders"] for r in reports) / n
-        ws["B6"].number_format = "0"
-
-        max_revenue_report = max(reports, key=lambda r: r["total_revenue"])
-        ws["A7"] = "Highest Revenue Day:"
-        ws["B7"] = f"{max_revenue_report['report_date']} (₱{max_revenue_report['total_revenue']:.2f})"
-
-        ws["A8"] = "Total Days Tracked:"
-        ws["B8"] = n
-
-        ws.column_dimensions["A"].width = 25
-        ws.column_dimensions["B"].width = 30
+            trends += [["Average daily checkout sales", sum(r["total_revenue"] for r in reports) / len(reports)],
+                       ["Average daily expenses", sum(r["total_expenses"] for r in reports) / len(reports)],
+                       ["Highest checkout sales day", max(reports, key=lambda r: r["total_revenue"])["report_date"]]]
+        self._sheet(wb, "Trends", ["Item", "Value"], trends, {"A": 40, "B": 28}, (2,))
+        wb["Trends"]["B2"].number_format = "0"
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return send_file(output, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                         as_attachment=True, download_name=f"daily_balance_{manila_date(datetime.utcnow())}.xlsx")

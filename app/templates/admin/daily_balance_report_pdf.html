@@ -4,284 +4,59 @@
   <meta charset="UTF-8">
   <title>IdeaFlow Daily Sales Balance</title>
   <style>
-    @page { size: A4 landscape; margin: 1.5cm; }
-    body {
-      font-family: Arial, Helvetica, sans-serif;
-      font-size: 11pt;
-      color: #1f2937;
-      line-height: 1.4;
-    }
-    .header {
-      text-align: center;
-      border-bottom: 3px solid #c9a43a;
-      padding-bottom: 12px;
-      margin-bottom: 20px;
-    }
-    .header h1 {
-      margin: 0;
-      font-size: 22pt;
-      color: #92400e;
-    }
-    .header p {
-      margin: 4px 0 0;
-      color: #6b7280;
-      font-size: 10pt;
-    }
-    .summary {
-      display: table;
-      width: 100%;
-      margin-bottom: 16px;
-      border-collapse: separate;
-      border-spacing: 10px 0;
-    }
-    .summary-payments {
-      margin-bottom: 24px;
-    }
-    .summary-payments .summary-box {
-      width: 20%;
-    }
-    .summary-box {
-      display: table-cell;
-      width: 33%;
-      background: #f9fafb;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 12px;
-      text-align: center;
-    }
-    .summary-box .label {
-      font-size: 9pt;
-      color: #6b7280;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .summary-box .value {
-      font-size: 14pt;
-      font-weight: bold;
-      margin-top: 4px;
-    }
-    .summary-box .sub {
-      font-size: 9pt;
-      color: #6b7280;
-      margin-top: 4px;
-    }
-    .revenue { color: #15803d; }
-    .expenses { color: #b45309; }
-    .net { color: #1d4ed8; }
-    .cash { color: #166534; }
-    .gcash { color: #1d4ed8; }
-    .bdo { color: #b91c1c; }
-    .bpi { color: #b45309; }
-    .queenbank { color: #b45309; }
-    h2 {
-      font-size: 13pt;
-      color: #374151;
-      border-bottom: 1px solid #e5e7eb;
-      padding-bottom: 6px;
-      margin: 20px 0 10px;
-    }
-    table.data {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 20px;
-      font-size: 9pt;
-    }
-    table.data th {
-      background: #c9a43a;
-      color: #fff;
-      padding: 8px 5px;
-      text-align: left;
-    }
-    table.data td {
-      padding: 7px 5px;
-      border-bottom: 1px solid #e5e7eb;
-    }
-    table.data tr:nth-child(even) td {
-      background: #fafafa;
-    }
-    .amount { text-align: right; white-space: nowrap; }
-    .footer {
-      margin-top: 30px;
-      text-align: center;
-      font-size: 9pt;
-      color: #9ca3af;
-    }
-    .empty {
-      color: #6b7280;
-      font-style: italic;
-      padding: 12px 0;
-    }
+    @page { size: A4 portrait; margin: 16mm; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #23354d; line-height: 1.4; }
+    h1 { font-size: 22pt; margin: 0; }
+    h2 { font-size: 15pt; border-bottom: 2px solid #c9a43a; padding-bottom: 5px; margin-top: 18px; break-after: avoid; }
+    h3 { font-size: 11pt; margin: 14px 0 5px; break-after: avoid; }
+    h2, h3 { page-break-after: avoid; -pdf-keep-with-next: true; }
+    p { margin: 5px 0 10px; }
+    .muted { color: #64748b; font-size: 9pt; }
+    .new-page { break-before: page; page-break-before: always; }
+    .review { color: #9a3412; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 12px; }
+    col.label { width: 62%; } col.value { width: 38%; }
+    td { padding: 4px 7px; border-bottom: 1px solid #e5e7eb; vertical-align: top; overflow-wrap: anywhere; word-wrap: break-word; }
+    td.item { width: 62%; }
+    td.amount, td.text-value { width: 38%; white-space: pre-wrap; }
+    td.amount { text-align: right; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    tr:nth-child(odd) { background: #f8fafc; }
+    .header { padding-bottom: 8px; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>IdeaFlow</h1>
-    <p>Live Daily Sales Balance Report · Asia/Manila business days</p>
-    <p>Generated on {{ generated_at }}</p>
-    {% if period_label %}
-    <p>Period: {{ period_label }}</p>
-    {% endif %}
-  </div>
-
-  <div class="summary">
-    <div class="summary-box">
-      <div class="label">Checkout Sales</div>
-      <div class="value revenue">Php {{ "%.2f"|format(total_revenue) }}</div>
-    </div>
-    <div class="summary-box">
-      <div class="label">Total Expenses</div>
-      <div class="value expenses">Php {{ "%.2f"|format(total_expenses) }}</div>
-    </div>
-    <div class="summary-box">
-      <div class="label">Net Cash Movement</div>
-      <div class="value net">Php {{ "%.2f"|format(net_balance) }}</div>
-    </div>
-  </div>
-
+{% macro values(items, counts=false) %}
+<table><colgroup><col class="label"><col class="value"></colgroup><tbody>
+  {% for label, value in items %}{% for part in text_parts(value) %}<tr><td class="item" width="62%">{{ label }}{% if not loop.first %} (continued){% endif %}</td><td class="{{ 'amount' if part is number else 'text-value' }}" width="38%">{% if part is none %}<span class="muted">Not available</span>{% elif part is number %}{% if counts %}{{ part|int }}{% else %}Php {{ "%.2f"|format(part) }}{% endif %}{% else %}{% for line in pdf_text_lines(part) %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}</td></tr>{% endfor %}{% endfor %}
+</tbody></table>
+{% endmacro %}
+  <div class="header"><h1>IdeaFlow</h1><p>Daily Sales Balance</p><p class="muted">Asia/Manila business dates: {{ period_label }}<br>Exported {{ generated_at }}</p></div>
+  <h2>Period Summary</h2>
+  {{ values([('Checkout Sales', total_revenue), ('Debt Collected', total_collections), ('Business Expenses', total_business_expenses), ('External-funded Expenses', total_external_expenses), ('Business Debt Paid', total_business_payables_paid), ('External-funded Debt Paid', total_external_payables_paid), ('Owner Cash Added', total_owner_topups), ('Cash Taken Out', total_cash_withdrawals), ('Net Movement (all methods)', net_balance)]) }}
   <h2>Checkout Sales Breakdown</h2>
-  <p>Cowork bill Php {{ "%.2f"|format(cowork_bill) }} + Cafe bill Php {{ "%.2f"|format(cafe_bill) }} − Discounts Php {{ "%.2f"|format(discounts_total) }} = Checkout sales Php {{ "%.2f"|format(total_revenue) }}. Refunds paid Php {{ "%.2f"|format(total_refunds) }} are recorded separately on their payment date.</p>
-  {% if sales_reconciliation_difference %}<p class="expenses">One or more payment methods differ from this breakdown by a combined Php {{ "%.2f"|format(sales_reconciliation_difference) }}; review older checkout records.</p>{% endif %}
-
-  <table class="data"><thead><tr><th>Date</th><th class="amount">Cowork bill</th><th class="amount">Cafe bill</th><th class="amount">Discounts</th><th class="amount">Checkout sales</th><th class="amount">Refunds paid</th></tr></thead><tbody>
-    {% for r in reports %}<tr><td>{{ r.report_date }}</td><td class="amount">Php {{ "%.2f"|format(r.get('cowork_bill', 0)) }}</td><td class="amount">Php {{ "%.2f"|format(r.get('cafe_bill', 0)) }}</td><td class="amount">Php {{ "%.2f"|format(r.get('discounts_total', 0)) }}</td><td class="amount">Php {{ "%.2f"|format(r.total_revenue) }}</td><td class="amount">Php {{ "%.2f"|format(r.get('total_refunds', 0)) }}</td></tr>{% endfor %}
-  </tbody></table>
-
-  <div class="summary">
-    <div class="summary-box"><div class="label">Customer Debt Collected</div><div class="value">Php {{ "%.2f"|format(total_collections) }}</div></div>
-    <div class="summary-box"><div class="label">Supplier Payments</div><div class="value">Php {{ "%.2f"|format(total_payables_paid) }}</div></div>
-  </div>
-  <div class="summary">
-    <div class="summary-box"><div class="label">Other Income</div><div class="value">Php {{ "%.2f"|format(total_other_income) }}</div></div>
-    <div class="summary-box"><div class="label">Budget Spending</div><div class="value">Php {{ "%.2f"|format(total_budget_spend) }}</div></div>
-  </div>
-  <p>Net movement = checkout sales − credit applied + credit received + debt collected + other income − business-funded expenses − business-funded supplier payments − budget spending − refunds paid. Externally funded payments are recorded separately and do not reduce business funds.</p>
-  <p>Expenses: Php {{ "%.2f"|format(total_business_expenses) }} business-funded; Php {{ "%.2f"|format(total_external_expenses) }} externally funded.</p>
-  <p>Supplier payments: Php {{ "%.2f"|format(total_business_payables_paid) }} business-funded; Php {{ "%.2f"|format(total_external_payables_paid) }} externally funded.</p>
-
-  <div class="summary summary-payments">
-    <div class="summary-box">
-      <div class="label">Cash Payments</div>
-      <div class="value cash">Php {{ "%.2f"|format(total_cash) }}</div>
-      <div class="sub">{{ cash_count }} checkout(s)</div>
-    </div>
-    <div class="summary-box">
-      <div class="label">GCash Payments</div>
-      <div class="value gcash">Php {{ "%.2f"|format(total_gcash) }}</div>
-      <div class="sub">{{ gcash_count }} checkout(s)</div>
-    </div>
-    <div class="summary-box">
-      <div class="label">BDO Payments</div>
-      <div class="value bdo">Php {{ "%.2f"|format(total_bdo) }}</div>
-      <div class="sub">{{ bdo_count }} checkout(s)</div>
-    </div>
-    <div class="summary-box">
-      <div class="label">BPI Payments</div>
-      <div class="value bpi">Php {{ "%.2f"|format(total_bpi) }}</div>
-      <div class="sub">{{ bpi_count }} checkout(s)</div>
-    </div>
-    <div class="summary-box">
-      <div class="label">QueenBank Payments</div>
-      <div class="value queenbank">Php {{ "%.2f"|format(total_queenbank) }}</div>
-      <div class="sub">{{ queenbank_count }} checkout(s)</div>
-    </div>
-  </div>
-
+  {{ values([('Cowork Bill',cowork_bill), ('Cafe Bill',cafe_bill), ('Discounts',discounts_total), ('Checkout Sales',total_revenue), ('Refunds Paid',total_refunds)]) }}
+  <p class="muted">Cowork + Cafe - Discounts = Checkout sales. Refunds are shown on their payment date. Debt collections and owner funding are separate cash flows.</p>
+  {% if sales_reconciliation_difference %}<p class="review">Review older checkout records: the component breakdown differs by Php {{ '%.2f'|format(sales_reconciliation_difference) }}.</p>{% endif %}
   <h2>Payment Method Reconciliation</h2>
-  <table class="data"><thead><tr><th>Method</th><th class="amount">Checkout</th><th class="amount">Debt Collected</th><th class="amount">Other Income</th><th class="amount">Business Expenses</th><th class="amount">External-funded Expenses</th><th class="amount">Business Supplier Paid</th><th class="amount">External-funded Supplier Paid</th><th class="amount">Budget Spent</th><th class="amount">Net</th></tr></thead><tbody>
-    {% for m in method_rows %}<tr><td>{{ "Older records (method unknown)" if m.method == "unclassified" else m.method }}</td><td class="amount">Php {{ "%.2f"|format(m.checkout) }}</td><td class="amount">Php {{ "%.2f"|format(m.collection) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_income) }}</td><td class="amount">Php {{ "%.2f"|format(m.expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.external_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.external_payable) }}</td><td class="amount">Php {{ "%.2f"|format(m.adjustment_expense) }}</td><td class="amount">Php {{ "%.2f"|format(m.net) }}</td></tr>{% endfor %}
-  </tbody></table>
-  <table class="data"><thead><tr><th>Method</th><th class="amount">Credit applied</th><th class="amount">Credit received</th><th class="amount">Refunds paid</th></tr></thead><tbody>
-    {% for m in method_rows %}<tr><td>{{ "Older records (method unknown)" if m.method == "unclassified" else m.method }}</td><td class="amount">Php {{ "%.2f"|format(m.credit_applied) }}</td><td class="amount">Php {{ "%.2f"|format(m.credit_received) }}</td><td class="amount">Php {{ "%.2f"|format(m.refund) }}</td></tr>{% endfor %}
-  </tbody></table>
-
-  <h2>Daily Reports</h2>
-  {% if reports %}
-  <table class="data">
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th class="amount">Checkout sales</th>
-        <th class="amount">Debt Collected</th>
-        <th class="amount">Cash</th>
-        <th class="amount">GCash</th>
-        <th class="amount">BDO</th>
-        <th class="amount">BPI</th>
-        <th class="amount">QueenBank</th>
-        <th class="amount">Expenses</th>
-        <th class="amount">Supplier Paid</th>
-        <th class="amount">Other Income</th>
-        <th class="amount">Budget Spent</th>
-        <th class="amount">Net</th>
-        <th class="amount">Orders</th>
-        <th class="amount">Timed Sessions</th>
-        <th>Prepared By</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in reports %}
-      <tr>
-        <td>{{ r.report_date }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.total_revenue) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.total_collections) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.cash_total) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.gcash_total) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.bdo_total) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.bpi_total) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.queenbank_total) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.total_expenses) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.total_payables_paid) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.total_other_income) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.total_budget_spend) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(r.net_balance) }}</td>
-        <td class="amount">{{ r.total_orders }}</td>
-        <td class="amount">{{ r.total_sessions }}</td>
-        <td>{{ r.generated_by }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="empty">No activity for this period.</p>
-  {% endif %}
-
-  {% if soft_entries %}
-  <h2>Soft Balancing (AM / PM)</h2>
-  <table class="data">
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>Period</th>
-        <th class="amount">Revenue</th>
-        <th class="amount">Debt Collected</th>
-        <th class="amount">Expenses</th>
-        <th class="amount">Supplier Paid</th>
-        <th class="amount">Other Income</th>
-        <th class="amount">Budget Spent</th>
-        <th class="amount">Net</th>
-        <th>Prepared By</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for e in soft_entries %}
-      <tr>
-        <td>{{ e.balance_date }}</td>
-        <td>{{ e.period }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.total_revenue) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.total_collections) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.total_expenses) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.total_payables_paid) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.total_other_income) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.total_budget_spend) }}</td>
-        <td class="amount">Php {{ "%.2f"|format(e.net_balance) }}</td>
-        <td>{{ e.generated_by }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-
-  <div class="footer">
-    This report is for audit and business review. IdeaFlow POS System.
+  <p class="muted">Money received - money paid out = net movement. External-funded costs are reference amounts. Owner reimbursement is already included in debt paid. Only methods with activity are listed.</p>
+  {% for m in method_rows if m.active %}
+    <h3>{{ 'Older records (method unknown)' if m.method == 'unclassified' else m.method|upper }}</h3>
+    {{ values([('Net Movement',m.net), ('Money Received',m.received), ('Money Paid Out',m.paid_out)]) }}
+    <table><tbody>{% for flow,label in flow_labels.items() %}<tr><td class="item" width="62%">{{ label }}</td><td class="amount" width="38%">Php {{ '%.2f'|format(m[flow]) }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}<p class="muted">No payment activity for these dates.</p>{% endfor %}
+  {% for report, sections in report_details %}
+  <div class="new-page"><h2>Daily Report: {{ report.report_date }}</h2><p class="muted">Live totals{% if report.get('id') is not none %}; saved cash snapshot available{% else %}; no saved report{% endif %}. Saved cash values retain their recorded amounts.</p>
+    {% if report.get('petty_cash_snapshot_difference') or report.get('customer_cash_snapshot_difference') %}<p class="review">Review: cash differs from the saved snapshot.</p>{% endif %}
+    {% for title, items in sections.items() %}<h3>{{ title }}</h3>{{ values(items, title in ['Activity','Checkout counts']) }}{% endfor %}
+  </div>
+  {% else %}<p class="muted">No daily reports in this range.</p>{% endfor %}
+  <div class="new-page"><h2>Soft Balancing History (AM/PM)</h2><p class="muted">These are saved snapshots. They overlap with Daily Reports and must not be added to them.</p>
+  {% for entry, sections in soft_details %}
+    <h2>{{ entry.balance_date }} / {{ entry.period }} / #{{ entry.id }}</h2>
+    {% if entry.get('petty_cash_live_difference') or entry.get('customer_cash_live_difference') %}<p class="review">Review: cash changed after this snapshot.</p>{% endif %}
+    {% for title, items in sections.items() %}<h3>{{ title }}</h3>{{ values(items) }}{% endfor %}
+  {% else %}<p class="muted">No saved soft balances in this range.</p>{% endfor %}
   </div>
 </body>
 </html>

@@ -53,7 +53,6 @@ def test_manual_initial_loads_do_not_get_repeated_by_pollers_immediately():
     expected = {
         "admin.html": (
             "createSmartPoller(loadUsers, 30000, { runImmediately: false })",
-            "createSmartPoller(loadStaffAnalytics, 60000, { runImmediately: false })",
             "createSmartPoller(loadCapacity, 60000, { runImmediately: false })",
             "createSmartPoller(loadSpacePrices, 120000, { runImmediately: false })",
         ),

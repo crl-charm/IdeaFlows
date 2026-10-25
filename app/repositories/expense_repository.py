@@ -42,6 +42,10 @@ class ExpenseRepository:
         funding_source: str,
         balance_before: Decimal,
         balance_after: Decimal,
+        cash_box: str | None = None,
+        box_balance_before: Decimal | None = None,
+        box_balance_after: Decimal | None = None,
+        repay_owner: bool = False,
     ) -> Expense:
         expense = Expense(
             category=category,
@@ -53,6 +57,10 @@ class ExpenseRepository:
             funding_source=funding_source,
             balance_before=balance_before,
             balance_after=balance_after,
+            cash_box=cash_box,
+            box_balance_before=box_balance_before,
+            box_balance_after=box_balance_after,
+            repay_owner=repay_owner,
             created_at=posted_at,
             request_key=request_key,
         )

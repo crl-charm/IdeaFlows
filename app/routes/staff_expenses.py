@@ -49,6 +49,8 @@ def api_create_expense() -> tuple:
         logged_by=user_id,
         payment_method=data.get("payment_method"),
         request_key=request.headers.get("Idempotency-Key"),
+        cash_box=data.get("cash_box"),
+        repay_owner=data.get("repay_owner"),
     )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
