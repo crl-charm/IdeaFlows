@@ -1,0 +1,67 @@
+name: Activity
+
+on:
+  schedule:
+    # 8 scheduled commits/day in Philippine Time (PHT, UTC+8):
+    # - 12:00 AM PHT (16:00 UTC previous day) -> 4 commits
+    # - 09:15 AM PHT (01:15 UTC) -> 2 commits
+    # - 08:25 PM PHT (12:25 UTC) -> 2 commits
+    - cron: '0 16 * * *'
+    - cron: '15 1 * * *'
+    - cron: '25 12 * * *'
+  workflow_dispatch: # Allows manual trigger from the Actions tab anytime
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repository-activity
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Record scheduled repository activity
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Use the triggering schedule, even when GitHub starts a run late.
+          case "$SCHEDULE" in
+            '0 16 * * *') commit_target=4 ;;
+            '15 1 * * *'|'25 12 * * *') commit_target=2 ;;
+            '') commit_target=2 ;; # Manual runs keep the existing trigger available.
+            *) echo "Unsupported activity schedule" >&2; exit 1 ;;
+          esac
+
+          git config user.name "Carl"
+          git config user.email "178656416+crl-charm@users.noreply.github.com"
+          git pull --rebase origin master
+          base_commit=$(git rev-parse HEAD)
+
+          for ((count = 1; count <= commit_target; count++)); do
+            current_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            # Replace one README activity marker; leave visible documentation intact.
+            sed -i -E '/^<!-- (telemetry|activity):/d' README.md
+            printf '<!-- activity: %s run=%s commit=%s/%s -->\n' \
+              "$current_time" "$GITHUB_RUN_ID" "$count" "$commit_target" >> README.md
+
+            git add -- README.md
+            git commit -m "chore: record scheduled activity ($count/$commit_target)"
+          done
+
+          test "$(git rev-list --count "$base_commit..HEAD")" -eq "$commit_target"
+          git pull --rebase origin master
+          git push origin HEAD:master

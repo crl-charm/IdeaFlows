@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from flask import render_template
 
 from app import create_app
 
@@ -45,15 +46,15 @@ def test_csp_has_exact_browser_asset_origins_without_wildcards(app):
 
 
 def test_shared_templates_use_consistent_pinned_asset_versions(app):
-    layout = (ROOT / "app" / "templates" / "layout.html").read_text(encoding="utf-8")
-    auth_layout = (
-        ROOT / "app" / "templates" / "auth_layout.html"
-    ).read_text(encoding="utf-8")
+    with app.test_request_context("/"):
+        templates = [render_template(name) for name in (
+            "layout.html", "auth_layout.html", "current_customer.html",
+        )]
     analytics = (
         ROOT / "app" / "templates" / "analytics" / "_content.html"
     ).read_text(encoding="utf-8")
 
-    for template in (layout, auth_layout):
+    for template in templates:
         assert "bootstrap@5.3.3/dist/css/bootstrap.min.css" in template
         assert "bootstrap-icons@1.11.3/font/bootstrap-icons.css" in template
     assert "chart.js@4.4.7/dist/chart.umd.min.js" in analytics

@@ -56,6 +56,30 @@ class SessionRepository:
             .all()
         )
 
+    def get_public_active_sessions(self) -> list[CustomerSession]:
+        return (
+            CustomerSession.query.join(SpaceType)
+            .options(
+                selectinload(CustomerSession.space_type),
+                selectinload(CustomerSession.orders)
+                .selectinload(Order.items).selectinload(OrderItem.menu_item),
+            )
+            .filter(
+                CustomerSession.status == "active",
+                CustomerSession.service_mode == "timed",
+                SpaceType.name.in_(("Regular Lounge", "Premium Lounge", "Boardroom")),
+            )
+            .order_by(CustomerSession.time_in.desc(), CustomerSession.id.desc())
+            .all()
+        )
+
+    def get_carried_transactions(self, transaction_ids: set[int]) -> dict[int, Transaction]:
+        if not transaction_ids:
+            return {}
+        return {row.id: row for row in Transaction.query.filter(
+            Transaction.id.in_(transaction_ids), Transaction.is_voided.is_(True),
+        ).all()}
+
     def get_active_boardroom_bookings_by_session_ids(self, session_ids: Iterable[int]) -> dict[int, BoardroomBooking]:
         session_ids = list(session_ids)
         if not session_ids:

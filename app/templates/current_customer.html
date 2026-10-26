@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Your Running Bill · IdeaFlow</title>
+  {% include "partials/brand_head.html" %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/current-customers.css') }}?v=2">
+  <script defer src="{{ url_for('static', filename='js/current-customers.js') }}"></script>
+  <script async id="customer-socket-library" src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand navbar-brand" href="/" aria-label="IdeaFlow home">
+      <img src="{{ url_for('static', filename='css/images/logo.png') }}" class="site-logo" alt="IdeaFlow" width="40" height="40">
+      <span>IdeaFlow</span>
+    </a>
+    <span class="header-caption">Your visit, at a glance</span>
+  </header>
+
+  <main>
+    <section class="page-intro" aria-labelledby="page-title">
+      <p class="eyebrow">CURRENT CUSTOMERS</p>
+      <h1 id="page-title">Your running bill</h1>
+      <p class="intro-copy">Find your name to see your time and food charges.</p>
+      <p class="view-note">View only · Please ask staff for order or billing changes.</p>
+    </section>
+
+    <section class="search-panel card shadow-sm" aria-label="Find your visit">
+      <label for="customer-search">Search your name</label>
+      <div class="search-row">
+        <input id="customer-search" class="form-control" type="search" placeholder="e.g. Carl" autocomplete="off" maxlength="100">
+        <button type="button" class="btn btn-warning" id="refresh-customers">Refresh</button>
+      </div>
+      <div class="feed-meta">
+        <span id="customer-count" role="status">Loading current visits…</span>
+        <span class="update-meta">
+          <span id="connection-status" class="connection-status" role="status">Automatic refresh</span>
+          <span id="last-updated">Waiting for the first update</span>
+        </span>
+      </div>
+    </section>
+
+    <p class="update-error" id="customer-update-error" role="status" hidden></p>
+    <div class="empty-state" id="customer-empty-state" role="status">Loading current customers…</div>
+    <section class="customer-grid" id="customer-list" aria-label="Current customer bills"></section>
+    <noscript><p class="update-error">Enable JavaScript to load current customer bills.</p></noscript>
+
+    <footer class="page-footer">
+      <strong>Running total = time bill + food bill.</strong>
+      <p>Discounts and any customer credit are finalized with staff at checkout.</p>
+      <p>Amounts reflect the last successful update. All times are shown in Asia/Manila.</p>
+    </footer>
+  </main>
+
+  <template id="customer-card-template">
+    <article class="customer-card card shadow-sm">
+      <div class="customer-heading">
+        <h2 data-field="name"></h2>
+        <span class="space-badge" data-field="space"></span>
+      </div>
+      <dl class="visit-details">
+        <div><dt>Time in</dt><dd data-field="time-in"></dd></div>
+        <div><dt>Billable time</dt><dd data-field="duration"></dd></div>
+      </dl>
+      <span class="time-status" data-field="time-status"></span>
+      <dl class="bill-breakdown">
+        <div><dt>Time bill</dt><dd data-field="time-bill"></dd></div>
+        <div><dt>Food bill</dt><dd data-field="food-bill"></dd></div>
+        <div class="running-total"><dt>Running total</dt><dd data-field="total-bill"></dd></div>
+      </dl>
+      <p class="total-note">Before checkout discounts and customer credit adjustments.</p>
+      <details class="food-details">
+        <summary>View food orders</summary>
+        <ul class="food-items" data-field="food-items"></ul>
+        <p class="no-orders" data-field="no-orders">No food orders yet.</p>
+        <p class="carried-charge" data-field="carried-charge" hidden>
+          Earlier food charge carried into this visit <strong data-field="carried-amount"></strong>
+        </p>
+      </details>
+    </article>
+  </template>
+</body>
+</html>

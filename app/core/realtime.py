@@ -8,6 +8,7 @@ from typing import Any, Iterable
 AUTHENTICATED_ROOM = "authenticated"
 ADMIN_ROOM = "role:admin"
 STAFF_ROOM = "role:staff"
+PUBLIC_CUSTOMERS_NAMESPACE = "/current-customer"
 
 IDENTIFIER_FIELDS = frozenset(
     {

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
 from app import db
 from app.utils.billing import billable_microseconds, current_time_bill
 from app.core.interfaces import Clock, Notifier
+from app.core.socketio_handlers import emit_current_customers_changed
 from app.models import (
     BoardroomBooking, BookingChange, CheckoutVoidRequest, CustomerSession,
     Order, Receivable, SessionTimeEvent, Transaction,
@@ -115,6 +116,7 @@ class SessionService:
         if correction_error:
             return correction_error
         self.repo.add_session(sess)
+        emit_current_customers_changed()
         return {"message": "Customer checked in successfully", "session_id": sess.id}, 200
 
     def _attach_void_correction(self, sess: CustomerSession, request_id: Any) -> tuple[dict[str, Any], int] | None:
@@ -224,6 +226,49 @@ class SessionService:
 
         return result
 
+    def get_public_current_customers_view(self) -> dict[str, Any]:
+        sessions = self.repo.get_public_active_sessions()
+        bookings = self.repo.get_active_boardroom_bookings_by_session_ids([s.id for s in sessions])
+        originals = self.repo.get_carried_transactions({
+            s.voided_transaction_id for s in sessions if s.voided_transaction_id is not None
+        })
+        now = self.clock.now()
+        customers = []
+        for sess in sessions:
+            items = []
+            current_food = Decimal("0.00")
+            for order in sorted(sess.orders, key=lambda row: row.id):
+                for item in sorted(order.items, key=lambda row: row.id):
+                    quantity = item.quantity or 0
+                    price = Decimal(str(item.price or 0))
+                    line_total = (quantity * price).quantize(Decimal("0.01"))
+                    current_food += line_total
+                    items.append({
+                        "item_name": item.display_name,
+                        "quantity": quantity,
+                        "unit_price": float(price),
+                        "line_total": float(line_total),
+                    })
+            food_bill, carried = self._food_bill_with_carried(
+                current_food, originals.get(sess.voided_transaction_id),
+            )
+            time_bill = current_time_bill(sess, now, booking=bookings.get(sess.id))
+            # Explicit public projection: never serialize the customer/staff models.
+            customers.append({
+                "session_id": sess.id,
+                "customer_name": sess.customer_name,
+                "space_type": sess.space_type.name,
+                "time_in": sess.time_in.replace(tzinfo=timezone.utc).isoformat(),
+                "seconds_used": billable_microseconds(sess, now) // 1_000_000,
+                "paused": sess.paused_at is not None,
+                "food_items": items,
+                "time_bill": float(time_bill),
+                "food_bill": float(food_bill),
+                "carried_food_bill": float(carried),
+                "total_bill": float((time_bill + food_bill).quantize(Decimal("0.01"))),
+            })
+        return {"as_of": now.replace(tzinfo=timezone.utc).isoformat(), "customers": customers}
+
     @staticmethod
     def _record_time_event(sess: CustomerSession, action: str, when,
                            actor_id: int, actor_name: str, actor_role: str,
@@ -260,6 +305,7 @@ class SessionService:
         self._record_time_event(sess, "paused" if pause else "resumed", now,
                                 actor_id, actor_name, actor_role, before_microseconds, before_bill)
         self.repo.commit()
+        emit_current_customers_changed()
         return {
             "message": f"Time bill {'paused' if pause else 'resumed'} for {sess.customer_name}.",
             "paused": pause,
@@ -335,6 +381,7 @@ class SessionService:
         except Exception:
             db.session.rollback()
             raise
+        emit_current_customers_changed()
         return {"message": "Mistaken Time In cancelled. The seat is available again.",
                 "uncollected_time_charge": float(uncollected)}, 200
 
@@ -359,11 +406,15 @@ class SessionService:
             "pages": history.pages,
         }
 
-    def _food_bill(self, sess: CustomerSession) -> tuple[Decimal, Decimal]:
-        current = Decimal(str(self.repo.sum_food_total_for_session(sess.id))).quantize(Decimal("0.01"))
-        original = db.session.get(Transaction, sess.voided_transaction_id) if sess.voided_transaction_id else None
+    @staticmethod
+    def _food_bill_with_carried(current, original) -> tuple[Decimal, Decimal]:
+        current = Decimal(str(current)).quantize(Decimal("0.01"))
         carried = Decimal(str(original.food_bill)) if original and original.is_voided else Decimal("0.00")
         return current + carried, carried
+
+    def _food_bill(self, sess: CustomerSession) -> tuple[Decimal, Decimal]:
+        original = db.session.get(Transaction, sess.voided_transaction_id) if sess.voided_transaction_id else None
+        return self._food_bill_with_carried(self.repo.sum_food_total_for_session(sess.id), original)
 
     def preview_checkout(self, session_id: int, discount_type: str | None = None, discount_item_id: Any = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         sess = self.repo.get_session(session_id)

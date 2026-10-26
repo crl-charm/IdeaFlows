@@ -1,4 +1,5 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request, session, render_template
+from app import limiter
 from datetime import datetime
 from app.utils.auth import login_required, admin_required, staff_or_admin_required
 
@@ -19,6 +20,29 @@ _service = SessionService(
     clock=SystemClock(),
     notifier=get_notifier(),
 )
+
+
+@session_bp.after_request
+def public_bill_cache_control(response):
+    if request.endpoint in {
+        "session_routes.current_customers_page", "session_routes.current_customers",
+    }:
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["CDN-Cache-Control"] = "no-store"
+        response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
+    return response
+
+
+@session_bp.route("/current-customer")
+def current_customers_page():
+    return render_template("current_customer.html")
+
+
+@session_bp.route("/api/current-customers")
+@limiter.limit("2400 per minute", override_defaults=True)
+def current_customers():
+    # Allow many viewers behind the venue's shared IP without exposing staff APIs.
+    return jsonify(_service.get_public_current_customers_view())
 
 
 # -----------------------------

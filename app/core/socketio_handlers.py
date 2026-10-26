@@ -1,4 +1,4 @@
-"""Authenticated, role-scoped Socket.IO events."""
+"""Role-scoped staff events and a separate public bill-change signal."""
 
 from __future__ import annotations
 
@@ -12,12 +12,27 @@ from app import db, socketio
 from app.core.realtime import (
     ADMIN_ROOM,
     AUTHENTICATED_ROOM,
+    PUBLIC_CUSTOMERS_NAMESPACE,
     STAFF_ROOM,
     compact_change,
     compact_payload,
 )
 
 logger = logging.getLogger("security")
+
+
+@socketio.on("connect", namespace=PUBLIC_CUSTOMERS_NAMESPACE)
+def handle_public_customers_connect(auth=None):
+    """Public viewers receive change signals only, without a login lease."""
+    return True
+
+
+def emit_current_customers_changed(server=socketio):
+    """A missed public signal must never fail an already committed staff action."""
+    try:
+        server.emit("current_customers_changed", {}, namespace=PUBLIC_CUSTOMERS_NAMESPACE)
+    except Exception:
+        logger.warning("Public bill notification unavailable; viewers will refresh", exc_info=True)
 
 
 # Inventory Events
