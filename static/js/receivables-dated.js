@@ -14,7 +14,7 @@
     const $ = id => document.getElementById(id);
     const state = { date: null, search: '', status: '', recordPage: 1, tabPage: 1,
       sequence: 0, suggestionSequence: 0, suggestions: [], selectedCustomer: null,
-      tabs: [], records: [], detail: null };
+      tabs: [], records: [], detail: null, menu: [], lines: [], menuSequence: 0 };
     const api = `${base}/api/receivables`;
     const page = { afterMutation: async () => {} };
     let suggestionTimer;
@@ -144,6 +144,9 @@
       clearTimeout(suggestionTimer);
       $('receivable-form').reset();
       state.selectedCustomer = null;
+      state.lines = [];
+      entryMode();
+      loadMenu();
       $('customerName').readOnly = !!tab;
       $('customerContact').readOnly = !!tab;
       resetSuggestions();
@@ -151,7 +154,7 @@
         $('customerName').value = tab.customer_name;
         $('customerContact').value = tab.customer_contact;
         const customer = { customer_name: tab.customer_name, customer_contact: tab.customer_contact,
-          open_tab_id: tab.id, label: `Open tab #${tab.id}` };
+          open_tab_id: tab.id, account_id: tab.account_id, label: `Open tab #${tab.id}` };
         state.suggestions = [customer];
         state.selectedCustomer = customer;
         $('matchingTabs').add(new Option(`${tab.customer_name} · ${customer.label}`, '0'));
@@ -173,6 +176,7 @@
         state.detail = tab;
         $('viewCustomerName').textContent = tab.customer_name;
         $('tab-contact').textContent = `Contact: ${tab.customer_contact || 'none'} · Tab #${tab.id}`;
+        if ($('tab-export-statement')) $('tab-export-statement').href = `/admin/reports?tab_id=${tab.id}`;
         $('viewOrdersTotal').textContent = pesos(tab.orders_total);
         $('viewPaidTotal').textContent = pesos(tab.paid_total);
         $('viewOutstandingBalance').textContent = pesos(tab.outstanding_balance);
@@ -200,6 +204,77 @@
       } catch (error) { showToast(error.message, 'error'); }
     }
 
+    function menuOptions() {
+      const term = $('receivableMenuSearch').value.trim().toLocaleLowerCase();
+      const select = $('receivableMenuItem');
+      select.replaceChildren(new Option('Choose a menu item', ''));
+      for (const item of state.menu.filter(item => item.name.toLocaleLowerCase().includes(term))) {
+        select.add(new Option(`${item.name} · ${pesos(item.price)}`, item.id));
+      }
+      mealOptions();
+    }
+
+    function mealOptions() {
+      const item = state.menu.find(row => row.id === Number($('receivableMenuItem').value));
+      for (const [id, key] of [['receivableNoRice', 'can_remove_rice'], ['receivableNoEgg', 'can_remove_egg']]) {
+        $(id).disabled = !item?.[key];
+        $(id).checked = false;
+      }
+    }
+
+    async function loadMenu() {
+      const sequence = ++state.menuSequence;
+      $('receivableMenuStatus').textContent = 'Loading menu…';
+      $('receivableAddItem').disabled = true;
+      try {
+        const result = await json(`${api}/menu`);
+        if (sequence !== state.menuSequence) return;
+        state.menu = result.data;
+        menuOptions();
+        let invalidLine = false;
+        for (const line of state.lines) {
+          const item = state.menu.find(item => item.id === line.menu_item_id);
+          if (!item || (line.no_rice && !item.can_remove_rice) || (line.no_egg && !item.can_remove_egg)) {
+            invalidLine = true; continue;
+          }
+          line.name = item.name;
+          line.expected_base_price = item.price;
+          line.unitCents = Math.round(Number(item.price) * 100) - 1800 * (Number(line.no_rice) + Number(line.no_egg));
+          if (line.unitCents <= 0) invalidLine = true;
+        }
+        renderLines();
+        $('receivableMenuStatus').textContent = invalidLine ? 'Some selected items/options are unavailable. Remove them before saving.' :
+          state.lines.length ? 'Menu refreshed. Review the item prices and total before saving.' :
+          result.data.length ? '' : 'No menu items found. Retry or use a verified manual entry.';
+        $('receivableAddItem').disabled = !result.data.length;
+      } catch (error) {
+        if (sequence !== state.menuSequence) return;
+        state.menu = [];
+        menuOptions();
+        $('receivableMenuStatus').textContent = error.message + ' Use Refresh menu to retry.';
+      }
+    }
+
+    function entryMode() {
+      const menu = $('receivableEntryMode').value === 'menu';
+      $('receivableMenuPanel').hidden = !menu;
+      $('itemsDesc').readOnly = $('amountOwed').readOnly = menu;
+      if (menu) renderLines();
+      else { $('itemsDesc').value = ''; $('amountOwed').value = ''; }
+    }
+
+    function renderLines() {
+      const total = state.lines.reduce((sum, item) => sum + item.unitCents * item.quantity, 0);
+      $('receivableItemLines').innerHTML = state.lines.map((item, index) => `<li class="border-top py-2">
+        ${item.quantity} × ${escape(item.name)}${item.no_rice ? ' (no rice)' : ''}${item.no_egg ? ' (no egg)' : ''}<br>
+        <small>${pesos(item.unitCents / 100)} each · ${pesos(item.unitCents * item.quantity / 100)}</small>
+        <button type="button" class="btn btn-sm btn-outline-danger ms-1" data-remove-credit-line="${index}">Remove</button></li>`).join('');
+      if ($('receivableEntryMode').value === 'menu') {
+        $('itemsDesc').value = state.lines.map(item => `${item.quantity} × ${item.name}${item.no_rice ? ' (no rice)' : ''}${item.no_egg ? ' (no egg)' : ''}`).join('; ');
+        $('amountOwed').value = total ? (total / 100).toFixed(2) : '';
+      }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       readUrl();
       writeUrl(true);
@@ -217,6 +292,27 @@
       }
       addEventListener('popstate', () => { readUrl(); state.recordPage = state.tabPage = 1; page.reload(); });
       $('new-receivable').addEventListener('click', () => newReceivable());
+      $('receivableEntryMode').addEventListener('change', entryMode);
+      $('receivableRefreshMenu').addEventListener('click', loadMenu);
+      $('receivableMenuSearch').addEventListener('input', menuOptions);
+      $('receivableMenuItem').addEventListener('change', mealOptions);
+      $('receivableItemLines').addEventListener('click', event => {
+        const button = event.target.closest('[data-remove-credit-line]');
+        if (button) { state.lines.splice(Number(button.dataset.removeCreditLine), 1); renderLines(); }
+      });
+      $('receivableAddItem').addEventListener('click', () => {
+        const item = state.menu.find(row => row.id === Number($('receivableMenuItem').value));
+        const quantity = Number($('receivableMenuQty').value);
+        if (!item || !Number.isInteger(quantity) || quantity < 1 || quantity > 999999 || state.lines.length >= 100) {
+          $('receivableMenuStatus').textContent = 'Choose an item and a whole quantity. Up to 100 lines are allowed.'; return;
+        }
+        const no_rice = $('receivableNoRice').checked, no_egg = $('receivableNoEgg').checked;
+        const unitCents = Math.round(Number(item.price) * 100) - 1800 * (Number(no_rice) + Number(no_egg));
+        if (unitCents <= 0) { $('receivableMenuStatus').textContent = 'Check this menu price and meal options.'; return; }
+        state.lines.push({ menu_item_id: item.id, quantity, no_rice, no_egg, expected_base_price: item.price, name: item.name, unitCents });
+        $('receivableMenuStatus').textContent = '';
+        renderLines();
+      });
       for (const [id, source] of [['customerName', 'name'], ['customerContact', 'contact']]) {
         $(id).addEventListener('input', () => {
           state.selectedCustomer = null;
@@ -257,6 +353,12 @@
         try {
           const payload = Object.fromEntries(new FormData(event.currentTarget));
           if (state.selectedCustomer?.open_tab_id) payload.tab_id = state.selectedCustomer.open_tab_id;
+          if (state.selectedCustomer?.account_id) payload.account_id = state.selectedCustomer.account_id;
+          if ($('receivableEntryMode').value === 'menu') {
+            if (!state.lines.length) throw new Error('Add at least one menu item.');
+            payload.items = state.lines.map(({ menu_item_id, quantity, no_rice, no_egg, expected_base_price }) =>
+              ({ menu_item_id, quantity, no_rice, no_egg, expected_base_price }));
+          }
           const result = await json(api, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           bootstrap.Modal.getInstance($('addReceivableModal'))?.hide();
           await page.afterMutation();

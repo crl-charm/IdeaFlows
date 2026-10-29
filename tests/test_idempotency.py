@@ -76,6 +76,7 @@ def test_every_business_write_route_has_idempotency_protection(app):
     excluded_endpoints = {
         "auth.login_api",
         "auth.session_activity",
+        "session_routes.preview_missed_checkout",  # Read-only quote, not a business write.
         "honeypot_trap",
         "decoy_wp-login_php",
         "decoy_wp-admin",

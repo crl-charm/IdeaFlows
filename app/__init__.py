@@ -1,4 +1,4 @@
-from flask import Flask, request, g, render_template, send_from_directory, session, redirect
+from flask import Flask, request, g, render_template, send_from_directory, session, redirect, has_request_context
 from flask_sqlalchemy import SQLAlchemy
 from app.utils.auth import register_admin_blueprint, enforce_admin_access, enforce_staff_management_access, is_admin_path, _check_session_auth
 from flask_socketio import SocketIO
@@ -112,6 +112,13 @@ def create_app():
     # Register security middleware
     register_security_middleware(app)
 
+    from app.system_updates import updates_for
+
+    @app.context_processor
+    def system_update_context():
+        return {"system_updates": updates_for(session.get("role"))
+                if has_request_context() and session.get("user_id") else []}
+
     # Register bot defense, honeypot traps, and scraper countermeasures
     from app.core.bot_defense import register_bot_defense
     register_bot_defense(app)
@@ -172,6 +179,7 @@ def create_app():
     from app.routes.expenses import expenses_bp
     from app.routes.staff_expenses import staff_expenses_bp
     from app.routes.receivables import receivables_bp
+    from app.routes.reports import reports_bp
     from app.routes.payables import payables_bp
     from app.routes.staff_receivables import staff_receivables_bp
     from app.routes.staff_performance import staff_performance_bp
@@ -185,6 +193,7 @@ def create_app():
     register_admin_blueprint(app, expenses_bp)
     app.register_blueprint(staff_expenses_bp)
     register_admin_blueprint(app, receivables_bp)
+    register_admin_blueprint(app, reports_bp)
     app.register_blueprint(staff_receivables_bp)
     app.register_blueprint(payables_bp)
     app.register_blueprint(payables_bp, name="payables_staff", url_prefix="/staff/payables")

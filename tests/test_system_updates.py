@@ -1,0 +1,113 @@
+"""Update notes use the shared role-aware header and harmless per-browser read state."""
+import json
+from pathlib import Path
+import shutil
+import subprocess
+
+from flask import render_template, render_template_string, session
+import pytest
+
+from app import create_app
+from app.system_updates import SYSTEM_UPDATES, updates_for
+
+
+@pytest.fixture
+def app():
+    app = create_app()
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False, SINGLE_SESSION_ENABLED=False)
+    return app
+
+
+@pytest.mark.parametrize("role,user_id,count", [("admin", 1, 6), ("staff", 1, 3), ("customer", 1, 0), ("admin", None, 0)])
+def test_header_filters_notes_before_rendering_and_uses_real_bell(app, role, user_id, count):
+    with app.test_request_context("/dashboard"):
+        session.update(role=role, user_id=user_id)
+        html = render_template("layout.html")
+    assert html.count('data-update-id="') == count
+    assert html.count('id="systemUpdatesButton"') == bool(count)
+    assert html.count('id="systemUpdatesModal"') == bool(count)
+    if count:
+        assert '<i class="bi bi-bell fs-5" aria-hidden="true"></i>' in html
+        assert f'ideaflow:updates:seen:{user_id}:{role}' in html
+    if role != "admin" or not user_id:
+        assert "Monthly accountant PDF" not in html
+        assert "salary-expenses" not in html
+        assert 'href="/admin/reports?view=' not in html
+    if role == "staff":
+        assert 'href="/expenses-view"' in html and 'href="/admin/expenses"' not in html
+
+
+def test_rendering_without_http_request_does_not_require_a_browser_session(app):
+    with app.app_context():
+        assert render_template_string("{{ system_updates|length }}") == "0"
+
+
+def test_catalog_links_work_for_the_intended_role_and_public_pages_stay_public(app):
+    client = app.test_client()
+    assert len({entry["id"] for entry in SYSTEM_UPDATES}) == len(SYSTEM_UPDATES)
+    for role in ("admin", "staff"):
+        with client.session_transaction() as state:
+            state.update(user_id=1, username="test_user", role=role)
+        for path in {entry["url"] for entry in updates_for(role)}:
+            assert client.get(path).status_code == 200, path
+    for path in ("/login", "/current-customer"):
+        assert 'id="systemUpdatesModal"' not in client.get(path).get_data(as_text=True)
+    with client.session_transaction() as state:
+        state.update(user_id=1, username="test_user", role="staff")
+    assert client.get('/admin/reports/api/monthly-accountant?month=2026-10').status_code == 403
+
+
+def test_read_dot_is_account_scoped_resilient_and_does_not_duplicate_handlers():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is needed for the update read-state check")
+    source = (Path(__file__).resolve().parents[1] / "static/js/system-updates.js").read_text(encoding="utf-8")
+    check = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const source = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const saved = new Map();
+function page(account, ids, blocked=false) {
+  const handlers = {}, windowHandlers = {}, dot = {hidden:true}, status = {textContent:''};
+  let hidden = 0;
+  const modal = {dataset:{readKey:`ideaflow:updates:seen:${account}`},
+    querySelectorAll:() => ids.map(id=>({dataset:{updateId:id}})),
+    addEventListener:(event,fn)=>{assert(!handlers[event]);handlers[event]=fn;}};
+  const document = {getElementById:id=>({systemUpdatesModal:modal,systemUpdatesDot:dot,systemUpdatesStatus:status}[id])};
+  const localStorage = {getItem:key=>{if(blocked)throw Error('Blocked');return saved.get(key)||null;},
+    setItem:(key,value)=>{if(blocked)throw Error('Blocked');saved.set(key,value);}};
+  const window = {addEventListener:(event,fn)=>{assert(!windowHandlers[event]);windowHandlers[event]=fn;},
+    bootstrap:{Modal:{getInstance:()=>({hide:()=>{hidden++;}})}}};
+  const context = vm.createContext({document,window,localStorage});
+  vm.runInContext(source,context);
+  return {dot,status,modal,handlers,windowHandlers,context,hidden:()=>hidden};
+}
+const first = page('1:admin',['a','b']);
+assert.equal(first.dot.hidden,false);
+first.handlers['shown.bs.modal']();
+assert.equal(first.dot.hidden,true);
+assert.deepEqual(JSON.parse(saved.get(first.modal.dataset.readKey)),['a','b']);
+assert.equal(page('1:admin',['a','b']).dot.hidden,true);
+assert.equal(page('1:admin',['a','b','c']).dot.hidden,false);
+assert.equal(page('2:admin',['a','b']).dot.hidden,false);
+assert.equal(page('1:staff',['a','b']).dot.hidden,false);
+vm.runInContext(source,first.context);
+first.handlers.click({target:{closest:()=>true}});
+assert.equal(first.hidden(),1);
+const blocked = page('blocked:staff',['a'],true);
+assert.equal(blocked.dot.hidden,false);
+blocked.handlers['shown.bs.modal']();
+assert.equal(blocked.dot.hidden,true);
+blocked.windowHandlers.pageshow();
+assert.equal(blocked.dot.hidden,true);
+saved.set('ideaflow:updates:seen:bad:staff','{bad json');
+assert.equal(page('bad:staff',['a']).dot.hidden,false);
+const concurrent = page('3:staff',['a']);
+saved.set(concurrent.modal.dataset.readKey,'["a"]');
+concurrent.windowHandlers.storage({key:concurrent.modal.dataset.readKey});
+assert.equal(concurrent.dot.hidden,true);
+const missing = vm.createContext({document:{getElementById:()=>null}});
+vm.runInContext(source,missing);
+"""
+    result = subprocess.run([node, "-e", check], input=json.dumps(source), capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

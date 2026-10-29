@@ -1,6 +1,9 @@
 from datetime import datetime, date
 from decimal import Decimal
 from app import db
+from sqlalchemy import func, or_
+from sqlalchemy.ext.hybrid import hybrid_property
+from app.utils.expense_categories import SALARY_CATEGORIES, expense_category
 
 
 class Expense(db.Model):
@@ -30,6 +33,22 @@ class Expense(db.Model):
     void_box_balance_before = db.Column(db.Numeric(12, 2), nullable=True)
     void_box_balance_after = db.Column(db.Numeric(12, 2), nullable=True)
     request_key = db.Column(db.String(200), unique=True, nullable=True)
+    salary_employee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    salary_employee_name = db.Column(db.String(100), nullable=True)
+    salary_month = db.Column(db.Date, nullable=True)
+    salary_original_category = db.Column(db.String(50), nullable=True)
+    salary_assigned_at = db.Column(db.DateTime, nullable=True)
+    salary_assigned_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    @hybrid_property
+    def is_salary(self):
+        return (expense_category(self.category) == "salaries" or self.salary_month is not None
+                or self.salary_employee_id is not None or self.salary_employee_name is not None)
+
+    @is_salary.expression
+    def is_salary(cls):
+        return or_(func.lower(func.trim(cls.category)).in_(SALARY_CATEGORIES), cls.salary_month.is_not(None),
+                   cls.salary_employee_id.is_not(None), cls.salary_employee_name.is_not(None))
 
     logged_by_user = db.relationship("User", foreign_keys=[logged_by], backref="expenses")
     voided_by_user = db.relationship("User", foreign_keys=[voided_by])

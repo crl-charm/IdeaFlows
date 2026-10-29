@@ -13,6 +13,10 @@ from app.repositories.sales_repository import SalesRepository
 from app.utils.dates import manila_date
 from app.services.cash_box_service import CashBoxService, BOXES
 from app.models.payable import Payable
+from app.models import User
+from app.utils.expense_categories import EXPENSE_CATEGORIES, expense_category
+from app.utils.dates import month_bounds
+from sqlalchemy import or_
 
 
 @dataclass(frozen=True)
@@ -20,7 +24,7 @@ class ExpenseService:
     repo: ExpenseRepository
 
     @staticmethod
-    def _serialize(expenses) -> list[dict[str, Any]]:
+    def _serialize(expenses, *, salary_details=True) -> list[dict[str, Any]]:
         return [
             {
                 "id": e.id,
@@ -47,19 +51,61 @@ class ExpenseService:
                 "void_balance_after": float(e.void_balance_after) if e.void_balance_after is not None else None,
                 "void_box_balance_before": float(e.void_box_balance_before) if e.void_box_balance_before is not None else None,
                 "void_box_balance_after": float(e.void_box_balance_after) if e.void_box_balance_after is not None else None,
+                **({"is_salary": e.is_salary, "salary_employee_id": e.salary_employee_id,
+                    "salary_employee_name": e.salary_employee_name,
+                    "salary_month": e.salary_month.strftime("%Y-%m") if e.salary_month else None,
+                    "salary_original_category": e.salary_original_category,
+                    "salary_assigned_at": e.salary_assigned_at.isoformat() + "Z" if e.salary_assigned_at else None,
+                    "salary_assigned_by": e.salary_assigned_by} if salary_details else {}),
             }
             for e in expenses
         ]
 
-    def list_all(self) -> list[dict[str, Any]]:
-        return self._serialize(self.repo.list_all())
+    def list_all(self, *, include_salary=True) -> list[dict[str, Any]]:
+        return self._serialize(self.repo.list_all(include_salary=include_salary), salary_details=include_salary)
 
-    def list_history(self) -> list[dict[str, Any]]:
-        return self._serialize(self.repo.list_history())
+    def list_history(self, *, include_salary=True) -> list[dict[str, Any]]:
+        return self._serialize(self.repo.list_history(include_salary=include_salary), salary_details=include_salary)
 
-    def list_by_date(self, expense_date: str) -> list[dict[str, Any]]:
+    def list_by_date(self, expense_date: str, *, include_salary=True) -> list[dict[str, Any]]:
         date_obj = date.fromisoformat(expense_date)
-        return self._serialize(self.repo.list_by_date(date_obj))
+        return self._serialize(self.repo.list_by_date(date_obj, include_salary=include_salary), salary_details=include_salary)
+
+    @staticmethod
+    def salary_employees():
+        return User.query.filter(or_(User.role == "staff", User.manual_shifts.any())).order_by(User.full_name, User.id).all()
+
+    @staticmethod
+    def salary_metadata(employee_id, month, actor_id, actor_role):
+        actor = db.session.get(User, actor_id)
+        if actor_role != "admin" or not actor or actor.role != "admin":
+            raise PermissionError("Only admins can record or change salary details.")
+        if isinstance(employee_id, bool) or not str(employee_id).isdigit() or not 1 <= int(employee_id) <= 2147483647:
+            raise ValueError("Choose an employee for this salary.")
+        employee = User.query.filter(User.id == int(employee_id), or_(User.role == "staff", User.manual_shifts.any())).first()
+        if not employee:
+            raise ValueError("Choose an existing employee; inactive/former staff with history are available too.")
+        start, _ = month_bounds(month)
+        return {"salary_employee_id": employee.id, "salary_employee_name": employee.full_name or employee.username,
+                "salary_month": start}
+
+    def classify_salary(self, expense_id, employee_id, month, actor_id):
+        metadata = self.salary_metadata(employee_id, month, actor_id, "admin")
+        expense = Expense.query.filter_by(id=expense_id).with_for_update().first()
+        if not expense or expense.voided_at:
+            raise ValueError("Choose an active expense to classify.")
+        if not expense.is_salary:
+            raise ValueError("Only existing salary records can receive salary details.")
+        if any((expense.salary_month, expense.salary_employee_id, expense.salary_employee_name)):
+            raise ValueError("Salary details already exist. Use the audited void/correction flow for a mistake.")
+        expense.salary_original_category = expense.category
+        expense.salary_assigned_at = datetime.utcnow()
+        expense.salary_assigned_by = actor_id
+        expense.category = "salaries"
+        for key, value in metadata.items():
+            setattr(expense, key, value)
+        self.repo.save()
+        return {"success": True}
 
     def create(
         self,
@@ -72,7 +118,25 @@ class ExpenseService:
         request_key: str | None = None,
         cash_box: str | None = None,
         repay_owner: bool | None = None,
+        actor_role: str = "staff",
+        salary_employee_id: int | None = None,
+        salary_month: str | None = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        category = expense_category(category)
+        if category not in EXPENSE_CATEGORIES:
+            return {"error": "Choose a valid expense category."}, 400
+        metadata = {}
+        if category == "salaries":
+            try:
+                metadata = self.salary_metadata(salary_employee_id, salary_month, logged_by, actor_role)
+            except PermissionError as exc:
+                return {"error": str(exc)}, 403
+            except ValueError as exc:
+                return {"error": str(exc)}, 400
+        elif salary_employee_id is not None or salary_month is not None:
+            return {"error": "Salary details apply only to Salaries."}, 400
+        if category == "salaries" and (description is None or isinstance(description, str) and not description.strip()):
+            description = f"Salary payment: {metadata['salary_employee_name']} / {metadata['salary_month']:%Y-%m}"
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Select a payment method."}, 400
         if payment_method == "cash":
@@ -88,6 +152,8 @@ class ExpenseService:
             return {"error": "Enter an expense description."}, 400
         try:
             date_obj = date.fromisoformat(expense_date)
+            if category == "salaries" and date_obj > manila_date(datetime.utcnow()):
+                return {"error": "A salary payment date cannot be in the future."}, 400
             amount_decimal = Decimal(str(amount))
             if (not amount_decimal.is_finite() or amount_decimal <= 0 or amount_decimal > Decimal("99999999.99")
                     or amount_decimal.as_tuple().exponent < -2):
@@ -121,6 +187,7 @@ class ExpenseService:
                     box_balance_before=box_before,
                     box_balance_after=box_before - amount_decimal if box_before is not None else None,
                     repay_owner=bool(repay_owner) if cash_box == "owner" else False,
+                    **metadata,
                 )
                 if expense.repay_owner:
                     CashBoxService.owner_payable(amount_decimal, logged_by, business_day, expense=expense)

@@ -35,6 +35,63 @@ def billable_microseconds(session, now_utc: datetime) -> int:
     return max(0, elapsed - int(session.paused_microseconds or 0))
 
 
+def historical_billable_microseconds(session, departure: datetime, events) -> int:
+    """Count only pauses inside the visit; never use a later pause as its end."""
+    paused_from = None
+    completed = 0
+    applicable = 0
+    partial_history = False
+    relevant_pairs = 0
+    for event in events:
+        if event.action not in {"paused", "resumed"}:
+            continue
+        when = event.occurred_at
+        if when < session.time_in:
+            raise ValueError("Time history needs review before recording this checkout.")
+        if event.action == "paused":
+            if paused_from is not None:
+                raise ValueError("Time history contains overlapping pauses; review it first.")
+            paused_from = when
+        else:
+            if paused_from is None or when < paused_from:
+                raise ValueError("Time history contains an unmatched resume; review it first.")
+            completed += (when - paused_from) // timedelta(microseconds=1)
+            if paused_from < departure:
+                applicable += (min(when, departure) - paused_from) // timedelta(microseconds=1)
+                relevant_pairs += 1
+            partial_history = partial_history or when > departure
+            paused_from = None
+
+    stored = int(session.paused_microseconds or 0)
+    if stored < 0:
+        raise ValueError("Recorded pause totals are invalid; review them first.")
+    if stored and not any(event.action == "resumed" for event in events):
+        raise ValueError("Recorded pauses are missing their history; review them first.")
+    if abs(completed - stored) > 2_000_000 * (len(events) + 1):
+        raise ValueError("Recorded pause totals do not match time history; review them first.")
+    if bool(paused_from is not None) != bool(session.paused_at):
+        raise ValueError("The current pause does not match time history; review it first.")
+    if paused_from is not None:
+        if abs((paused_from - session.paused_at).total_seconds()) > 1:
+            raise ValueError("The current pause does not match time history; review it first.")
+        if paused_from < departure:
+            applicable += (departure - session.paused_at) // timedelta(microseconds=1)
+    # Completed pauses entirely before departure can use the exact stored total.
+    if not partial_history:
+        applicable += stored - completed
+    elapsed = (departure - session.time_in) // timedelta(microseconds=1)
+    billable = max(0, elapsed - applicable)
+    # Older MySQL DATETIME fields may have lost fractions. Refuse an ambiguous
+    # price boundary instead of inventing the missing precision in a past pause.
+    if partial_history and relevant_pairs and completed != stored:
+        uncertainty = abs(completed - stored) + relevant_pairs * 1_000_000
+        low = max(0, billable - uncertainty)
+        high = min(elapsed, billable + uncertainty)
+        if calculate_time_bill(session.space_type, Decimal(low) / 60_000_000) != calculate_time_bill(session.space_type, Decimal(high) / 60_000_000):
+            raise ValueError("Pause timestamp precision affects this bill; review the departure time first.")
+    return billable
+
+
 def current_time_bill(session, now_utc: datetime, *, booking=None) -> Decimal:
     if session.retained_time_bill is not None:
         return Decimal(str(session.retained_time_bill)).quantize(Decimal("0.01"))

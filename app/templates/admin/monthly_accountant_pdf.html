@@ -1,0 +1,58 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>IdeaFlow Monthly Accountant Report</title>
+<style>
+  @page{size:A4 portrait;margin:16mm 15mm 20mm;
+  {% if pdf_backend == 'xhtml2pdf' %}@frame footer_frame{-pdf-frame-content:footerContent;left:15mm;top:281mm;width:180mm;height:8mm;}
+  {% else %}@bottom-left{content:"IdeaFlow / Accountant Report / {{ report.month }}";font-size:8pt;color:#526174;}@bottom-right{content:"Page " counter(page) " of " counter(pages);font-size:8pt;color:#526174;}{% endif %}}
+  body{font-family:Helvetica,Arial,sans-serif;font-size:9.5pt;line-height:1.4;color:#24344b;}
+  h1{font-size:22pt;margin:0;}h2{font-size:15pt;border-bottom:2px solid #d6b245;padding-bottom:5pt;margin-top:20pt;}
+  h3{font-size:11pt;margin:12pt 0 5pt;}h2,h3{page-break-after:avoid;-pdf-keep-with-next:true;}
+  p{margin:4pt 0 8pt;overflow-wrap:anywhere;}table{width:100%;border-collapse:collapse;table-layout:fixed;margin:6pt 0 10pt;}
+  td,th{padding:5pt;border-bottom:1px solid #e1e6ee;vertical-align:top;overflow-wrap:anywhere;word-wrap:break-word;}
+  th{text-align:left;background:#f8f4e4;font-size:8.5pt;}tr{page-break-inside:avoid;}thead{display:table-header-group;}
+  .amount{text-align:right;}.muted{color:#526174;font-size:8.5pt;}.logo{width:34pt;height:34pt;}.section{page-break-before:always;}
+  .summary td{background:#fff8dc;}.notice{background:#fff8dc;padding:7pt;}
+</style></head><body>
+{% set r=report %}
+{% if pdf_backend == 'xhtml2pdf' %}<div id="footerContent" class="muted">IdeaFlow / Accountant Report / {{ r.month }} / Page <pdf:pagenumber /> of <pdf:pagecount /></div>{% endif %}
+<img src="{{ logo }}" class="logo" alt="IdeaFlow"><h1>IdeaFlow</h1><p>Monthly Accountant Report</p><h2>{{ r.month_label }}</h2>
+<p class="muted">{{ r.start_date }} to {{ r.end_date }} / Asia/Manila<br>Generated {{ r.generated_at }} by {{ r.prepared_by }}.<br>Amounts are in Philippine pesos (PHP). Includes records available at generation time.</p>
+<table class="summary"><tr><td width="50%">Salaries for {{ r.month_label }}<br><strong>PHP {{ '%.2f'|format(r.salary_total) }}</strong><br><span class="muted">Already included in Total Expenses.</span></td><td width="50%">Total Sales<br><strong>PHP {{ '%.2f'|format(r.sales.checkout_sales) }}</strong><br><span class="muted">Completed checkout sales after discounts.</span></td></tr><tr><td>Total Expenses<br><strong>PHP {{ '%.2f'|format(r.total_expenses) }}</strong><br><span class="muted">Salary month costs + other dated expenses.</span></td><td>Employee Attendance<br><strong>{{ r.attendance.duration }}</strong><br><span class="muted">{{ r.attendance.employee_count }} employee(s) with records; {{ r.attendance.incomplete }} missing Time Out.</span></td></tr></table>
+{% for note in r.notes %}<p class="muted">{{ note }}</p>{% endfor %}
+
+<h2>1. Sales</h2>
+<table repeat="1"><thead><tr><th width="65%">Sales summary</th><th width="35%" class="amount">PHP</th></tr></thead><tbody>
+{% for label,value in [('Cowork bill',r.sales.cowork_bill),('Cafe bill',r.sales.cafe_bill),('Discounts',r.sales.discounts),('Checkout sales',r.sales.checkout_sales),('Refunds paid this month',r.sales.refunds),('Sales less this month\'s refunds',r.sales.after_refunds),('Older component reconciliation difference',r.sales.reconciliation_difference)] %}<tr><td>{{ label }}</td><td class="amount">{{ '%.2f'|format(value) }}</td></tr>{% endfor %}
+</tbody></table>
+<p class="muted">Cowork + Cafe - Discounts = Checkout sales. Refunds remain on their payment/approval day, separate from the original sale. Debt collections, owner funding and unpaid running bills are excluded from sales.</p>
+<table repeat="1"><thead><tr><th width="20%">Manila date</th><th width="16%" class="amount">Cowork</th><th width="16%" class="amount">Cafe</th><th width="16%" class="amount">Discounts</th><th width="16%" class="amount">Sales</th><th width="16%" class="amount">Refunds</th></tr></thead><tbody>
+{% for day in r.sales_days %}<tr><td>{{ day.date }}</td><td class="amount">{{ '%.2f'|format(day.cowork_bill) }}</td><td class="amount">{{ '%.2f'|format(day.cafe_bill) }}</td><td class="amount">{{ '%.2f'|format(day.discounts) }}</td><td class="amount">{{ '%.2f'|format(day.checkout_sales) }}</td><td class="amount">{{ '%.2f'|format(day.refunds) }}</td></tr>{% endfor %}
+</tbody></table>
+
+<h2 class="section">2. Salaries for {{ r.month_label }}</h2>
+<p class="muted">Manually recorded payments assigned to this salary month. Amounts are not automatically calculated from attendance and are not a gross-pay, tax, benefits or overtime calculation. Salaries are already part of Total Expenses.</p>
+{% for employee in r.salary_employees %}<h3>{{ employee.name }} / Employee #{{ employee.employee_id }} / Total PHP {{ '%.2f'|format(employee.total) }}</h3>
+{% for payment in employee.payments %}<p><strong>{{ payment.reference }} / PHP {{ '%.2f'|format(payment.amount) }}</strong><br>Employee at entry: {{ payment.employee }} / Salary month: {{ payment.salary_month }}<br>Paid {{ payment.payment_date }} / {{ payment.method }} / {{ payment.source }}<br>Recorded {{ payment.recorded_at }} (Manila) by {{ payment.recorded_by }} / Actual posting date {{ payment.posting_date }}</p><p class="muted">{{ payment.description }}</p>{% endfor %}
+{% else %}<p>No salary entries recorded for this month. This does not mean every employee has been paid.</p>{% endfor %}
+
+<h2 class="section">3. Expenses for {{ r.month_label }}</h2>
+<p>Salaries PHP {{ '%.2f'|format(r.salary_total) }} + Other expenses PHP {{ '%.2f'|format(r.other_expenses) }} = <strong>Total Expenses PHP {{ '%.2f'|format(r.total_expenses) }}</strong>.</p>
+<table repeat="1"><thead><tr><th width="65%">Category (salaries included once)</th><th width="35%" class="amount">PHP</th></tr></thead><tbody>{% for category in r.expense_categories %}<tr><td>{{ category.category }}</td><td class="amount">{{ '%.2f'|format(category.amount) }}</td></tr>{% else %}<tr><td>No expense entries recorded.</td><td class="amount">0.00</td></tr>{% endfor %}</tbody></table>
+{% for expense in r.expenses %}<h3>{{ expense.reference }} / {{ expense.category_label }} / PHP {{ '%.2f'|format(expense.amount) }}</h3><p>{{ expense.description }}</p><p class="muted">Expense / paid date {{ expense.payment_date }} / {{ expense.method }} / {{ expense.source }}<br>Recorded {{ expense.recorded_at }} (Manila) by {{ expense.recorded_by }} / Posted {{ expense.posting_date }}</p>{% else %}<p>No other expense entries recorded.</p>{% endfor %}
+
+<h2 class="section">4. Employee attendance</h2>
+<p>Counted completed time: <strong>{{ r.attendance.duration }}</strong> / {{ r.attendance.employee_count }} employee(s) with records.</p><p class="muted">Manual work shifts, including inactive/former staff. Time is clipped to this month. Overlapping intervals count once per employee. Missing/invalid Time Out is excluded from completed time. No assumed breaks, overtime, lateness or absences.</p>
+<p>{{ r.attendance.incomplete }} incomplete / {{ r.attendance.invalid }} invalid interval(s) / {{ r.attendance.overlap_count }} employee(s) with overlapping shifts.</p>
+{% for employee in r.attendance.employees %}<h3>{{ employee.name }} / Employee #{{ employee.employee_id }} / Counted {{ employee.duration }}</h3>
+{% if employee.overlap %}<p class="notice">Review overlapping shifts. The employee total counts the overlapping portion once; individual row durations below are before merging.</p>{% endif %}
+<table repeat="1"><thead><tr><th width="12%">Shift</th><th width="43%">Actual Manila times</th><th width="20%">Month portion</th><th width="25%">Status</th></tr></thead><tbody>
+{% for shift in employee.shifts %}<tr><td>{{ shift.reference }}</td><td>In: {{ shift.time_in }}<br>Out: {{ shift.time_out or 'Missing Time Out' }}<br><span class="muted">Entered In: {{ shift.recorded_at }}<br>Entered Out: {{ shift.out_recorded_at or 'Not recorded' }}</span></td><td>{{ shift.duration }}</td><td>{{ shift.status }}</td></tr>{% endfor %}
+</tbody></table>{% else %}<p>No manual work shifts recorded for this month.</p>{% endfor %}
+
+<h2 class="section">5. Payment dates, posting and corrections</h2>
+<table repeat="1"><thead><tr><th width="65%">Reconciliation</th><th width="35%" class="amount">PHP</th></tr></thead><tbody>
+{% for label,value in [('This month\'s salaries paid in another month',r.reconciliation.allocated_here_paid_elsewhere),('Payments this month for other salary months',r.reconciliation.paid_here_other_salary_month),('Daily Balance net posted expenses',r.reconciliation.net_posted_expenses),('Allocated costs minus net posted expenses',r.reconciliation.cost_minus_posted)] %}<tr><td>{{ label }}</td><td class="amount">{{ '%.2f'|format(value) }}</td></tr>{% endfor %}
+</tbody></table>
+<p class="muted">Entered payment dates can differ from the actual day recorded/posted. Voided costs are excluded from current cost totals. Their original outflow and later cash reversal remain in Daily Balance. Supplier payments, owner reimbursements and withdrawals are separate settlements/transfers, not additional operating expenses.</p>
+{% for payment in r.expense_payment_history %}<h3>{{ payment.reference }} / {{ payment.employee or payment.category_label }} / PHP {{ '%.2f'|format(payment.amount) }}</h3><p>Cost month {{ payment.cost_month }} / Paid {{ payment.payment_date }} / Posted {{ payment.posting_date }}<br>{{ payment.method }} / {{ payment.source }}<br>Recorded {{ payment.recorded_at }} (Manila) by {{ payment.recorded_by }}</p><p class="muted">{{ payment.description }}</p>{% if payment.voided_at %}<p><strong>Voided {{ payment.voided_at }} (Manila) by {{ payment.voided_by }}</strong><br>{{ payment.void_reason }}</p>{% endif %}{% if payment.classified_at %}<p class="muted">Classified as salary {{ payment.classified_at }} (Manila) by User #{{ payment.classified_by }}. Original category: {{ payment.original_category }}.</p>{% endif %}{% else %}<p>No expense payment or correction records for these dates.</p>{% endfor %}
+<p class="muted">Generated {{ r.generated_at }} (Manila). Later entries/corrections may change a regenerated report. Exporting does not close the month or create a financial entry.</p>
+</body></html>

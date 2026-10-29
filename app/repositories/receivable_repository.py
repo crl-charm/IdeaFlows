@@ -9,7 +9,7 @@ from sqlalchemy import func, or_, and_, case
 from sqlalchemy.orm import selectinload
 
 from app import db
-from app.models.receivable import Receivable, ReceivablePayment, ReceivableTab
+from app.models.receivable import Receivable, ReceivablePayment, ReceivableTab, ReceivableAccount, ReceivableAccountEvent
 from app.utils.dates import manila_date, manila_day_bounds
 
 
@@ -23,16 +23,18 @@ class ReceivableRepository:
         latest_id = func.max(ReceivableTab.id)
         open_id = func.max(case((ReceivableTab.closed_at.is_(None), ReceivableTab.id)))
         identities = (db.session.query(
-            ReceivableTab.normalized_name, ReceivableTab.normalized_contact,
+            ReceivableTab.normalized_name, ReceivableTab.normalized_contact, ReceivableTab.account_id,
             latest_id.label("latest_id"), open_id.label("open_id"),
         ).filter(or_(ReceivableTab.normalized_name.contains(name, autoescape=True),
                      ReceivableTab.normalized_contact.contains(contact, autoescape=True)))
-            .group_by(ReceivableTab.normalized_name, ReceivableTab.normalized_contact)
+            .group_by(ReceivableTab.normalized_name, ReceivableTab.normalized_contact, ReceivableTab.account_id)
             .order_by(case((ReceivableTab.normalized_name == name, 0),
                            (ReceivableTab.normalized_contact == contact, 1), else_=2),
                       latest_id.desc()).limit(limit).all())
         ids = {tab_id for row in identities for tab_id in (row.latest_id, row.open_id) if tab_id}
         tabs = {tab.id: tab for tab in ReceivableTab.query.filter(ReceivableTab.id.in_(ids)).all()} if ids else {}
+        accounts = {account.id: account for account in ReceivableAccount.query.filter(
+            ReceivableAccount.id.in_({row.account_id for row in identities if row.account_id})).all()} if identities else {}
         blank_names = [row.normalized_name for row in identities if not row.normalized_contact and row.open_id]
         blank_open = (ReceivableTab.query.filter(ReceivableTab.normalized_name.in_(blank_names),
                                                ReceivableTab.normalized_contact == "",
@@ -42,13 +44,15 @@ class ReceivableRepository:
         matches = []
         seen = set()
         def add(tab, open_tab_id=None, *, legacy=False):
+            account = accounts.get(getattr(tab, "account_id", None))
             identity = ReceivableTab.identity(tab.customer_name, tab.customer_contact)[:2]
-            key = (identity, open_tab_id if not identity[1] else None)
+            key = (identity, getattr(tab, "account_id", None), open_tab_id if not identity[1] else None)
             if key in seen:
                 return
             seen.add(key)
-            matches.append({"customer_name": tab.customer_name,
-                            "customer_contact": tab.customer_contact or "",
+            matches.append({"customer_name": account.customer_name if account and not open_tab_id else tab.customer_name,
+                            "account_id": getattr(tab, "account_id", None),
+                            "customer_contact": (account.customer_contact if account and not open_tab_id else tab.customer_contact) or "",
                             "open_tab_id": open_tab_id,
                             "label": f"Open tab #{open_tab_id}" if open_tab_id else
                                      ("Customer record—new tab" if legacy else "Past customer—new tab"),
@@ -59,7 +63,7 @@ class ReceivableRepository:
         for row in identities:
             if not row.normalized_contact and row.open_id:
                 for tab in blank_open:
-                    if tab.normalized_name == row.normalized_name:
+                    if tab.normalized_name == row.normalized_name and tab.account_id == row.account_id:
                         add(tab, tab.id)
             else:
                 add(tabs[row.open_id or row.latest_id], row.open_id)
@@ -175,6 +179,7 @@ class ReceivableRepository:
         for tab in page_result.items:
             owed, paid, balance, date_taken, soonest = aggregate[tab.id]
             rows.append({"id": tab.id, "customer_name": tab.customer_name,
+                         "account_id": tab.account_id,
                          "customer_contact": tab.customer_contact or "",
                          "orders_total": float(owed), "paid_total": float(paid),
                          "outstanding_balance": float(balance), "date_taken_amount": float(date_taken or 0),
@@ -210,22 +215,59 @@ class ReceivableRepository:
         incurred_date: Optional[date] = None,
         notes: Optional[str] = None,
         tab_id: Optional[int] = None,
+        account_id: Optional[int] = None,
     ) -> Receivable:
         normalized_name, normalized_contact, active_key = ReceivableTab.identity(customer_name, customer_contact)
+        account = None
+        if account_id is not None:
+            account = ReceivableAccount.query.filter_by(id=account_id).with_for_update().first()
+            if not account:
+                raise ValueError("The selected account does not match the customer name and contact.")
+            if tab_id is None and (account.normalized_name, account.normalized_contact) != (normalized_name, normalized_contact):
+                raise ValueError("The selected account does not match the customer name and contact.")
         if tab_id is not None:
             tab = ReceivableTab.query.filter_by(id=tab_id).with_for_update().first()
             if not tab or tab.closed_at is not None:
                 raise ReceivableTabConflict("This customer tab is closed. Refresh and choose an open tab.")
             if (tab.normalized_name, tab.normalized_contact) != (normalized_name, normalized_contact):
                 raise ValueError("The selected customer tab does not match the name and contact.")
+            if account and tab.account_id != account.id:
+                raise ValueError("The selected tab belongs to a different customer account.")
         else:
-            tab = ReceivableTab.query.filter_by(active_key=active_key).with_for_update().first() if active_key else None
+            if account:
+                open_tabs = ReceivableTab.query.filter_by(account_id=account.id, closed_at=None).with_for_update().all()
+                if len(open_tabs) > 1:
+                    raise ReceivableTabConflict("Choose which open cycle to add this debt to in Receivables.")
+                tab = open_tabs[0] if open_tabs else None
+            else:
+                tab = ReceivableTab.query.filter_by(active_key=active_key).with_for_update().first() if active_key else None
+            if account and tab is None and active_key and ReceivableTab.query.filter_by(active_key=active_key).first():
+                raise ReceivableTabConflict("Another open account uses this name and contact. Select its tab or review the accounts.")
             if tab is None:
+                if account is None:
+                    previous = ReceivableAccount.query.filter_by(normalized_name=normalized_name).first()
+                    account = ReceivableAccount(
+                        customer_name=customer_name, customer_contact=customer_contact,
+                        normalized_name=normalized_name, normalized_contact=normalized_contact,
+                        history_reviewed_at=None if previous else datetime.utcnow(),
+                        history_reviewed_by=None if previous else created_by,
+                    )
+                    db.session.add(account)
+                    db.session.flush()
                 tab = ReceivableTab(customer_name=customer_name, customer_contact=customer_contact,
                                     normalized_name=normalized_name, normalized_contact=normalized_contact,
-                                    active_key=active_key)
+                                    active_key=active_key, account_id=account.id)
                 db.session.add(tab)
                 db.session.flush()
+        if tab.account_id is None:
+            # An older cycle may be encountered before the explicit migration.
+            account = ReceivableAccount(customer_name=tab.customer_name, customer_contact=tab.customer_contact,
+                                        normalized_name=tab.normalized_name, normalized_contact=tab.normalized_contact)
+            db.session.add(account)
+            db.session.flush()
+            tab.account_id = account.id
+            db.session.add(ReceivableAccountEvent(account_id=account.id, tab_id=tab.id,
+                                                  action="associate_legacy", actor_id=created_by))
         receivable = Receivable(
             customer_name=customer_name,
             customer_contact=customer_contact,

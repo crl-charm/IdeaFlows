@@ -163,6 +163,7 @@
       <div class="modal-body" id="receipt-body"></div>
 
       <div class="modal-footer flex-column align-items-stretch gap-2">
+        {% if session.get('role') == 'admin' %}<button type="button" id="openMissedCheckout" class="btn btn-outline-warning" hidden>Record missed checkout</button>{% endif %}
         <div id="payment-method-section" class="w-100" style="display:none;">
           <label class="form-label fw-semibold mb-2">Payment Method</label>
           <div class="d-flex flex-wrap gap-2 w-100" role="group" aria-label="Payment method">
@@ -201,13 +202,13 @@
 
 {% if not boardroom_view %}
 <!-- CHECK-IN MODAL -->
-<div class="modal fade" id="checkinModal" tabindex="-1">
+<div class="modal fade" id="checkinModal" tabindex="-1" aria-labelledby="checkinModalTitle" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
     <div class="modal-content">
 
       <div class="modal-header">
-        <h5 class="modal-title">{{ 'New Food Order' if food_only_view else 'New Customer Check-in' }}</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="checkinModalTitle">{{ 'New Food Order' if food_only_view else 'New Customer Check-in' }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
 
       <div class="modal-body">
@@ -243,6 +244,17 @@
         {% endif %}
         {% endif %}
 
+        {% if not food_only_view %}
+        {% if session.get('role') in ['staff', 'admin'] %}
+        <button type="button" id="lateCheckinToggle" class="btn btn-outline-primary btn-sm mt-3" aria-expanded="false" aria-controls="lateArrivalGroup" onclick="setCheckinMode(this.getAttribute('aria-expanded') !== 'true')">Late Customer Check-in</button>
+        {% endif %}
+        <div id="lateArrivalGroup" class="mt-3 d-none">
+          <label for="lateArrivalTime" class="form-label">Actual arrival time (Manila time)</label>
+          <input type="datetime-local" id="lateArrivalTime" class="form-control" style="min-width:0;max-width:100%" step="60" aria-describedby="lateArrivalHelp" disabled>
+          <div class="form-text" id="lateArrivalHelp">Today only. Choose when the customer arrived.</div>
+        </div>
+        {% endif %}
+
         <div id="checkoutCorrectionGroup" class="mt-3 d-none">
           <label for="checkoutCorrection" class="form-label mb-1">Correct an approved voided checkout (optional)</label>
           <select id="checkoutCorrection" class="form-select">
@@ -254,6 +266,7 @@
       </div>
 
       <div class="modal-footer">
+        <div id="lateCheckinSummary" class="small text-muted w-100 d-none" aria-live="polite"></div>
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button class="btn btn-primary" id="checkinCustomerBtn" onclick="checkinCustomer()">{{ 'Start Food Order' if food_only_view else 'Check In' }}</button>
       </div>
@@ -284,6 +297,29 @@ const foodOnlyView = {{ food_only_view|tojson }};
 const sessionsById = new Map();
 let cancelSessionId = null;
 let cancelHistoryPage = 1;
+let checkinModalVersion = 0;
+const checkinServerTime = Date.parse({{ checkin_server_now|default(none)|tojson }});
+const checkinPageStarted = performance.now();
+
+function updateArrivalBounds() {
+    const input = document.getElementById("lateArrivalTime");
+    if (!input) return;
+    // Format UTC+8 directly, independent of the phone's date or timezone.
+    const localNow = new Date(checkinServerTime + performance.now() - checkinPageStarted + 8 * 3600000)
+        .toISOString().slice(0, 16);
+    input.min = localNow.slice(0, 10) + "T00:00";
+    input.max = localNow;
+}
+
+document.getElementById("lateArrivalTime")?.addEventListener("input", event => {
+    const summary = document.getElementById("lateCheckinSummary");
+    const input = event.target;
+    summary.textContent = input.value && input.checkValidity()
+        ? "Billing starts " + new Intl.DateTimeFormat("en-PH", {
+            timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short"
+        }).format(new Date(input.value + ":00+08:00")) + " (Manila time)."
+        : "Choose today's actual arrival time before saving.";
+});
 
 async function setSessionTimePaused(sessionId, pause, button) {
     const customer = sessionsById.get(sessionId);
@@ -326,11 +362,16 @@ async function showTimeHistory(sessionId) {
         document.getElementById("timeHistoryTitle").textContent = `${history.customer_name} — time bill history`;
         body.innerHTML = history.events.length ? history.events.map(event => `
             <div class="border-bottom py-2">
-                <strong>${escapeHtml(event.action.replaceAll("_", " "))}</strong> · ${escapeHtml(event.at)}<br>
+                <strong>${event.action === "late_checkin" ? "Late check-in recorded" : escapeHtml(event.action.replaceAll("_", " "))}</strong> · ${escapeHtml(event.at)}<br>
                 <small>${escapeHtml(event.actor)} (${escapeHtml(event.role)})</small><br>
+                ${event.arrival_at ? `<small>Arrived ${escapeHtml(event.arrival_at)}; recorded ${escapeHtml(event.at)}.</small><br>` : ''}
                 <small>Billable time ${formatTime(event.billable_seconds_before)} → ${formatTime(event.billable_seconds_after)};
                 time bill ₱${event.time_bill_before.toFixed(2)} → ₱${event.time_bill_after.toFixed(2)}</small>
             </div>`).join("") : "No time bill changes for this visit.";
+        if (history.correction) {
+            const c = history.correction;
+            body.innerHTML += `<div class="mt-3"><h6>Missed checkout — payment already received</h6><p class="small">Departure ${escapeHtml(c.departure)} · Paid ${escapeHtml(c.paid_at)}<br>Recorded ${escapeHtml(c.recorded_at)} by ${escapeHtml(c.recorded_by)}<br>Received by ${escapeHtml(c.received_by)} · ${escapeHtml(c.payment_method)} · ₱${c.amount_received.toFixed(2)}<br>Reason: ${escapeHtml(c.reason.replaceAll('_',' '))} ${escapeHtml(c.note)}<br>Original estimate ₱${Number(c.before.total).toFixed(2)} → final bill ₱${Number(c.after.total).toFixed(2)}. Events after departure remain in history but do not extend billing.</p><a href="${escapeHtml(c.receipt_url)}">View receipt</a></div>`;
+        }
     } catch (error) {
         body.textContent = error.message || "Could not load time bill history.";
     }
@@ -379,7 +420,7 @@ async function loadCancelledCheckins(page) {
               <td>${escapeHtml(row.customer_name)}<br><small>${escapeHtml(row.space_name)}</small></td>
               <td>${escapeHtml(row.time_in)}<br><small>Cancelled ${escapeHtml(row.cancelled_at)}</small></td>
               <td>${escapeHtml(row.actor || "Unknown")}<br><small>${escapeHtml(row.reason || "")}</small>
-              ${row.has_time_pause ? `<br><button type="button" class="btn btn-link btn-sm p-0" onclick="showTimeHistory(${row.session_id})" aria-label="Time bill history for ${escapeHtml(row.customer_name)}">Time history</button>` : ''}</td>
+              ${row.has_time_history || row.has_time_pause ? `<br><button type="button" class="btn btn-link btn-sm p-0" onclick="showTimeHistory(${row.session_id})" aria-label="Time bill history for ${escapeHtml(row.customer_name)}">Time history</button>` : ''}</td>
               <td class="text-end">₱${row.uncollected_time_charge.toFixed(2)}</td>
             </tr>`).join("") : '<tr><td colspan="4" class="text-center">No cancelled Time Ins.</td></tr>';
         document.getElementById("cancelHistoryPage").textContent = `Page ${page} of ${Math.max(1, result.pages)}`;
@@ -390,15 +431,43 @@ async function loadCancelledCheckins(page) {
     }
 }
 
-document.getElementById("checkinModal")?.addEventListener("show.bs.modal", async () => {
+async function setCheckinMode(late) {
+    const modal = document.getElementById("checkinModal");
+    const version = ++checkinModalVersion;
+    late = !foodOnlyView && late;
+    modal.dataset.checkinMode = late ? "late" : "now";
+    document.getElementById("checkinModalTitle").textContent = foodOnlyView ? "New Food Order"
+        : late ? "Late Customer Check-in" : "New Customer Check-in";
+    document.getElementById("checkinCustomerBtn").textContent = foodOnlyView ? "Start Food Order"
+        : late ? "Check In Customer" : "Check In";
+    const toggle = document.getElementById("lateCheckinToggle");
+    if (toggle) {
+        toggle.textContent = late ? "Use current time instead" : "Late Customer Check-in";
+        toggle.setAttribute("aria-expanded", String(late));
+    }
+    const arrival = document.getElementById("lateArrivalTime");
+    if (arrival) {
+        arrival.value = "";
+        arrival.disabled = !late;
+        arrival.required = late;
+        document.getElementById("lateArrivalGroup").classList.toggle("d-none", !late);
+        updateArrivalBounds();
+    }
+    const summary = document.getElementById("lateCheckinSummary");
+    summary.classList.toggle("d-none", !late);
+    summary.textContent = late ? "Choose today's actual arrival time before saving." : "";
+    document.getElementById("customerName").readOnly = false;
     const group = document.getElementById("checkoutCorrectionGroup");
     const select = document.getElementById("checkoutCorrection");
     select.replaceChildren(new Option("New customer visit", ""));
+    select.disabled = late;
     group.classList.add("d-none");
+    if (late) return;
     try {
         const response = await fetch("/api/checkout-corrections", { credentials: "include" });
         if (!response.ok) return;
         const corrections = await response.json();
+        if (version !== checkinModalVersion) return;
         corrections.forEach(correction => {
             const option = new Option(
                 `${correction.customer_name} — from ${correction.original_space}; food ₱${correction.food_bill.toFixed(2)}${correction.amount > 0 ? `; credit ₱${correction.amount.toFixed(2)} ${correction.payment_method}` : ''}`,
@@ -409,9 +478,12 @@ document.getElementById("checkinModal")?.addEventListener("show.bs.modal", async
         });
         group.classList.toggle("d-none", !corrections.length);
     } catch (_) { /* New check-in still works without a correction. */ }
-});
+}
+
+document.getElementById("checkinModal")?.addEventListener("show.bs.modal", () => setCheckinMode(false));
 
 document.getElementById("checkinModal")?.addEventListener("hide.bs.modal", event => {
+    ++checkinModalVersion;
     if (event.target.contains(document.activeElement)) document.activeElement.blur();
 });
 
@@ -464,6 +536,8 @@ async function checkinCustomer() {
 
     let name = document.getElementById("customerName").value.trim();
     let spaceType = document.getElementById("spaceType").value;
+    const late = document.getElementById("checkinModal").dataset.checkinMode === "late";
+    const arrival = document.getElementById("lateArrivalTime");
 
     if (!name) {
         showToast("Customer name is required.", "error");
@@ -472,6 +546,10 @@ async function checkinCustomer() {
     if (!spaceType) {
         showToast(foodOnlyView ? "Select a location." : "Select a space.", "error");
         return;
+    }
+    if (late) {
+        updateArrivalBounds();
+        if (!arrival.reportValidity()) return;
     }
 
     const button = document.getElementById("checkinCustomerBtn");
@@ -495,7 +573,8 @@ async function checkinCustomer() {
                 course: document.getElementById("course").value,
                 number_of_people: 1,
                 space_type_id: parseInt(spaceType, 10),
-                void_request_id: document.getElementById("checkoutCorrection").value || null
+                void_request_id: document.getElementById("checkoutCorrection").value || null,
+                ...(late ? {checkin_mode: "late", arrival_time: arrival.value} : {})
             })
         }));
         if (!data) return;
@@ -608,6 +687,12 @@ function viewOrder(sessionId) {
             }
             const isFoodOnly = data.service_mode === "food_only";
             const canCheckout = !isFoodOnly || data.food_bill > 0;
+            const missedButton = document.getElementById('openMissedCheckout');
+            if (missedButton) {
+                missedButton.hidden = isFoodOnly || !['Regular Lounge','Premium Lounge'].includes(data.space_type) || data.credit_balance > 0 || data.carried_food_bill > 0;
+                missedButton.onclick = () => window.openMissedCheckout(sessionId, data.customer_name, orderData.orders,
+                    document.getElementById('discountType')?.value || '', document.getElementById('discountItem')?.value || '');
+            }
 
             let itemsHTML = "";
 
@@ -905,7 +990,7 @@ function buildSessionTableRow(session) {
     const timedLounge = ["Regular Lounge", "Premium Lounge"].includes(session.space_type);
     const pauseButton = timedLounge
         ? `<button type="button" class="btn btn-outline-primary btn-sm py-2 ms-1" onclick="setSessionTimePaused(${session.session_id}, ${!session.paused}, this)" aria-label="${session.paused ? 'Resume' : 'Pause'} time bill for ${escapeHtml(session.customer_name)}">${session.paused ? 'Resume time' : 'Pause time'}</button>` : "";
-    const historyButton = session.has_time_pause
+    const historyButton = session.has_time_history || session.has_time_pause
         ? `<button type="button" class="btn btn-outline-secondary btn-sm py-2 ms-1" onclick="showTimeHistory(${session.session_id})" aria-label="Time bill history for ${escapeHtml(session.customer_name)}">Time history</button>` : "";
     const cancelButton = timedLounge
         ? `<button type="button" class="btn btn-outline-danger btn-sm py-2 ms-1" onclick="openCancelCheckin(${session.session_id})" title="Cancel mistaken Time In" aria-label="Cancel mistaken Time In for ${escapeHtml(session.customer_name)}"><i class="bi bi-trash3" aria-hidden="true"></i></button>` : "";
@@ -958,7 +1043,7 @@ function buildSessionMobileCard(session) {
     const timedLounge = ["Regular Lounge", "Premium Lounge"].includes(session.space_type);
     const pauseButton = timedLounge
         ? `<button type="button" class="btn btn-outline-primary flex-fill" onclick="setSessionTimePaused(${session.session_id}, ${!session.paused}, this)" aria-label="${session.paused ? 'Resume' : 'Pause'} time bill for ${escapeHtml(session.customer_name)}">${session.paused ? 'Resume time' : 'Pause time'}</button>` : "";
-    const historyButton = session.has_time_pause
+    const historyButton = session.has_time_history || session.has_time_pause
         ? `<button type="button" class="btn btn-outline-secondary flex-fill" onclick="showTimeHistory(${session.session_id})" aria-label="Time bill history for ${escapeHtml(session.customer_name)}">Time history</button>` : "";
     const purposeLine = session.space_type === "Boardroom" && session.purpose
         ? `<div class="mobile-session-purpose text-muted small mb-2">Purpose: ${escapeHtml(session.purpose)}</div>`
@@ -1080,5 +1165,10 @@ window.createSmartPoller(loadSessions, 10000, { runImmediately: false });
 if (!foodOnlyView) window.createSmartPoller(loadSpaceAvailability, 15000, { runImmediately: false });
 
 </script>
+
+{% if session.get('role') == 'admin' %}
+{% include 'partials/missed_checkout.html' %}
+<script src="{{ url_for('static', filename='js/missed-checkout.js') }}?v=1"></script>
+{% endif %}
 
 {% endblock %}

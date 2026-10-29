@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from sqlalchemy import exists
+from sqlalchemy.orm import column_property
 from app import db
+from .session_time_event import SessionTimeEvent
 
 
 class CustomerSession(db.Model):
@@ -17,6 +20,8 @@ class CustomerSession(db.Model):
     service_mode = db.Column(db.String(16), nullable=False, default="timed", server_default="timed")
     time_in = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     time_out = db.Column(db.DateTime, nullable=True)
+    # Indexed EXISTS stays in the session query, including batched checkout reads.
+    has_time_history = column_property(exists().where(SessionTimeEvent.session_id == id))
     paused_at = db.Column(db.DateTime, nullable=True)
     paused_microseconds = db.Column(db.BigInteger, nullable=False, default=0, server_default="0")
     status = db.Column(db.String(20), default="active", nullable=False)

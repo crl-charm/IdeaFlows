@@ -6,20 +6,26 @@ from decimal import Decimal
 
 from app import db
 from app.models.expense import Expense
+from sqlalchemy.orm import selectinload
 
 
 class ExpenseRepository:
     def get(self, expense_id: int) -> Optional[Expense]:
         return Expense.query.filter_by(id=expense_id).first()
 
-    def list_all(self) -> list[Expense]:
-        return Expense.query.filter(Expense.voided_at.is_(None)).order_by(Expense.expense_date.desc(), Expense.id.desc()).all()
+    @staticmethod
+    def visible(include_salary=True):
+        query = Expense.query.options(selectinload(Expense.logged_by_user), selectinload(Expense.voided_by_user))
+        return query if include_salary else query.filter(~Expense.is_salary)
 
-    def list_history(self) -> list[Expense]:
-        return Expense.query.order_by(Expense.created_at.desc(), Expense.id.desc()).all()
+    def list_all(self, *, include_salary=True) -> list[Expense]:
+        return self.visible(include_salary).filter(Expense.voided_at.is_(None)).order_by(Expense.expense_date.desc(), Expense.id.desc()).all()
 
-    def list_by_date(self, expense_date: date) -> list[Expense]:
-        return Expense.query.filter_by(expense_date=expense_date).filter(Expense.voided_at.is_(None)).order_by(
+    def list_history(self, *, include_salary=True) -> list[Expense]:
+        return self.visible(include_salary).order_by(Expense.created_at.desc(), Expense.id.desc()).all()
+
+    def list_by_date(self, expense_date: date, *, include_salary=True) -> list[Expense]:
+        return self.visible(include_salary).filter_by(expense_date=expense_date).filter(Expense.voided_at.is_(None)).order_by(
             Expense.created_at.desc()
         ).all()
 
@@ -46,6 +52,9 @@ class ExpenseRepository:
         box_balance_before: Decimal | None = None,
         box_balance_after: Decimal | None = None,
         repay_owner: bool = False,
+        salary_employee_id: int | None = None,
+        salary_employee_name: str | None = None,
+        salary_month: date | None = None,
     ) -> Expense:
         expense = Expense(
             category=category,
@@ -63,6 +72,9 @@ class ExpenseRepository:
             repay_owner=repay_owner,
             created_at=posted_at,
             request_key=request_key,
+            salary_employee_id=salary_employee_id,
+            salary_employee_name=salary_employee_name,
+            salary_month=salary_month,
         )
         db.session.add(expense)
         db.session.flush()

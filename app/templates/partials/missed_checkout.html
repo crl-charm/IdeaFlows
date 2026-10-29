@@ -1,0 +1,30 @@
+<div class="modal fade" id="missedCheckoutModal" tabindex="-1" aria-labelledby="missedCheckoutTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down modal-lg">
+    <form class="modal-content" id="missedCheckoutForm">
+      <div class="modal-header"><h5 class="modal-title" id="missedCheckoutTitle">Record missed checkout</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <div class="modal-body">
+        <p class="fw-semibold text-break" id="missedCustomerName"></p>
+        <p class="small text-muted">Customer already paid and left. Record the actual departure and payment in Manila time.</p>
+        <fieldset id="missedCheckoutFields">
+          <div class="row g-3">
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedDeparture">Actual departure (Manila)</label><input class="form-control" style="min-width:0;max-width:100%" type="datetime-local" id="missedDeparture" required></div>
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedPaidAt">Payment received (Manila)</label><input class="form-control" style="min-width:0;max-width:100%" type="datetime-local" id="missedPaidAt" required><small class="text-muted">Defaults to departure; change if payment was at a different time.</small></div>
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedAmount">Amount paid toward the bill (₱)</label><input class="form-control" id="missedAmount" type="number" min="0.01" max="99999999.99" step="0.01" required><small class="text-muted">Net payment after change.</small></div>
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedMethod">Payment method</label><select class="form-select" id="missedMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bdo">BDO</option><option value="bpi">BPI</option><option value="queenbank">QueenBank</option></select></div>
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedCollector">Received by</label><select class="form-select" id="missedCollector" required><option value="">Choose actual collector</option></select></div>
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedReason">Reason</label><select class="form-select" id="missedReason" required><option value="">Choose reason</option><option value="outage">Power outage / no connection</option><option value="forgot_checkout">Forgot to record checkout</option><option value="other">Other</option></select></div>
+            <div class="col-12"><label class="form-label" for="missedNote">Note <span class="text-muted">(required for Other)</span></label><textarea class="form-control" id="missedNote" rows="2" maxlength="500"></textarea></div>
+            <div class="col-12 col-sm-6"><label class="form-label" for="missedDiscount">Discount actually given</label><select class="form-select" id="missedDiscount"><option value="">No discount</option><option value="pwd">PWD — 20%</option><option value="senior">Senior — 20%</option></select></div>
+            <div class="col-12 col-sm-6" id="missedItemGroup"><label class="form-label" for="missedDiscountItem">One discounted item</label><select class="form-select" id="missedDiscountItem"><option value="">Choose item if discounted</option></select></div>
+            <div class="col-12"><details><summary class="small">Original cash tender, if known</summary><label class="form-label mt-2" for="missedTendered">Cash originally handed over (₱)</label><input class="form-control" id="missedTendered" type="number" step="0.01" min="0"><small class="text-muted">Leave blank when the original tender and change are unknown.</small></details></div>
+          </div>
+          <button type="button" class="btn btn-outline-primary mt-3" id="missedPreviewButton">Review corrected bill</button>
+          <div id="missedPreview" class="border rounded p-3 mt-3 text-break" hidden aria-live="polite"></div>
+          <div class="form-check mt-3"><input class="form-check-input" type="checkbox" id="missedPaymentConfirmed"><label class="form-check-label small" for="missedPaymentConfirmed">Payment was already received. I checked it has not already been recorded through another checkout, debt collection, or manual income entry.</label></div>
+        </fieldset>
+        <p id="missedCheckoutError" class="text-danger small mt-3 mb-0" role="alert"></p>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-warning text-wrap" id="missedSaveButton" disabled>Record payment already received and complete checkout</button></div>
+    </form>
+  </div>
+</div>

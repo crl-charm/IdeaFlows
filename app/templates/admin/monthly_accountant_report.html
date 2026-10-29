@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block title %}Monthly Accountant Report - IdeaFlow{% endblock %}
+{% block content %}
+<style>
+  .accountant-page{max-width:1100px;margin:auto;overflow-wrap:anywhere;}
+  .accountant-page .card,.accountant-page input{min-width:0;}
+  .accountant-page summary{cursor:pointer;padding:1rem;font-weight:600;}
+  .accountant-page dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:.3rem 1rem;margin:0;}
+  .accountant-page dt{font-weight:500;color:#526174;} .accountant-page dd{margin:0;}
+  .accountant-page .report-record{padding:1rem;border-top:1px solid #e2e8f0;}
+  .accountant-page .btn{white-space:normal;}
+  @media(max-width:575px){.accountant-page dl{grid-template-columns:minmax(0,1fr)}.accountant-page dt{font-size:.85rem}.accountant-page dd{margin-bottom:.5rem}}
+</style>
+<main class="container-fluid accountant-page">
+  <h1 class="h3">Reports &amp; Exports</h1>
+  {% set report_view = 'monthly' %}{% include 'partials/report_modes.html' %}
+  <div id="statement-error" class="alert alert-danger{% if not error %} d-none{% endif %}" role="alert">{{ error or '' }}</div>
+  <form method="get" class="card card-body mb-3">
+    <input type="hidden" name="view" value="monthly">
+    <label for="report-month" class="form-label">Report month (Asia/Manila)</label>
+    <div class="d-flex flex-wrap gap-2 align-items-center"><input id="report-month" name="month" type="month" placeholder="YYYY-MM" class="form-control w-auto" value="{{ report.month if report else month }}" required><button class="btn btn-outline-secondary">Review / Refresh</button>
+    {% if report %}<button type="button" class="btn btn-warning" data-report-download data-url="{{ url_for('reports.monthly_pdf', month=report.month) }}" {% if not report.can_export %}disabled{% endif %}>Export Accountant PDF</button>{% endif %}</div>
+  </form>
+  {% if report %}{% set r = report %}
+  <h2 class="h4">{{ r.month_label }}</h2>
+  <p class="small text-muted">{{ r.start_date }} to {{ r.end_date }} · Asia/Manila<br>Generated {{ r.generated_at }} by {{ r.prepared_by }}</p>
+  {% for issue in r.issues %}<div class="alert alert-danger">{{ issue }} <a href="/admin/expenses">Open Admin Expenses</a></div>{% endfor %}
+  <div class="row g-2 mb-3">
+    {% for label,amount,help in [('Salaries',r.salary_total,'Assigned to this month; already included in Total Expenses.'),('Total Sales',r.sales.checkout_sales,'Completed checkout sales after discounts. Refunds are separate.'),('Total Expenses',r.total_expenses,'This month’s salaries plus other expenses dated in this month.')] %}
+    <div class="col-sm-6 col-lg-3"><div class="card card-body h-100"><small>{{ label }}</small><strong class="h4 my-2">₱{{ '%.2f'|format(amount) }}</strong><span class="small text-muted">{{ help }}</span></div></div>
+    {% endfor %}
+    <div class="col-sm-6 col-lg-3"><div class="card card-body h-100"><small>Employee Attendance</small><strong class="h4 my-2">{{ r.attendance.duration }}</strong><span class="small text-muted">{{ r.attendance.employee_count }} employee(s) with records · {{ r.attendance.incomplete }} missing Time Out. Recorded completed time; overlaps counted once.</span></div></div>
+  </div>
+  <details class="card mb-3"><summary>Sales · ₱{{ '%.2f'|format(r.sales.checkout_sales) }}</summary>
+    <div class="card-body pt-0"><dl>
+      {% for label,value in [('Cowork bill',r.sales.cowork_bill),('Cafe bill',r.sales.cafe_bill),('Discounts',r.sales.discounts),('Checkout sales',r.sales.checkout_sales),('Refunds paid this month',r.sales.refunds),('Sales less this month’s refunds',r.sales.after_refunds)] %}<dt>{{ label }}</dt><dd>₱{{ '%.2f'|format(value) }}</dd>{% endfor %}
+      {% if r.sales.reconciliation_difference %}<dt>Older component difference (review)</dt><dd>₱{{ '%.2f'|format(r.sales.reconciliation_difference) }}</dd>{% endif %}
+    </dl><p class="small text-muted mt-2">Cowork + Cafe − Discounts = Checkout sales. Owner funding, debt collection and unpaid bills are separate from sales.</p></div>
+    {% for day in r.sales_days %}<div class="report-record"><strong>{{ day.date }} · Sales ₱{{ '%.2f'|format(day.checkout_sales) }}</strong><p class="small mb-0">Cowork ₱{{ '%.2f'|format(day.cowork_bill) }} + Cafe ₱{{ '%.2f'|format(day.cafe_bill) }} − Discounts ₱{{ '%.2f'|format(day.discounts) }} · Refunds ₱{{ '%.2f'|format(day.refunds) }}</p></div>{% endfor %}
+  </details>
+  <details class="card mb-3"><summary>Salaries · ₱{{ '%.2f'|format(r.salary_total) }}</summary>
+    <div class="card-body pt-0"><p class="small text-muted">Manual salary payments assigned to {{ r.month_label }}. This is not an automatic payroll calculation.</p><a href="/admin/expenses" class="btn btn-sm btn-outline-secondary">Record / review salary payments</a></div>
+    {% for employee in r.salary_employees %}<div class="report-record"><h3 class="h6">{{ employee.name }} · Employee #{{ employee.employee_id }} · ₱{{ '%.2f'|format(employee.total) }}</h3>
+      {% for payment in employee.payments %}<div class="border rounded p-2 mt-2"><strong>{{ payment.reference }} · ₱{{ '%.2f'|format(payment.amount) }}</strong><dl class="small mt-2"><dt>Salary month</dt><dd>{{ payment.salary_month }}</dd><dt>Paid date / method</dt><dd>{{ payment.payment_date }} · {{ payment.method }}</dd><dt>Recorded / posted</dt><dd>{{ payment.recorded_at }} (Manila) · posting date {{ payment.posting_date }}</dd><dt>Funding</dt><dd>{{ payment.source }}</dd><dt>By / notes</dt><dd>{{ payment.recorded_by }} · {{ payment.description }}</dd></dl></div>{% endfor %}
+    </div>{% else %}<div class="report-record">No salary entries recorded for this month. This does not mean every employee has been paid.</div>{% endfor %}
+  </details>
+  <details class="card mb-3"><summary>Expenses · ₱{{ '%.2f'|format(r.total_expenses) }}</summary>
+    <div class="card-body pt-0"><p>Salaries ₱{{ '%.2f'|format(r.salary_total) }} + Other expenses ₱{{ '%.2f'|format(r.other_expenses) }} = Total Expenses ₱{{ '%.2f'|format(r.total_expenses) }}.</p><dl>{% for category in r.expense_categories %}<dt>{{ category.category }}</dt><dd>₱{{ '%.2f'|format(category.amount) }}</dd>{% else %}<dt>No expense entries recorded.</dt>{% endfor %}</dl></div>
+    {% for expense in r.expenses %}<div class="report-record"><h3 class="h6">{{ expense.reference }} · {{ expense.category_label }} · ₱{{ '%.2f'|format(expense.amount) }}</h3><p>{{ expense.description }}</p><dl class="small"><dt>Expense / paid date</dt><dd>{{ expense.payment_date }}</dd><dt>Recorded / posted</dt><dd>{{ expense.recorded_at }} · {{ expense.posting_date }}</dd><dt>Method / funds</dt><dd>{{ expense.method }} · {{ expense.source }}</dd><dt>Recorded by</dt><dd>{{ expense.recorded_by }}</dd></dl></div>{% endfor %}
+  </details>
+  <details class="card mb-3" id="attendance"><summary>Employee attendance · {{ r.attendance.duration }}</summary>
+    <div class="card-body pt-0"><p class="small text-muted">Manual work shifts, including inactive/former staff. This is elapsed recorded time; no breaks, overtime, lateness or absence are assumed.</p><p class="small">{{ r.attendance.incomplete }} incomplete · {{ r.attendance.invalid }} invalid interval(s) · {{ r.attendance.overlap_count }} employee(s) with overlapping shifts.</p></div>
+    {% for employee in r.attendance.employees %}<div class="report-record"><h3 class="h6">{{ employee.name }} · #{{ employee.employee_id }} · Counted {{ employee.duration }}</h3>{% if employee.overlap %}<p class="text-warning-emphasis">Overlapping shifts: review. Overlapping time is counted once.</p>{% endif %}
+      {% for shift in employee.shifts %}<div class="border rounded p-2 mt-2"><strong>{{ shift.reference }} · {{ shift.status }}</strong><dl class="small mt-2"><dt>Time In</dt><dd>{{ shift.time_in }}</dd><dt>Time Out</dt><dd>{{ shift.time_out or 'Missing Time Out' }}</dd><dt>Month portion (before merging overlaps)</dt><dd>{{ shift.duration }}</dd><dt>Entered into system</dt><dd>In: {{ shift.recorded_at }} · Out: {{ shift.out_recorded_at or 'Not recorded' }}</dd></dl></div>{% endfor %}
+    </div>{% else %}<div class="report-record">No work shifts recorded for this month.</div>{% endfor %}
+  </details>
+  <details class="card mb-3"><summary>Payment dates, posting and corrections</summary>
+    <div class="card-body pt-0"><dl><dt>This month’s salaries paid in another month</dt><dd>₱{{ '%.2f'|format(r.reconciliation.allocated_here_paid_elsewhere) }}</dd><dt>Payments this month for other salary months</dt><dd>₱{{ '%.2f'|format(r.reconciliation.paid_here_other_salary_month) }}</dd><dt>Daily Balance net posted expenses</dt><dd>₱{{ '%.2f'|format(r.reconciliation.net_posted_expenses) }}</dd><dt>Cost total − net posted expenses</dt><dd>₱{{ '%.2f'|format(r.reconciliation.cost_minus_posted) }}</dd></dl><p class="small text-muted mt-2">Includes entered payment dates, actual posting dates and later reversals. A voided cost is excluded from current cost totals; its cash reversal remains on its posting date.</p></div>
+    {% for payment in r.expense_payment_history %}<div class="report-record small"><strong>{{ payment.reference }} · {{ payment.employee or payment.category_label }} · ₱{{ '%.2f'|format(payment.amount) }}</strong><p class="mb-1">Cost month {{ payment.cost_month }} · Paid {{ payment.payment_date }} · Posted {{ payment.posting_date }} · {{ payment.method }} · {{ payment.source }}</p><p class="mb-1">Recorded {{ payment.recorded_at }} by {{ payment.recorded_by }} · {{ payment.description }}</p>{% if payment.voided_at %}<p class="text-danger mb-0">Voided {{ payment.voided_at }} by {{ payment.voided_by }}: {{ payment.void_reason }}</p>{% endif %}{% if payment.classified_at %}<p class="mb-0">Classified as salary {{ payment.classified_at }} by user #{{ payment.classified_by }}. Original category: {{ payment.original_category }}.</p>{% endif %}</div>{% else %}<div class="report-record">No expense payment or correction records for these dates.</div>{% endfor %}
+  </details>
+  {% for note in r.notes %}<p class="small text-muted">{{ note }}</p>{% endfor %}
+  {% endif %}
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/customer-statements.js') }}?v=2"></script><script>if(location.hash==='#attendance') document.getElementById('attendance')?.setAttribute('open','');</script>{% endblock %}

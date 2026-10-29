@@ -9,6 +9,7 @@ from app.core.idempotency import idempotent_request
 from app.dto.serializers import serialize_transaction, serialize_void_request
 from app.repositories.session_repository import SessionRepository
 from app.services.session_service import SessionService
+from app.services.missed_checkout_service import MissedCheckoutService
 from app.utils.payment import VALID_PAYMENT_METHODS
 
 
@@ -62,6 +63,11 @@ def checkin():
         space_type_id=data.get("space_type_id"),
         number_of_people=data.get("number_of_people", 1),
         void_request_id=data.get("void_request_id"),
+        checkin_mode=data.get("checkin_mode", "now"),
+        arrival_time=data.get("arrival_time"),
+        actor_id=session.get("user_id"),
+        actor_name=session.get("username") or "Staff",
+        actor_role=session.get("role") or "",
     )
     return jsonify(payload), status
 
@@ -146,6 +152,10 @@ def available_checkout_corrections():
 @idempotent_request("start-food-order")
 def start_food_order():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter valid food order details."}), 400
+    if data.get("checkin_mode", "now") != "now" or data.get("arrival_time") is not None:
+        return jsonify({"error": "Food orders do not use late check-in."}), 400
     resp = _service.create_food_order(
         customer_name=data.get("customer_name", ""),
         location=data.get("location", ""),
@@ -160,6 +170,37 @@ def start_food_order():
 # -----------------------------
 # CHECKOUT CUSTOMER
 # -----------------------------
+@session_bp.get("/api/missed-checkout/options")
+@admin_required
+def missed_checkout_options():
+    return jsonify({"collectors": MissedCheckoutService.collectors(),
+                    "server_now": _service.clock.now().isoformat(timespec="seconds") + "Z"})
+
+
+@session_bp.post("/api/sessions/<int:session_id>/missed-checkout/preview")
+@admin_required
+def preview_missed_checkout(session_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter valid missed checkout details."}), 400
+    payload, status = MissedCheckoutService(_service).preview(session_id, data)
+    return jsonify(payload), status
+
+
+@session_bp.post("/api/sessions/<int:session_id>/missed-checkout")
+@admin_required
+@idempotent_request("missed-customer-checkout")
+def complete_missed_checkout(session_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Enter valid missed checkout details."}), 400
+    payload, status = MissedCheckoutService(_service).complete(
+        session_id, data, session.get("user_id"), session.get("username") or "Admin",
+        session.get("role") or "", request.headers.get("Idempotency-Key"),
+    )
+    return jsonify(payload), status
+
+
 @session_bp.route("/api/checkout/<int:session_id>", methods=["POST"])
 @login_required
 @idempotent_request("customer-checkout")

@@ -260,7 +260,8 @@ def test_selected_customer_actor_paid_cycle_conflict_and_retry(app):
     assert client.get("/admin/receivables/api/receivables/customer-suggestions", query_string={"q": "Brand"}).get_json()["data"][0]["open_tab_id"] == admin.get_json()["data"]["tab_id"]
     with app.app_context():
         record = db.session.get(Receivable, admin.get_json()["data"]["id"])
-        assert (record.created_by, record.approved_by_staff) == (1, "owner")
+        # The authenticated canonical User supplies the actor, not an unrelated Admin with the same PK.
+        assert (record.created_by, record.approved_by_staff) == (1, "test_user")
 
 
 def test_suggested_open_tab_debt_and_payment_reconcile_on_payment_date(app):

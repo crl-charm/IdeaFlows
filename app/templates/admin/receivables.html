@@ -6,7 +6,7 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/receivable-collections.js') }}?v=2"></script>
-<script src="{{ url_for('static', filename='js/receivables-dated.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/receivables-dated.js') }}?v=2"></script>
 <script>
   const receivablesPage = window.ReceivablesDatedPage('/admin/receivables');
   function loadReceivables() { return receivablesPage.reload(); }

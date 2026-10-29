@@ -25,7 +25,7 @@ def test_staff_bootstrap_survives_socket_failure_and_rejects_bad_api_responses(a
             "menu": ("admin/menu.html", {}, "function loadCategories()"),
             "inventory": ("admin/inventory.html", {}, "function loadInventory()"),
             "daily_balance": ("admin/daily_balance.html", {}, "function loadReports()"),
-            "expenses": ("staff/expenses.html", {"expenses": [], "categories": []}, "function loadExpenses()"),
+            "expenses": ("staff/expenses.html", {"expenses": [], "categories": {}}, "function loadExpenses()"),
             "payables": ("admin/payables.html", {}, "function loadPayables()"),
         }
         rendered = {name: render_template(template, **context) for name, (template, context, _) in pages.items()}

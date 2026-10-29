@@ -263,6 +263,34 @@
       border-color: #22c55e;
     }
 
+    .system-updates-button {
+      width: 44px;
+      min-height: 44px;
+      padding: 0;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--card);
+    }
+    .system-updates-button:hover { background: var(--brand-soft); }
+    .system-updates-dot {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--danger);
+      border: 2px solid var(--card);
+    }
+    #systemUpdatesModal .modal-content { min-width: 0; overflow-wrap: anywhere; }
+    .system-update summary { cursor: pointer; list-style: none; }
+    .system-update summary::-webkit-details-marker { display: none; }
+    .system-update summary:focus-visible { outline: 2px solid var(--brand-dark); outline-offset: 5px; }
+    .system-update-collapse { display: none; }
+    .system-update[open] .system-update-expand { display: none !important; }
+    .system-update[open] .system-update-collapse { display: block; }
+
     @media (max-width: 767.98px) {
       #ih-toast-container {
         left: 16px;
@@ -317,11 +345,22 @@
   <!-- TOP NAVBAR -->
   <nav class="navbar navbar-expand-md mobile-top-bar navbar-light bg-white shadow-sm px-3 px-md-4">
 
-    <a class="navbar-brand mb-0 d-flex align-items-center gap-2" href="/dashboard">
+    <div class="d-flex align-items-center flex-shrink-0">
+    <a class="navbar-brand mb-0 me-2 d-flex align-items-center gap-2" href="/dashboard">
       <img src="{{ url_for('static', filename='css/images/logo.png') }}" alt="IdeaFlow" class="site-logo"
         style="height: 40px;" />
       <span class="fw-bold text-dark d-none d-sm-inline" style="font-size: 1.1rem;">IdeaFlow</span>
     </a>
+    {% if system_updates %}
+    <button type="button" id="systemUpdatesButton" class="btn system-updates-button position-relative" data-bs-toggle="modal"
+            data-bs-target="#systemUpdatesModal" aria-controls="systemUpdatesModal" aria-haspopup="dialog"
+            aria-label="System updates" aria-describedby="systemUpdatesStatus" title="System updates">
+      <i class="bi bi-bell fs-5" aria-hidden="true"></i>
+      <span id="systemUpdatesDot" class="system-updates-dot" aria-hidden="true" hidden></span>
+    </button>
+    <span id="systemUpdatesStatus" class="visually-hidden" aria-live="polite"></span>
+    {% endif %}
+    </div>
 
     <div class="d-flex align-items-center gap-2 ms-auto d-md-none">
       {% if session.get("role") == "staff" %}
@@ -524,6 +563,9 @@
           <span class="payables-badge badge bg-danger ms-1"
             style="display:none; font-size: 11px; padding: 3px 6px;">0</span>
         </button>
+        <button class="btn w-100 text-start mb-1 sidebar-btn nav-btn" onclick="window.location.href='/admin/reports'">
+          <i class="bi bi-file-earmark-pdf me-2"></i>Reports &amp; Exports
+        </button>
       </div>
 
       <!-- STAFF -->
@@ -560,6 +602,7 @@
 
 
   {% include 'partials/cash_boxes.html' %}
+  {% include 'partials/system_updates.html' %}
 
   {% if session.get("role") == "staff" %}
   <div class="modal fade" id="staffShiftModal" tabindex="-1" aria-labelledby="staffShiftModalTitle" aria-hidden="true">
@@ -615,7 +658,7 @@
         <div class="modal-body text-center px-4 pt-4 pb-2">
           <div id="ihConfirmIcon" class="ih-confirm-icon mb-3">✦</div>
           <h5 id="ihConfirmTitle" class="fw-bold mb-2">Confirm</h5>
-          <p id="ihConfirmMessage" class="text-muted mb-0"></p>
+          <p id="ihConfirmMessage" class="text-muted mb-0 text-break"></p>
         </div>
         <div class="modal-footer border-0 justify-content-center gap-2 px-4 pb-4 pt-2">
           <button type="button" class="btn btn-light px-4" id="ihConfirmCancelBtn">Cancel</button>
@@ -673,6 +716,7 @@
 
         titleEl.textContent = options.title || "Confirm";
         messageEl.textContent = options.message || "Are you sure you want to continue?";
+        messageEl.style.whiteSpace = 'pre-line';
         confirmBtn.textContent = options.confirmText || "Confirm";
         cancelBtn.textContent = options.cancelText || "Cancel";
         confirmBtn.className = "btn px-4 " + (options.confirmClass || "btn-success");
@@ -1073,6 +1117,7 @@
   {% endblock %}
 
   <script src="{{ url_for('static', filename='js/cash-boxes.js') }}?v=2"></script>
+  {% if system_updates %}<script src="{{ url_for('static', filename='js/system-updates.js') }}?v=1"></script>{% endif %}
 
   <script>
     (function enableSpaNav() {
@@ -1106,6 +1151,11 @@
         const html = await res.text();
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, "text/html");
+        if (doc.getElementById('systemUpdatesModal')?.dataset.readKey !== document.getElementById('systemUpdatesModal')?.dataset.readKey) {
+          // An account change needs the new header as well as the page content.
+          window.location.href = url;
+          return;
+        }
         const newMain = doc.querySelector("#main-content");
         const currentMain = document.querySelector("#main-content");
         if (newMain && currentMain) {
@@ -1407,11 +1457,41 @@
         ? { time_out: document.getElementById('staffShiftTimeOut').value }
         : { role: document.getElementById('staffShiftRole').value, time_in: document.getElementById('staffShiftTimeIn').value };
       try {
-        await runButtonAction(button, { label: 'Saving...' }, key => fetchJSON(url, {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-          body: JSON.stringify(payload)
-        }));
+        while (true) {
+          try {
+            await runButtonAction(button, { label: 'Saving...' }, key => fetchJSON(url, {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+              body: JSON.stringify(payload)
+            }));
+            break;
+          } catch (warning) {
+            if (!ending || !warning.data?.needs_handover) throw warning;
+            const customers = warning.data.active_customers.map(row =>
+              `${row.name} · ${row.space} · Time In ${row.time_in} · ${row.paused ? 'Paused' : 'Running'}`).join('\n');
+            const shiftModal = document.getElementById('staffShiftModal');
+            if (shiftModal.getAttribute('aria-hidden') !== 'true') {
+              const closed = new Promise(resolve => shiftModal.addEventListener('hidden.bs.modal', resolve, {once:true}));
+              bootstrap.Modal.getOrCreateInstance(shiftModal).hide();
+              await closed;
+            }
+            const handover = await showConfirmDialog({
+              title: 'Customers are still checked in',
+              message: `${customers}\n\nReview any missed checkouts or confirm another staff member is taking over. Customer bills will keep their current state.`,
+              confirmText: 'Confirm handover and save Time Out', cancelText: 'Review customers'
+            });
+            const confirmModal = document.getElementById('ihConfirmModal');
+            if (confirmModal.getAttribute('aria-hidden') !== 'true') {
+              await new Promise(resolve => confirmModal.addEventListener('hidden.bs.modal', resolve, {once:true}));
+            }
+            if (!handover) {
+              bootstrap.Modal.getOrCreateInstance(document.getElementById('staffShiftModal')).hide();
+              window.location.assign('/dashboard');
+              return;
+            }
+            payload.handover_token = warning.data.handover_token;
+          }
+        }
         await refreshStaffShift();
         showToast(ending ? 'Time Out saved.' : 'Time In saved.', 'success');
       } catch (error) {

@@ -28,8 +28,10 @@ ACTIVITY_TABLES = {
     "expenses", "finance_transactions", "inventory_actions", "inventory_logs",
     "lounge_bookings", "order_inventory_allocations", "order_items", "orders",
     "payables", "payable_payments", "receivables", "receivable_payments", "receivable_tabs",
+    "receivable_accounts", "receivable_account_events", "receivable_items",
     "soft_balance_entries", "staff_attendance", "staff_shifts", "staff_performance_logs",
     "session_time_events",
+    "missed_checkout_corrections",
     "transactions",
 }
 

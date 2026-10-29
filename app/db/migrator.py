@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import text, inspect, case, func
-from app.models import Admin, Receivable, ReceivablePayment, ReceivableTab
+from app.models import Admin, Receivable, ReceivablePayment, ReceivableTab, ReceivableAccount, ReceivableAccountEvent
 from app.utils.dates import manila_date
 from app.models.finance import FinanceBudget, FinanceTransaction
 from app.models.soft_balance import SoftBalanceEntry
@@ -51,6 +51,15 @@ class SchemaMigrator:
             return
 
         checks = [
+            ("expenses", "salary_employee_id", "ALTER TABLE expenses ADD COLUMN salary_employee_id INTEGER NULL"),
+            ("expenses", "salary_employee_name", "ALTER TABLE expenses ADD COLUMN salary_employee_name VARCHAR(100) NULL"),
+            ("expenses", "salary_month", "ALTER TABLE expenses ADD COLUMN salary_month DATE NULL"),
+            ("expenses", "salary_original_category", "ALTER TABLE expenses ADD COLUMN salary_original_category VARCHAR(50) NULL"),
+            ("expenses", "salary_assigned_at", "ALTER TABLE expenses ADD COLUMN salary_assigned_at DATETIME NULL"),
+            ("expenses", "salary_assigned_by", "ALTER TABLE expenses ADD COLUMN salary_assigned_by INTEGER NULL"),
+            ("receivable_tabs", "account_id", "ALTER TABLE receivable_tabs ADD COLUMN account_id INTEGER NULL"),
+            ("receivables", "ordered_by", "ALTER TABLE receivables ADD COLUMN ordered_by VARCHAR(100) NULL"),
+            ("transactions", "paid_at", "ALTER TABLE transactions ADD COLUMN paid_at DATETIME NULL"),
             ("receivable_payments", "balance_before", "ALTER TABLE receivable_payments ADD COLUMN balance_before DECIMAL(10,2) NULL"),
             ("receivable_payments", "balance_after", "ALTER TABLE receivable_payments ADD COLUMN balance_after DECIMAL(10,2) NULL"),
             ("receivable_payments", "request_key", "ALTER TABLE receivable_payments ADD COLUMN request_key VARCHAR(200) NULL"),
@@ -312,6 +321,12 @@ class SchemaMigrator:
             if missing := required - found:
                 raise RuntimeError(f"Cash box migration incomplete: {table} missing {', '.join(sorted(missing))}")
         self._backfill_receivable_tabs()
+        required = {"receivable_tabs": {"account_id"}, "receivables": {"ordered_by"},
+                    "expenses": {"salary_employee_id", "salary_employee_name", "salary_month", "salary_original_category", "salary_assigned_at", "salary_assigned_by"}}
+        for table, columns in required.items():
+            if columns - {column["name"] for column in inspect(db.engine).get_columns(table)}:
+                raise RuntimeError(f"Customer statement migration incomplete: {table}")
+        self._backfill_receivable_accounts()
         if db.engine.dialect.name == "mysql" and not any(
             "tab_id" in fk.get("constrained_columns", [])
             for fk in inspect(db.engine).get_foreign_keys("receivables")
@@ -321,6 +336,26 @@ class SchemaMigrator:
                 "FOREIGN KEY (tab_id) REFERENCES receivable_tabs(id)"
             ))
             db.session.commit()
+        if db.engine.dialect.name == "mysql" and not any(
+            "account_id" in fk.get("constrained_columns", [])
+            for fk in inspect(db.engine).get_foreign_keys("receivable_tabs")
+        ):
+            db.session.execute(text("ALTER TABLE receivable_tabs ADD CONSTRAINT fk_receivable_tabs_account "
+                                    "FOREIGN KEY (account_id) REFERENCES receivable_accounts(id)"))
+            db.session.commit()
+
+    def _backfill_receivable_accounts(self) -> None:
+        """One provisional account per old cycle. An admin reviews any grouping."""
+        for tab in ReceivableTab.query.filter_by(account_id=None).order_by(ReceivableTab.id).all():
+            account = ReceivableAccount(
+                customer_name=tab.customer_name, customer_contact=tab.customer_contact,
+                normalized_name=tab.normalized_name, normalized_contact=tab.normalized_contact,
+            )
+            self._db.session.add(account)
+            self._db.session.flush()
+            tab.account_id = account.id
+            self._db.session.add(ReceivableAccountEvent(account_id=account.id, tab_id=tab.id, action="migration"))
+        self._db.session.commit()
 
     def _backfill_receivable_tabs(self) -> None:
         """Attach legacy debts without changing amounts or payment history."""
@@ -346,7 +381,8 @@ class SchemaMigrator:
                     continue
                 name, contact, key = ReceivableTab.identity(row.customer_name, row.customer_contact)
                 if not row.paid and row.amount_owed > row.partial_paid:
-                    identity = (name, contact)
+                    # Blank contacts do not establish a shared customer identity.
+                    identity = (name, contact) if contact else (name, contact, row.id)
                     tab = open_tabs.get(identity)
                     if tab is None:
                         tab = ReceivableTab.query.filter_by(active_key=key).first() if key else None
@@ -384,6 +420,8 @@ class SchemaMigrator:
     def _ensure_indexes(self, db, inspector) -> None:
         """Create performance indexes idempotently (MySQL/SQLite)."""
         indexes = [
+            ("expenses", "idx_expenses_salary_month_employee", "CREATE INDEX idx_expenses_salary_month_employee ON expenses (salary_month, salary_employee_id)"),
+            ("receivable_tabs", "ix_receivable_tabs_account_id", "CREATE INDEX ix_receivable_tabs_account_id ON receivable_tabs (account_id)"),
             (
                 "payables",
                 "uq_payables_owner_cash_event_id",
@@ -414,6 +452,7 @@ class SchemaMigrator:
                 "idx_transactions_created_at",
                 "CREATE INDEX idx_transactions_created_at ON transactions (created_at)",
             ),
+            ("transactions", "idx_transactions_paid_at", "CREATE INDEX idx_transactions_paid_at ON transactions (paid_at, created_at)"),
             (
                 "transactions",
                 "idx_transactions_payment_method",

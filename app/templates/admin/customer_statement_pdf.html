@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>IdeaFlow Customer Statement</title>
+<style>
+  @page {size:A4 portrait; margin:17mm 15mm 20mm;
+    {% if pdf_backend == 'xhtml2pdf' %}
+    @frame footer_frame {-pdf-frame-content:footerContent; left:15mm; top:281mm; width:180mm; height:8mm;}
+    {% else %}
+    @bottom-right {content:"Page " counter(page) " of " counter(pages); font-size:8pt; color:#526174;}
+    @bottom-left {content:"IdeaFlow / Customer Statement"; font-size:8pt; color:#526174;}
+    {% endif %}
+  }
+  body {font-family:Helvetica,Arial,sans-serif; color:#24344b; font-size:10pt; line-height:1.4;}
+  h1 {font-size:23pt; margin:0;} h2{font-size:15pt; border-bottom:2px solid #dab64a; padding-bottom:5pt; margin-top:20pt;}
+  h3{font-size:11pt; margin:14pt 0 5pt;} h2,h3 {page-break-after:avoid; -pdf-keep-with-next:true;}
+  p{margin:4pt 0 8pt; overflow-wrap:anywhere;} .muted{font-size:9pt; color:#526174;}
+  .logo{width:35pt; height:35pt;} .summary td{background:#fff8dc; padding:10pt;}
+  table{width:100%; border-collapse:collapse; table-layout:fixed; margin:6pt 0 10pt;}
+  th{background:#f8f4e4; font-size:9pt; text-align:left;}
+  td,th{padding:5pt; border-bottom:1px solid #e1e6ee; vertical-align:top; overflow-wrap:anywhere; word-wrap:break-word;}
+  thead{display:table-header-group;} tr{page-break-inside:avoid;} .amount{text-align:right;}
+  .notice{background:#fff8dc; padding:8pt;} .balance{font-size:17pt; font-weight:bold;}
+  .section{page-break-before:always;}
+</style></head><body>
+{% set s = statement %}
+{% if pdf_backend == 'xhtml2pdf' %}<div id="footerContent" class="muted">IdeaFlow / Customer Statement / Page <pdf:pagenumber /> of <pdf:pagecount /></div>{% endif %}
+<img src="{{ logo }}" class="logo" alt="IdeaFlow">
+<h1>IdeaFlow</h1><p>Customer Statement of Account</p>
+<h2>{{ s.account.name }}</h2>
+<p>{{ s.account.reference }}{% if s.account.contact %} / {{ s.account.contact }}{% endif %}</p>
+{% if s.attention %}<p>Attention: {{ s.attention }}</p>{% endif %}
+<p class="muted">All recorded history through {{ s.generated_at }} (Asia/Manila).<br>Includes settled and open debt cycles. Amounts are in Philippine pesos (PHP).</p>
+<table class="summary"><tr><td width="33%">Taken on credit<br><strong>PHP {{ '%.2f'|format(s.total_charged) }}</strong></td><td width="33%">Paid / known credits<br><strong>PHP {{ '%.2f'|format(s.total_paid) }}</strong></td><td width="34%">Still owed<br><strong>PHP {{ '%.2f'|format(s.remaining) }}</strong></td></tr></table>
+{% if s.remaining == 0 %}<p><strong>Settled as of {{ s.generated_at }} (Manila).</strong></p>{% endif %}
+{% for message in s.notices %}<p class="notice">{{ message }}</p>{% endfor %}
+<p>Taken on credit - payments and known credits = amount still owed.</p>
+
+<h2>Charges and food details</h2>
+{% for charge in s.charges %}
+<h3>{{ charge.reference }} / Date Taken {{ charge.taken }} / Cycle #{{ charge.tab_id }}</h3>
+<p class="muted">Ordered / taken by: {{ charge.ordered_by }}<br>Recorded by: {{ charge.recorded_by }} / {{ charge.recorded_at }} (Manila)<br>Due: {{ charge.due }}</p>
+{% if charge.lines %}
+<table repeat="1"><thead><tr><th width="48%">Items</th><th width="10%">Qty</th><th width="21%" class="amount">Unit price</th><th width="21%" class="amount">Line total</th></tr></thead><tbody>
+{% for item in charge.lines %}<tr><td>{{ item.name }}{% if item.no_rice %}<br>No rice{% endif %}{% if item.no_egg %}<br>No egg{% endif %}</td><td>{{ item.quantity }}</td><td class="amount">{{ '%.2f'|format(item.unit_price) }}</td><td class="amount">{{ '%.2f'|format(item.line_total) }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p>{{ charge.description }}</p><p class="muted">Original written description. Item quantities/prices were not recorded separately.</p>{% endif %}
+<p><strong>Charged PHP {{ '%.2f'|format(charge.charged) }}</strong> / Paid PHP {{ '%.2f'|format(charge.paid) }} / Remaining PHP {{ '%.2f'|format(charge.remaining) }}</p>
+{% endfor %}
+
+<h2 class="section">Payment receipts</h2>
+{% for payment in s.payments %}
+<h3>{{ payment.reference }} / PHP {{ '%.2f'|format(payment.amount) }} / {{ payment.method }}</h3>
+<p class="muted">{{ payment.when }} (Manila) / Recorded by {{ payment.recorded_by }}</p>
+<p>{% for a in payment.allocations %}{{ a.reference }}: PHP {{ '%.2f'|format(a.amount) }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+{% else %}<p>No detailed payment receipts recorded.</p>{% endfor %}
+{% if s.historical_credits %}<h3>Known historical payments / credits</h3>{% for entry in s.historical_credits %}<p>{{ entry.description }} / PHP {{ '%.2f'|format(entry.amount) }}</p>{% endfor %}{% endif %}
+
+<h2>Account ledger</h2>
+<p class="muted">Charges with Date Taken only are listed before that day's timed payments. Undated historical credits appear last. Same-day charge order uses record references; no exact ordering time is claimed.</p>
+<table repeat="1"><thead><tr><th width="37%">Date / reference</th><th width="21%" class="amount">Charge</th><th width="21%" class="amount">Payment / credit</th><th width="21%" class="amount">Balance</th></tr></thead><tbody>
+{% for entry in s.ledger %}<tr><td>{{ entry.when }}<br>{{ entry.reference }}<br><span class="muted">{{ entry.description }}</span></td><td class="amount">{{ '%.2f'|format(entry.charge) }}</td><td class="amount">{{ '%.2f'|format(entry.payment) }}</td><td class="amount">{{ '%.2f'|format(entry.balance) }}</td></tr>{% endfor %}
+</tbody></table>
+<p class="balance">Amount still owed: PHP {{ '%.2f'|format(s.remaining) }}</p>
+<p class="muted">Generated from records available at {{ s.generated_at }} (Manila). Contact IdeaFlow staff if any item or payment needs review. Downloading this statement does not settle the balance.</p>
+</body></html>

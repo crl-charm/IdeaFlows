@@ -7,8 +7,8 @@ from typing import Any, Optional
 
 from app.repositories.receivable_repository import ReceivableRepository, ReceivableTabConflict
 from app import db
-from app.models import Admin, User
-from app.models.receivable import ReceivableTab
+from app.models import User, MenuItem
+from app.models.receivable import ReceivableTab, ReceivableItem
 from sqlalchemy.exc import IntegrityError
 from app.repositories.sales_repository import SalesRepository
 from app.utils.dates import manila_date
@@ -106,6 +106,7 @@ class ReceivableService:
             return None
         records = self._serialize(self.repo.tab_records(tab_id))
         return {"id": tab.id, "customer_name": tab.customer_name,
+                "account_id": tab.account_id,
                 "customer_contact": tab.customer_contact or "", "open": tab.closed_at is None,
                 "records": records, "orders_total": sum(row["amount_owed"] for row in records),
                 "paid_total": sum(row["partial_paid"] for row in records),
@@ -137,6 +138,9 @@ class ReceivableService:
         notes: Optional[str] = None,
         tab_id: Optional[int] = None,
         actor_role: str = "staff",
+        account_id: Optional[int] = None,
+        items: Optional[list] = None,
+        ordered_by: Optional[str] = None,
     ) -> dict[str, Any]:
         if not isinstance(customer_name, str) or not customer_name.strip() or len(customer_name.strip()) > 100:
             raise ValueError("Enter a customer name up to 100 characters.")
@@ -144,23 +148,35 @@ class ReceivableService:
             customer_contact = ""
         if not isinstance(customer_contact, str) or len(customer_contact.strip()) > 100:
             raise ValueError("Contact must be text up to 100 characters.")
-        if not isinstance(items_description, str) or not items_description.strip():
+        snapshots = self.menu_snapshots(items) if items is not None else []
+        if snapshots:
+            items_description = "; ".join(f"{row.quantity} × {row.name_snapshot}" +
+                (" (no rice)" if row.no_rice else "") + (" (no egg)" if row.no_egg else "") for row in snapshots)
+            amount_owed = sum((row.unit_price * row.quantity for row in snapshots), Decimal("0"))
+        if not isinstance(items_description, str) or not items_description.strip() or len(items_description) > 10000:
             raise ValueError("Items description is required.")
         if tab_id is not None and (isinstance(tab_id, bool) or not str(tab_id).isdigit()):
             raise ValueError("Choose a valid customer tab.")
+        if account_id is not None and (isinstance(account_id, bool) or not str(account_id).isdigit()):
+            raise ValueError("Choose a valid customer account.")
+        if ordered_by is not None and (not isinstance(ordered_by, str) or len(ordered_by) > 100):
+            raise ValueError("Ordered by must be text up to 100 characters.")
         try:
             due = date.fromisoformat(due_date)
             incurred = date.fromisoformat(incurred_date) if incurred_date else None
         except (TypeError, ValueError):
             raise ValueError("Enter valid Date Taken and Due Date values.")
-        amount_decimal = Decimal(str(amount_owed))
-        if not amount_decimal.is_finite() or amount_decimal <= 0 or amount_decimal.as_tuple().exponent < -2:
+        try:
+            amount_decimal = Decimal(str(amount_owed))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("Enter a valid amount.") from None
+        if not amount_decimal.is_finite() or not 0 < amount_decimal <= Decimal("99999999.99") or amount_decimal.as_tuple().exponent < -2:
             raise ValueError("Enter a positive amount with up to two decimal places.")
         if notes is not None and (not isinstance(notes, str) or len(notes) > 2000):
             raise ValueError("Notes must be text up to 2,000 characters.")
         if actor_role not in {"admin", "staff"}:
             raise ValueError("Signed-in account not found. Please log in again.")
-        actor = db.session.get(Admin if actor_role == "admin" else User, created_by)
+        actor = db.session.get(User, created_by)
         if not actor:
             raise ValueError("Signed-in account not found. Please log in again.")
         clean_notes = notes.strip() if notes else ""
@@ -178,14 +194,65 @@ class ReceivableService:
                     customer_name.strip(), customer_contact.strip(), items_description.strip(), amount_decimal,
                     due, created_by, session_id, actor.username, incurred, clean_notes,
                     int(tab_id) if tab_id is not None else None,
+                    int(account_id) if account_id is not None else None,
                 )
+                receivable.ordered_by = (ordered_by or "").strip() or None
+                for row in snapshots:
+                    row.receivable_id = receivable.id
+                    db.session.add(row)
                 self.repo.save()
-                return {"success": True, "data": {"id": receivable.id, "tab_id": receivable.tab_id}}
+                return {"success": True, "data": {"id": receivable.id, "tab_id": receivable.tab_id,
+                        "account_id": receivable.tab.account_id}}
             except IntegrityError:
                 db.session.rollback()
                 if attempt or tab_id is not None:
                     raise ReceivableTabConflict("The customer tab changed. Refresh and try again.")
         raise ValueError("Could not create customer tab.")
+
+    @staticmethod
+    def menu_catalog() -> list[dict]:
+        # Recording already-taken items does not reserve or consume stock.
+        from app.utils.inventory_helpers import is_ingredient_category
+        return [{"id": item.id, "name": item.name, "price": str(item.price),
+                 "can_remove_rice": item.can_remove_rice, "can_remove_egg": item.can_remove_egg}
+                for item in MenuItem.query.filter_by(status="active").order_by(MenuItem.name, MenuItem.id).all()
+                if item.price is not None and item.price > 0 and not is_ingredient_category(item.category)]
+
+    @staticmethod
+    def menu_snapshots(items: list) -> list[ReceivableItem]:
+        from app.services.menu_availability import whole_quantity
+        if not isinstance(items, list) or not 1 <= len(items) <= 100:
+            raise ValueError("Choose 1–100 menu lines, or use a manual historical entry.")
+        parsed = []
+        for row in items:
+            if not isinstance(row, dict) or set(row) - {"menu_item_id", "quantity", "no_rice", "no_egg", "expected_base_price"}:
+                raise ValueError("Invalid menu line.")
+            if not all(isinstance(row.get(key, False), bool) for key in ("no_rice", "no_egg")):
+                raise ValueError("Invalid meal option.")
+            parsed.append((whole_quantity(row.get("menu_item_id")), whole_quantity(row.get("quantity")), row))
+        menu = {item.id: item for item in MenuItem.query.filter(MenuItem.id.in_([row[0] for row in parsed])).with_for_update().all()}
+        catalog_ids = {row["id"] for row in ReceivableService.menu_catalog()}
+        snapshots = []
+        for item_id, quantity, row in parsed:
+            item = menu.get(item_id)
+            if not item or item_id not in catalog_ids:
+                raise ValueError("A selected item is no longer on the menu. Refresh the menu.")
+            rice, egg = row.get("no_rice", False), row.get("no_egg", False)
+            if (rice and not item.can_remove_rice) or (egg and not item.can_remove_egg):
+                raise ValueError("This meal option is unavailable. Refresh the menu.")
+            if "expected_base_price" in row and str(row["expected_base_price"]) != str(item.price):
+                try:
+                    matches = Decimal(str(row["expected_base_price"])) == item.price
+                except (InvalidOperation, ValueError, TypeError):
+                    matches = False
+                if not matches:
+                    raise ValueError("Menu price changed. Refresh the menu and review the total before saving.")
+            price = item.price - Decimal("18.00") * (rice + egg)
+            if not price.is_finite() or price <= 0:
+                raise ValueError("Check the menu price and meal options.")
+            snapshots.append(ReceivableItem(menu_item_id=item.id, name_snapshot=item.name, quantity=quantity,
+                                           base_price=item.price, unit_price=price, no_rice=rice, no_egg=egg))
+        return snapshots
 
     def mark_paid(self, receivable_id: int, amount: Any, received_by: int, payment_method: str, request_key: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:

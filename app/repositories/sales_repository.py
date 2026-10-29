@@ -15,7 +15,7 @@ from app.models import (
     SoftBalanceEntry, ReceivablePayment, PayablePayment, FinanceTransaction,
     CheckoutVoidRequest, CashBoxEvent,
 )
-from app.utils.dates import manila_day_bounds, inclusive_manila_bounds, manila_date
+from app.utils.dates import MANILA_OFFSET, manila_day_bounds, inclusive_manila_bounds, manila_date
 from app.utils.payment import VALID_PAYMENT_METHODS
 
 METHODS = (*sorted(VALID_PAYMENT_METHODS), "unclassified")
@@ -79,8 +79,7 @@ class SalesRepository:
                 func.coalesce(func.sum(Transaction.time_bill - time_discount), 0).label("space_revenue"),
                 func.coalesce(func.sum(Transaction.food_bill - food_discount), 0).label("food_revenue"),
             )
-            .filter(Transaction.created_at >= start_at)
-            .filter(Transaction.created_at < end_at)
+            .filter(Transaction.payment_range(start_at, end_at))
             .filter(or_(
                 Transaction.is_voided.is_(False),
                 Transaction.void_requests.any(and_(
@@ -144,8 +143,16 @@ class SalesRepository:
             query = query.filter(column < manila_day_bounds(end_date)[1])
         return query
 
-    def daily_ledger(self, start_date: date | None = None, end_date: date | None = None) -> dict[date, dict]:
+    @staticmethod
+    def _payment_dated(query, start_date, end_date):
+        return query.filter(Transaction.payment_range(
+            manila_day_bounds(start_date)[0] if start_date else None,
+            manila_day_bounds(end_date)[1] if end_date else None,
+        ))
+
+    def daily_ledger(self, start_date: date | None = None, end_date: date | None = None, *, decimal_values: bool = False) -> dict[date, dict]:
         """One source for sales, collections, outflows and payment methods."""
+        money = (lambda value: value) if decimal_values else float
         rows: dict[date, dict] = {}
 
         def row(day: date) -> dict:
@@ -182,6 +189,7 @@ class SalesRepository:
                     "cash_box_withdrawals": {"petty": Decimal("0"), "customer": Decimal("0"), "unknown": Decimal("0")},
                     "cash_box_unassigned_count": 0,
                     "collection_groups": set(), "session_ids": set(), "total_orders": 0,
+                    "late_checkouts": [],
                 }
             return rows[day]
 
@@ -196,13 +204,19 @@ class SalesRepository:
             daily[f"cash_box_{flow}"][assigned] += amount if flow in {"receipts", "topups"} else -amount
 
         # 1. Transactions & checkouts
-        for tx in self._dated(
+        for tx in self._payment_dated(
             Transaction.query.options(
                 selectinload(Transaction.session),
                 selectinload(Transaction.void_requests),
             ),
-            Transaction.created_at, start_date, end_date,
+            start_date, end_date,
         ).all():
+            if tx.is_missed_checkout:
+                row(manila_date(tx.effective_paid_at))["late_checkouts"].append({
+                    "transaction_id": tx.id,
+                    "paid_at": (tx.effective_paid_at + MANILA_OFFSET).isoformat(),
+                    "recorded_at": (tx.created_at + MANILA_OFFSET).isoformat(),
+                })
             void_req = tx.active_void_request
             is_approved_void = void_req and void_req.status == "approved"
             treatment = void_req.money_treatment if is_approved_void else None
@@ -215,7 +229,7 @@ class SalesRepository:
                     continue
                 elif treatment == "retained_credit":
                     # Sale reversed on original day, but cash remains received as credit liability
-                    daily = row(manila_date(tx.created_at))
+                    daily = row(manila_date(tx.effective_paid_at))
                     bucket = method(tx.payment_method)
                     daily["credit_received_methods"][bucket] += Decimal(str(tx.total_bill or 0))
                     if bucket == "cash":
@@ -223,7 +237,7 @@ class SalesRepository:
                     continue
                 elif treatment == "refund":
                     # Sale history preserved on original day; refund event recorded on decision day
-                    daily = row(manila_date(tx.created_at))
+                    daily = row(manila_date(tx.effective_paid_at))
                     bucket = method(tx.payment_method)
                     daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
                     if bucket == "cash":
@@ -233,7 +247,7 @@ class SalesRepository:
                         daily["session_ids"].add(tx.session_id)
             else:
                 # Normal checkout (including replacement checkouts)
-                daily = row(manila_date(tx.created_at))
+                daily = row(manila_date(tx.effective_paid_at))
                 bucket = method(tx.payment_method)
                 daily["checkout_methods"][bucket] += Decimal(str(tx.total_bill or 0))
                 if bucket == "cash":
@@ -322,7 +336,7 @@ class SalesRepository:
                     if bucket == "cash" and target == "expense_methods":
                         box_move(daily, amount, expense.cash_box, "spending")
 
-        for payment in self._dated(PayablePayment.query, PayablePayment.paid_at, start_date, end_date).all():
+        for payment in self._dated(PayablePayment.query.options(selectinload(PayablePayment.payable)), PayablePayment.paid_at, start_date, end_date).all():
             daily = row(manila_date(payment.paid_at))
             bucket = method(payment.payment_method)
             amount = Decimal(str(payment.amount))
@@ -377,18 +391,18 @@ class SalesRepository:
             owner_topup = daily["owner_topup_methods"]
             cash_withdrawal = daily["cash_withdrawal_methods"]
 
-            tot_rev = float(sum(checkout.values()))
+            tot_rev = money(sum(checkout.values()))
             cowork = daily["cowork_methods"]
             cafe = daily["cafe_methods"]
             discounts = daily["discount_methods"]
-            tot_ref = float(sum(refund.values()))
-            net_bal = float(
+            tot_ref = money(sum(refund.values()))
+            net_bal = money(
                 sum(checkout.values()) - sum(credit_applied.values()) + sum(credit_received.values())
                 + sum(collection.values()) + sum(other_income.values())
                 - sum(expense.values()) - sum(payable.values()) - sum(budget_spend.values()) - sum(refund.values())
                 + sum(owner_topup.values()) - sum(cash_withdrawal.values())
             )
-            cash_hand = float(
+            cash_hand = money(
                 checkout["cash"] - credit_applied["cash"] + credit_received["cash"]
                 + collection["cash"] + other_income["cash"]
                 - expense["cash"] - payable["cash"] - budget_spend["cash"] - refund["cash"]
@@ -397,64 +411,65 @@ class SalesRepository:
 
             result[day] = {
                 "report_date": day.isoformat(),
+                "late_checkouts": daily["late_checkouts"],
                 "total_revenue": tot_rev,
-                "cowork_bill": float(sum(cowork.values())),
-                "cafe_bill": float(sum(cafe.values())),
-                "discounts_total": float(sum(discounts.values())),
-                "cowork_discounts": float(daily["cowork_discounts"]),
-                "cafe_discounts": float(daily["cafe_discounts"]),
-                "sales_reconciliation_difference": float(sum(
+                "cowork_bill": money(sum(cowork.values())),
+                "cafe_bill": money(sum(cafe.values())),
+                "discounts_total": money(sum(discounts.values())),
+                "cowork_discounts": money(daily["cowork_discounts"]),
+                "cafe_discounts": money(daily["cafe_discounts"]),
+                "sales_reconciliation_difference": money(sum(
                     abs(checkout[m] - cowork[m] - cafe[m] + discounts[m]) for m in METHODS
                 )),
                 "total_refunds": tot_ref,
                 "net_revenue": tot_rev - tot_ref,
-                "total_collections": float(sum(collection.values())),
-                "total_expenses": float(sum(expense.values()) + sum(external_expense.values())),
-                "total_business_expenses": float(sum(expense.values())),
-                "total_external_expenses": float(sum(external_expense.values())),
-                "total_payables_paid": float(sum(payable.values()) + sum(external_payable.values())),
-                "total_owner_reimbursements": float(sum(daily["owner_reimbursement_methods"].values())),
-                "total_supplier_payments": float(sum(payable.values()) + sum(external_payable.values())
+                "total_collections": money(sum(collection.values())),
+                "total_expenses": money(sum(expense.values()) + sum(external_expense.values())),
+                "total_business_expenses": money(sum(expense.values())),
+                "total_external_expenses": money(sum(external_expense.values())),
+                "total_payables_paid": money(sum(payable.values()) + sum(external_payable.values())),
+                "total_owner_reimbursements": money(sum(daily["owner_reimbursement_methods"].values())),
+                "total_supplier_payments": money(sum(payable.values()) + sum(external_payable.values())
                                                  - sum(daily["owner_reimbursement_methods"].values())),
-                "total_owner_topups": float(sum(owner_topup.values())),
-                "total_cash_withdrawals": float(sum(cash_withdrawal.values())),
-                "total_business_payables_paid": float(sum(payable.values())),
-                "total_external_payables_paid": float(sum(external_payable.values())),
-                "total_other_income": float(sum(other_income.values())),
-                "total_budget_spend": float(sum(budget_spend.values())),
+                "total_owner_topups": money(sum(owner_topup.values())),
+                "total_cash_withdrawals": money(sum(cash_withdrawal.values())),
+                "total_business_payables_paid": money(sum(payable.values())),
+                "total_external_payables_paid": money(sum(external_payable.values())),
+                "total_other_income": money(sum(other_income.values())),
+                "total_budget_spend": money(sum(budget_spend.values())),
                 "net_balance": net_bal,
                 "cash_on_hand": cash_hand,
                 "collection_count": len(daily["collection_groups"]),
                 "total_orders": daily["total_orders"],
                 "total_sessions": len(daily["session_ids"]),
-                "checkout_methods": {m: float(v) for m, v in checkout.items()},
-                "cowork_methods": {m: float(v) for m, v in cowork.items()},
-                "cafe_methods": {m: float(v) for m, v in cafe.items()},
-                "discount_methods": {m: float(v) for m, v in discounts.items()},
-                "refund_methods": {m: float(v) for m, v in refund.items()},
+                "checkout_methods": {m: money(v) for m, v in checkout.items()},
+                "cowork_methods": {m: money(v) for m, v in cowork.items()},
+                "cafe_methods": {m: money(v) for m, v in cafe.items()},
+                "discount_methods": {m: money(v) for m, v in discounts.items()},
+                "refund_methods": {m: money(v) for m, v in refund.items()},
                 "refund_counts": {m: daily["refund_counts"][m] for m in METHODS},
-                "credit_received_methods": {m: float(v) for m, v in credit_received.items()},
-                "credit_applied_methods": {m: float(v) for m, v in credit_applied.items()},
-                "collection_methods": {m: float(v) for m, v in collection.items()},
-                "expense_methods": {m: float(v) for m, v in expense.items()},
-                "external_expense_methods": {m: float(v) for m, v in external_expense.items()},
-                "expense_paid_methods": {m: float(v) for m, v in daily["expense_paid_methods"].items()},
-                "expense_void_methods": {m: float(v) for m, v in daily["expense_void_methods"].items()},
-                "payable_methods": {m: float(v) for m, v in payable.items()},
-                "external_payable_methods": {m: float(v) for m, v in external_payable.items()},
-                "payable_paid_methods": {m: float(v) for m, v in daily["payable_paid_methods"].items()},
-                "adjustment_income_methods": {m: float(v) for m, v in other_income.items()},
-                "adjustment_expense_methods": {m: float(v) for m, v in budget_spend.items()},
-                "owner_topup_methods": {m: float(v) for m, v in owner_topup.items()},
-                "cash_withdrawal_methods": {m: float(v) for m, v in cash_withdrawal.items()},
-                "owner_reimbursement_methods": {m: float(v) for m, v in daily["owner_reimbursement_methods"].items()},
-                "cash_box_movements": {box: float(v) for box, v in daily["cash_box_movements"].items()},
+                "credit_received_methods": {m: money(v) for m, v in credit_received.items()},
+                "credit_applied_methods": {m: money(v) for m, v in credit_applied.items()},
+                "collection_methods": {m: money(v) for m, v in collection.items()},
+                "expense_methods": {m: money(v) for m, v in expense.items()},
+                "external_expense_methods": {m: money(v) for m, v in external_expense.items()},
+                "expense_paid_methods": {m: money(v) for m, v in daily["expense_paid_methods"].items()},
+                "expense_void_methods": {m: money(v) for m, v in daily["expense_void_methods"].items()},
+                "payable_methods": {m: money(v) for m, v in payable.items()},
+                "external_payable_methods": {m: money(v) for m, v in external_payable.items()},
+                "payable_paid_methods": {m: money(v) for m, v in daily["payable_paid_methods"].items()},
+                "adjustment_income_methods": {m: money(v) for m, v in other_income.items()},
+                "adjustment_expense_methods": {m: money(v) for m, v in budget_spend.items()},
+                "owner_topup_methods": {m: money(v) for m, v in owner_topup.items()},
+                "cash_withdrawal_methods": {m: money(v) for m, v in cash_withdrawal.items()},
+                "owner_reimbursement_methods": {m: money(v) for m, v in daily["owner_reimbursement_methods"].items()},
+                "cash_box_movements": {box: money(v) for box, v in daily["cash_box_movements"].items()},
                 "cash_box_unassigned_count": daily["cash_box_unassigned_count"],
-                **{flow: {box: float(v) for box, v in daily[flow].items()}
+                **{flow: {box: money(v) for box, v in daily[flow].items()}
                    for flow in ("cash_box_receipts", "cash_box_spending", "cash_box_topups", "cash_box_withdrawals")},
-                **{f"{m}_total": float(checkout[m]) for m in METHODS},
+                **{f"{m}_total": money(checkout[m]) for m in METHODS},
                 **{f"{m}_count": daily["checkout_counts"][m] for m in METHODS},
-                **{f"{m}_refund": float(refund[m]) for m in METHODS},
+                **{f"{m}_refund": money(refund[m]) for m in METHODS},
             }
         return result
 
@@ -500,11 +515,8 @@ class SalesRepository:
     def get_daily_transactions(self, report_date: date) -> list[Transaction]:
         start_at, end_at = manila_day_bounds(report_date)
         return (
-            Transaction.query.filter(
-                Transaction.created_at >= start_at,
-                Transaction.created_at < end_at,
-            )
-            .order_by(Transaction.created_at)
+            Transaction.query.filter(Transaction.payment_range(start_at, end_at))
+            .order_by(Transaction.effective_paid_at, Transaction.id)
             .all()
         )
 

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from math import isfinite
-
-from flask import Blueprint, jsonify, request, render_template, session
+from flask import current_app, Blueprint, jsonify, request, render_template, session
 
 from app.repositories.receivable_repository import ReceivableRepository, ReceivableTabConflict
 from app.services.receivable_service import ReceivableService
@@ -47,6 +45,12 @@ def api_tabs() -> tuple:
     return jsonify({"success": True, **_service.tabs(chosen, search, page, per_page)}), 200
 
 
+@receivables_bp.get("/api/receivables/menu")
+@admin_required
+def api_receivable_menu() -> tuple:
+    return jsonify({"success": True, "data": _service.menu_catalog()}), 200
+
+
 @receivables_bp.get("/api/receivables/customer-suggestions")
 @admin_required
 def api_customer_suggestions() -> tuple:
@@ -87,24 +91,19 @@ def api_tab_payments(tab_id: int) -> tuple:
 @idempotent_request("admin-create-receivable")
 def api_create_receivable() -> tuple:
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Invalid receivable entry."}), 400
     user_id = session.get("user_id")
     
     if not user_id:
         return jsonify({"success": False, "error": "User session not found"}), 400
     
     try:
-        amount_owed = float(data.get("amount_owed"))
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "Invalid amount"}), 400
-    if not isfinite(amount_owed) or amount_owed <= 0:
-        return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
-
-    try:
         result = _service.create(
             customer_name=data.get("customer_name"),
             customer_contact=data.get("customer_contact"),
             items_description=data.get("items_description"),
-            amount_owed=amount_owed,
+            amount_owed=data.get("amount_owed"),
             due_date=data.get("due_date"),
             created_by=user_id,
             session_id=data.get("session_id"),
@@ -112,13 +111,19 @@ def api_create_receivable() -> tuple:
             notes=data.get("notes"),
             tab_id=data.get("tab_id"),
             actor_role="admin",
+            account_id=data.get("account_id"),
+            items=data.get("items"),
+            ordered_by=data.get("ordered_by"),
         )
     except ReceivableTabConflict as exc:
         return jsonify({"success": False, "error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     if result.get("success"):
-        emit_receivables_update('create', result.get("data", {}))
+        try:
+            emit_receivables_update('create', result.get("data", {}))
+        except Exception:
+            current_app.logger.exception("Receivable saved; live notification failed")
     return jsonify(result), 201
 
 

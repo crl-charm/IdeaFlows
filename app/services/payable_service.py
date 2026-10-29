@@ -20,8 +20,8 @@ from app.services.cash_box_service import CashBoxService, BOXES
 class PayableService:
     repo: PayableRepository
 
-    def list_all(self) -> list[dict[str, Any]]:
-        payables = self.repo.list_all()
+    def list_all(self, *, include_salary=True) -> list[dict[str, Any]]:
+        payables = self.repo.list_all(include_salary=include_salary)
         return [
             {
                 "id": p.id,
@@ -87,7 +87,7 @@ class PayableService:
         return {"success": True, "data": {"id": payable.id}}
 
     def mark_paid(self, payable_id: int, amount: Any, payment_method: str, paid_by: int, request_key: str | None = None,
-                  cash_box: str | None = None) -> dict[str, Any] | tuple[dict[str, Any], int]:
+                  cash_box: str | None = None, *, include_salary=True) -> dict[str, Any] | tuple[dict[str, Any], int]:
         if not isinstance(payment_method, str) or payment_method not in VALID_PAYMENT_METHODS:
             return {"error": "Invalid payment method"}, 400
         if request_key and len(request_key) > 200:
@@ -122,13 +122,13 @@ class PayableService:
                 paid_at = datetime.utcnow()
                 if manila_date(paid_at) != day:
                     return {"error": "The business day changed. Please retry."}, 409
+                payable = self.repo.get_for_update(payable_id, include_salary=include_salary)
+                if not payable:
+                    return {"error": "Payable not found"}, 404
                 if request_key:
                     existing = self.repo.get_payment_by_request_key(request_key)
                     if existing:
                         return replay(existing)
-                payable = self.repo.get_for_update(payable_id)
-                if not payable:
-                    return {"error": "Payable not found"}, 404
                 if payable.cancelled_at:
                     return {"error": "This payable was cancelled."}, 409
                 debt_before = payable.amount_owed - payable.partial_paid
@@ -163,10 +163,10 @@ class PayableService:
             return {"error": str(exc)}, 503
         return {"success": True, "payment_id": payment.id, "funding_source": source}
 
-    def get_due_count(self) -> int:
+    def get_due_count(self, *, include_salary=True) -> int:
         today = manila_date(datetime.utcnow())
         three_days_later = today + timedelta(days=3)
-        count = Payable.query.filter(
+        count = self.repo.visible(include_salary).filter(
             Payable.status != "Paid",
             Payable.cancelled_at.is_(None),
             Payable.due_date <= three_days_later

@@ -4,6 +4,19 @@ from hashlib import sha256
 from app import db
 
 
+class ReceivableAccount(db.Model):
+    __tablename__ = "receivable_accounts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_name = db.Column(db.String(100), nullable=False)
+    customer_contact = db.Column(db.String(100), nullable=True)
+    normalized_name = db.Column(db.String(100), nullable=False, index=True)
+    normalized_contact = db.Column(db.String(100), nullable=False, default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    history_reviewed_at = db.Column(db.DateTime, nullable=True)
+    history_reviewed_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+
 class ReceivableTab(db.Model):
     __tablename__ = "receivable_tabs"
 
@@ -15,6 +28,8 @@ class ReceivableTab(db.Model):
     active_key = db.Column(db.String(64), unique=True, nullable=True)
     opened_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     closed_at = db.Column(db.DateTime, nullable=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("receivable_accounts.id"), nullable=True, index=True)
+    account = db.relationship("ReceivableAccount", backref="tabs")
 
     @staticmethod
     def identity(name: str, contact: str | None) -> tuple[str, str, str | None]:
@@ -24,6 +39,20 @@ class ReceivableTab(db.Model):
         return normalized_name, normalized_contact, key
 
 
+class ReceivableAccountEvent(db.Model):
+    """Association changes only; never changes the underlying financial history."""
+    __tablename__ = "receivable_account_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("receivable_accounts.id"), nullable=False)
+    previous_account_id = db.Column(db.Integer, db.ForeignKey("receivable_accounts.id"), nullable=True)
+    previous_tab_id = db.Column(db.Integer, db.ForeignKey("receivable_tabs.id"), nullable=True)
+    receivable_id = db.Column(db.Integer, db.ForeignKey("receivables.id"), nullable=True)
+    tab_id = db.Column(db.Integer, db.ForeignKey("receivable_tabs.id"), nullable=True)
+    action = db.Column(db.String(30), nullable=False)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    recorded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
 class Receivable(db.Model):
     __tablename__ = "receivables"
 
@@ -32,6 +61,7 @@ class Receivable(db.Model):
     customer_contact = db.Column(db.String(100), nullable=True)
     items_description = db.Column(db.Text, nullable=False)
     notes = db.Column(db.Text, nullable=True)
+    ordered_by = db.Column(db.String(100), nullable=True)
     amount_owed = db.Column(db.Numeric(10, 2), nullable=False)
     due_date = db.Column(db.Date, nullable=False)
     paid = db.Column(db.Boolean, default=False, nullable=False)
@@ -47,6 +77,23 @@ class Receivable(db.Model):
     created_by_user = db.relationship("User", backref="receivables")
     session = db.relationship("CustomerSession", backref="receivables")
     tab = db.relationship("ReceivableTab", backref="receivables")
+
+
+class ReceivableItem(db.Model):
+    """Price/name snapshots, independent of kitchen orders and inventory."""
+    __tablename__ = "receivable_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    receivable_id = db.Column(db.Integer, db.ForeignKey("receivables.id"), nullable=False, index=True)
+    menu_item_id = db.Column(db.Integer, nullable=True)
+    name_snapshot = db.Column(db.String(100), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    base_price = db.Column(db.Numeric(10, 2), nullable=False)
+    unit_price = db.Column(db.Numeric(10, 2), nullable=False)
+    no_rice = db.Column(db.Boolean, nullable=False, default=False)
+    no_egg = db.Column(db.Boolean, nullable=False, default=False)
+
+    receivable = db.relationship("Receivable", backref="items")
 
 
 class ReceivablePayment(db.Model):

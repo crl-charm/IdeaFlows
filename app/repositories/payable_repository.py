@@ -8,21 +8,29 @@ from sqlalchemy.orm import selectinload
 
 from app import db
 from app.models.payable import Payable, PayablePayment
+from app.models.expense import Expense
+from sqlalchemy import or_
 
 
 class PayableRepository:
+    @staticmethod
+    def visible(include_salary=True):
+        query = Payable.query
+        return query if include_salary else query.filter(or_(Payable.owner_expense_id.is_(None),
+            ~Payable.owner_expense_id.in_(db.select(Expense.id).where(Expense.is_salary))))
+
     def get(self, payable_id: int) -> Optional[Payable]:
         return Payable.query.filter_by(id=payable_id).first()
 
-    def get_for_update(self, payable_id: int) -> Optional[Payable]:
-        return Payable.query.filter_by(id=payable_id).with_for_update().first()
+    def get_for_update(self, payable_id: int, *, include_salary=True) -> Optional[Payable]:
+        return self.visible(include_salary).filter_by(id=payable_id).with_for_update().first()
 
     def get_payment_by_request_key(self, request_key: str) -> Optional[PayablePayment]:
         return PayablePayment.query.filter_by(request_key=request_key).first()
 
-    def list_all(self) -> list[Payable]:
+    def list_all(self, *, include_salary=True) -> list[Payable]:
         return (
-            Payable.query.options(selectinload(Payable.payments).selectinload(PayablePayment.paid_by_user))
+            self.visible(include_salary).options(selectinload(Payable.payments).selectinload(PayablePayment.paid_by_user))
             .order_by(Payable.incurred_date.desc(), Payable.id.desc())
             .all()
         )

@@ -25,7 +25,7 @@ class OrderRepository:
         )
 
     def get_session_for_update(self, session_id: int) -> Optional[CustomerSession]:
-        return CustomerSession.query.filter_by(id=session_id).with_for_update().first()
+        return CustomerSession.query.filter_by(id=session_id).populate_existing().with_for_update().first()
 
     def get_order(self, order_id: int) -> Optional[Order]:
         return (

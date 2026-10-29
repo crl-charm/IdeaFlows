@@ -69,6 +69,10 @@ def view_receipt(session_id: int) -> str:
                       max(0, amount_tendered - total_bill + float(tx.credit_applied or 0))
                       if amount_tendered is not None and tx else 0),
         is_voided=bool(tx.is_voided) if tx else False,
+        recorded_late=bool(tx.is_missed_checkout) if tx else False,
+        paid_at=(tx.effective_paid_at + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if tx else None,
+        recorded_at=(tx.created_at + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M:%S %p") if tx else None,
+        collected_by=tx.collected_by if tx else None,
         receipt_date=((tx.created_at if food_only and tx else sess.time_in) + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"),
         orders=orders,
     )

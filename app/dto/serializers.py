@@ -181,12 +181,20 @@ def serialize_transaction(transaction):
         "seconds_spent": seconds_spent,
         "has_time_pause": (billable_us is not None and wall_microseconds is not None
                            and billable_us < wall_microseconds),
+        "has_time_history": bool(session and session.has_time_history),
         "minutes_spent": round(seconds_spent / 60, 2) if seconds_spent is not None else None,
         "created_date": (
             (transaction.created_at + timedelta(hours=8)).strftime("%Y-%m-%d")
             if transaction.created_at
             else None
         ),
+        "payment_date": (transaction.effective_paid_at + timedelta(hours=8)).strftime("%Y-%m-%d")
+        if transaction.effective_paid_at else None,
+        "paid_at": (transaction.effective_paid_at + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p")
+        if transaction.effective_paid_at else None,
+        "recorded_at": (transaction.created_at + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M:%S %p")
+        if transaction.created_at else None,
+        "recorded_late": bool(transaction.is_missed_checkout),
         "amount_tendered": amount_tendered,
         "change_given": change_given,
         "is_voided": bool(getattr(transaction, "is_voided", False)),

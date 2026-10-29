@@ -3,25 +3,26 @@ from __future__ import annotations
 from datetime import datetime, date, timedelta
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import Integer, cast, func
 
 from app import db
 from app.models import Transaction, Order, CustomerSession, MenuItem
-from app.utils.dates import day_bounds
+from app.utils.dates import manila_date, manila_day_bounds, manila_sql_datetime
 
 
 class AnalyticsRepository:
     def daily_revenue(self, days: int = 30) -> list[dict[str, Any]]:
-        start_date = date.today() - timedelta(days=days)
-        start_at, _ = day_bounds(start_date)
+        start_date = manila_date(datetime.utcnow()) - timedelta(days=days)
+        start_at, _ = manila_day_bounds(start_date)
+        day = func.date(manila_sql_datetime(Transaction.effective_paid_at))
         result = (
             db.session.query(
-                func.date(Transaction.created_at).label("date"),
+                day.label("date"),
                 func.sum(Transaction.total_bill).label("revenue"),
             )
-            .filter(Transaction.created_at >= start_at)
-            .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
+            .filter(Transaction.payment_range(start_at))
+            .group_by(day)
+            .order_by(day)
             .all()
         )
         return [
@@ -66,14 +67,16 @@ class AnalyticsRepository:
         return [{"space_id": row.space_type_id} for row in result]
 
     def peak_hours(self) -> list[dict[str, Any]]:
+        local_time = manila_sql_datetime(Transaction.effective_paid_at)
+        hour = cast(func.strftime("%H", local_time), Integer) if db.engine.dialect.name == "sqlite" else func.hour(local_time)
         result = (
             db.session.query(
-                func.hour(Transaction.created_at).label("hour"),
+                hour.label("hour"),
                 func.count(Transaction.id).label("count"),
             )
-            .filter(Transaction.created_at.isnot(None))
-            .group_by(func.hour(Transaction.created_at))
-            .order_by(func.hour(Transaction.created_at))
+            .filter(Transaction.effective_paid_at.isnot(None))
+            .group_by(hour)
+            .order_by(hour)
             .all()
         )
         return [

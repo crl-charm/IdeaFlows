@@ -304,7 +304,7 @@ class OrderService:
     def void_item(self, item_id: int, *, actor=None, admin=False, request_key=None, return_stock=True, reason="Cancelled before preparation"):
         from uuid import uuid4
         from app import db
-        from app.models import OrderItem, InventoryItem, InventoryLog
+        from app.models import Order, OrderItem, InventoryItem, InventoryLog
         from app.models.inventory import InventoryAction, OrderInventoryAllocation
         from app.services.stock_management import action_key, record_action
         from app.services.menu_availability import StockError
@@ -315,12 +315,18 @@ class OrderService:
             key = action_key(request_key or str(uuid4()), actor)
             if InventoryAction.query.filter_by(request_key=key).first():
                 return {"message": "This cancellation was already recorded.", "duplicate": True}
+            session_id = (db.session.query(Order.customer_session_id).join(OrderItem)
+                          .filter(OrderItem.id == item_id).scalar())
+            if session_id is None:
+                raise StockError("Item not found.", "NOT_FOUND", 404)
+            # Use the same parent-first lock order as adding food and checkout.
+            # A cancellation must not change a bill that just finished checkout.
+            sess = self.repo.get_session_for_update(session_id)
+            if not sess or sess.status != "active":
+                raise StockError("Paid or closed sessions need an owner billing correction.", "SESSION_CLOSED", 409)
             item = OrderItem.query.filter_by(id=item_id).populate_existing().with_for_update().first()
             if not item:
                 raise StockError("Item not found.", "NOT_FOUND", 404)
-            sess = self.repo.get_session(item.order.customer_session_id)
-            if not sess or sess.status != "active":
-                raise StockError("Paid or closed sessions need an owner billing correction.", "SESSION_CLOSED", 409)
             prepared = _item_is_ready(item.status) or item.order.status in {"serving", "done"}
             if prepared and not admin:
                 raise StockError("Ask the owner to cancel food already prepared or served.", "FORBIDDEN", 403)

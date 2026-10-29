@@ -166,8 +166,8 @@ def test_food_checkout_reconciles_cash_gcash_and_daily_balance(app, client):
 
     with app.app_context():
         cash_tx, gcash_tx = Transaction.query.order_by(Transaction.id).all()
-        cash_tx.created_at = datetime(2026, 9, 28, 15, 59)  # 23:59 Manila
-        gcash_tx.created_at = datetime(2026, 9, 28, 16, 1)  # 00:01 Manila next day
+        cash_tx.paid_at = datetime(2026, 9, 28, 15, 59)  # 23:59 Manila
+        gcash_tx.paid_at = datetime(2026, 9, 28, 16, 1)  # 00:01 Manila next day
         db.session.commit()
         rows = SalesRepository().daily_ledger(date(2026, 9, 28), date(2026, 9, 29))
         assert rows[date(2026, 9, 28)]["cash_total"] == 80

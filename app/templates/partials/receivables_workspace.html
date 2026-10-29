@@ -1,7 +1,7 @@
 <div class="container-fluid" id="receivables-workspace" data-api-base="{{ receivables_base }}">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div><h1 class="h3 mb-0">Receivables / Customer Utang</h1><small id="receivables-count" class="text-muted">Loading records…</small></div>
-    <button type="button" class="btn btn-warning" id="new-receivable">+ New Receivable</button>
+    <div class="d-flex flex-wrap gap-2">{% if session.get('role') == 'admin' %}<a href="/admin/reports" class="btn btn-outline-secondary">Customer Statements</a>{% endif %}<button type="button" class="btn btn-warning" id="new-receivable">+ New Receivable</button></div>
   </div>
 
   <div class="row g-2 mb-3">
@@ -39,7 +39,19 @@
     <div class="mb-2"><label class="form-label" for="customerName">Customer name *</label><input id="customerName" name="customer_name" class="form-control" maxlength="100" required></div>
     <div class="mb-2"><label class="form-label" for="customerContact">Contact</label><input id="customerContact" name="customer_contact" class="form-control" maxlength="100"></div>
     <div class="mb-2"><label class="form-label" for="matchingTabs">Matching customers</label><select id="matchingTabs" class="form-select" aria-describedby="matchingCustomersStatus"><option value="">New customer / keep typing</option></select><div id="matchingCustomersStatus" class="form-text" role="status" aria-live="polite">Type at least two letters of a name or contact. Choose a match to use its open tab or start a new cycle.</div></div>
-    <div class="mb-2"><label class="form-label" for="itemsDesc">Items taken *</label><textarea id="itemsDesc" name="items_description" class="form-control" required></textarea></div>
+    <div class="mb-2"><label class="form-label" for="receivableOrderedBy">Ordered by / Taken by (optional)</label><input id="receivableOrderedBy" name="ordered_by" class="form-control" maxlength="100"><div class="form-text">Customer-side contact, such as the building representative.</div></div>
+    <div class="mb-2"><label class="form-label" for="receivableEntryMode">Items taken</label><select id="receivableEntryMode" class="form-select"><option value="menu">Menu items and quantities</option><option value="manual">Manual / historical description and amount</option></select></div>
+    <div id="receivableMenuPanel" class="border rounded p-2 mb-2">
+      <p class="small text-muted">Record items already taken on credit. This does not place a kitchen order or deduct stock again. Past purchases with unverified old prices should use a manual historical entry.</p>
+      <label for="receivableMenuSearch" class="form-label">Find menu item</label><input type="search" id="receivableMenuSearch" class="form-control mb-2" placeholder="Type a food or drink name">
+      <label for="receivableMenuItem" class="form-label">Menu item</label><select id="receivableMenuItem" class="form-select mb-2"></select>
+      <label for="receivableMenuQty" class="form-label">Quantity</label><input type="number" id="receivableMenuQty" class="form-control mb-2" value="1" min="1" max="999999" step="1">
+      <div class="form-check"><input type="checkbox" id="receivableNoRice" class="form-check-input"><label for="receivableNoRice" class="form-check-label">No rice (₱18 less per item)</label></div>
+      <div class="form-check mb-2"><input type="checkbox" id="receivableNoEgg" class="form-check-input"><label for="receivableNoEgg" class="form-check-label">No egg (₱18 less per item)</label></div>
+      <div class="d-flex flex-wrap gap-2"><button type="button" id="receivableAddItem" class="btn btn-outline-primary btn-sm">Add item</button><button type="button" id="receivableRefreshMenu" class="btn btn-outline-secondary btn-sm">Refresh menu</button></div>
+      <p id="receivableMenuStatus" class="small mt-2" role="status" aria-live="polite"></p><ul id="receivableItemLines" class="list-unstyled mb-0"></ul>
+    </div>
+    <div class="mb-2"><label class="form-label" for="itemsDesc">Item description *</label><textarea id="itemsDesc" name="items_description" class="form-control" maxlength="10000" required></textarea></div>
     <div class="mb-2"><label class="form-label" for="receivableNotes">Borrowed utensils / notes</label><textarea id="receivableNotes" name="notes" class="form-control" maxlength="2000"></textarea></div>
     <div class="mb-2"><label class="form-label" for="amountOwed">Amount owed (₱) *</label><input id="amountOwed" name="amount_owed" type="number" min="0.01" step="0.01" class="form-control" required></div>
     <div class="mb-2"><span class="form-label d-block">Approved by staff</span><strong>{{ session.get('username', 'Signed-in user') }}</strong></div>
@@ -51,6 +63,7 @@
 <div class="modal fade" id="viewOrderModal" tabindex="-1" aria-labelledby="viewOrderModalLabel"><div class="modal-dialog modal-lg"><div class="modal-content">
   <div class="modal-header"><h2 class="modal-title h5" id="viewOrderModalLabel">Customer tab: <span id="viewCustomerName"></span></h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
   <div class="modal-body"><p id="tab-contact" class="small text-muted"></p>
+    {% if session.get('role') == 'admin' %}<a id="tab-export-statement" class="btn btn-outline-secondary mb-3" href="/admin/reports">Export Statement / View all customer history</a>{% endif %}
     <div class="row g-2 mb-3"><div class="col-4">Orders total<br><strong id="viewOrdersTotal">₱0.00</strong></div><div class="col-4">Paid so far<br><strong id="viewPaidTotal">₱0.00</strong></div><div class="col-4">All-date still owed<br><strong id="viewOutstandingBalance">₱0.00</strong></div></div>
     <h3 class="h6">Orders in this debt cycle</h3><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date Taken</th><th>Items</th><th>Notes</th><th>Original</th><th>Paid</th><th>Still owed</th><th>Due</th><th>Recorded by</th></tr></thead><tbody id="view-order-table-body"></tbody></table></div>
     <div id="customerPaymentControls" class="border rounded p-3 mt-3"><h3 class="h6">Record payment for the whole tab</h3><p class="small text-muted">Payment applies to oldest unpaid orders first, across all dates.</p><div class="row g-2 align-items-end">

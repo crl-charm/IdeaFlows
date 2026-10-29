@@ -1,0 +1,43 @@
+{% if system_updates %}
+<div class="modal fade" id="systemUpdatesModal" tabindex="-1" aria-labelledby="systemUpdatesTitle" aria-hidden="true"
+     data-read-key="ideaflow:updates:seen:{{ session.get('user_id') }}:{{ session.get('role') }}">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="systemUpdatesTitle"><i class="bi bi-bell me-2" aria-hidden="true"></i>What's new in IdeaFlow</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close system updates"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Recent changes and a quick guide to using them. Choose an update to see the details.</p>
+        {% for update in system_updates %}
+        <details class="system-update border rounded-3 p-3 mb-3" data-update-id="{{ update.id }}">
+          <summary>
+            <time class="small text-muted d-block mb-1" datetime="{{ update.date }}">{{ update.date }}</time>
+            <strong class="d-block mb-1">{{ update.title }}</strong>
+            <span class="d-block small text-secondary">{{ update.summary }}</span>
+            <span class="system-update-expand d-block small fw-semibold mt-2"><i class="bi bi-chevron-down me-1" aria-hidden="true"></i>View details</span>
+            <span class="system-update-collapse small fw-semibold mt-2"><i class="bi bi-chevron-up me-1" aria-hidden="true"></i>Hide details</span>
+          </summary>
+          <div class="border-top pt-3 mt-3 small">
+            <dl class="mb-3">
+              <dt>What changed</dt>
+              <dd>{{ update.changed }}</dd>
+              <dt>Where to find it</dt>
+              <dd class="mb-0">{{ update.location }}</dd>
+            </dl>
+            <h6 class="small fw-semibold">How to use it</h6>
+            <ol class="ps-3 mb-3">
+              {% for step in update.steps %}<li class="mb-2">{{ step }}</li>{% endfor %}
+            </ol>
+            <a class="btn btn-warning btn-sm system-update-link" href="{{ update.url }}">Open page<span class="visually-hidden">: {{ update.title }}</span><i class="bi bi-arrow-right ms-2" aria-hidden="true"></i></a>
+          </div>
+        </details>
+        {% endfor %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

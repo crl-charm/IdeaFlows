@@ -8,6 +8,7 @@ from .menu_item import MenuItem, MenuItemIngredient
 from .order import Order
 from .order_item import OrderItem
 from .transaction import Transaction
+from .missed_checkout_correction import MissedCheckoutCorrection
 from .checkout_void import CheckoutVoidRequest
 from .boardroom_booking import BoardroomBooking
 from .booking_change import BookingChange
@@ -15,7 +16,7 @@ from .lounge_booking import LoungeBooking
 from .staff_attendance import StaffAttendance
 from .staff_shift import StaffShift
 from .inventory import InventoryItem, InventoryLog, OrderInventoryAllocation, InventoryAction
-from .receivable import Receivable, ReceivablePayment, ReceivableTab
+from .receivable import Receivable, ReceivablePayment, ReceivableTab, ReceivableAccount, ReceivableAccountEvent, ReceivableItem
 from .payable import Payable, PayablePayment
 from .expense import Expense
 from .cash_box_event import CashBoxEvent
@@ -40,6 +41,7 @@ __all__ = [
     'Order',
     'OrderItem',
     'Transaction',
+    'MissedCheckoutCorrection',
     'CheckoutVoidRequest',
     'BoardroomBooking',
     'BookingChange',
@@ -50,6 +52,10 @@ __all__ = [
     'InventoryLog',
     'Receivable',
     'ReceivablePayment',
+    'ReceivableTab',
+    'ReceivableAccount',
+    'ReceivableAccountEvent',
+    'ReceivableItem',
     'Payable',
     'PayablePayment',
     'Expense',

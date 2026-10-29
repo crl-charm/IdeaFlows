@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, session, redirect, request
 from app.utils.auth import login_required
 from app.models import SpaceType
+from app.core.clock import SystemClock
 
 bp = Blueprint("dashboard", __name__)
 
@@ -16,6 +17,7 @@ def dashboard():
     return render_template(
         "dashboard.html", space_types=space_types, selected_space=selected_space,
         boardroom_view=requested_space == "Boardroom", food_only_view=False,
+        checkin_server_now=SystemClock().now().isoformat(timespec="milliseconds") + "Z",
     )
 
 

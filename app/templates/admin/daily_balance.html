@@ -354,6 +354,7 @@ function balanceMethodCard(method, v, prefix) {
 }
 function balanceAudit(report) {
   return balanceGroup('Recorded snapshot', [['Recorded by',report.generated_by,true],['Recorded at (Manila)',balanceRecordedAt(report.generated_at),true]]) +
+    (report.late_checkouts?.length ? `<h6>Late-recorded payments</h6>${report.late_checkouts.map(item => `<p class="small">Checkout #${balanceText(item.transaction_id)} · Paid ${balanceText(item.paid_at.replace('T',' '))} · Recorded ${balanceText(item.recorded_at.replace('T',' '))} (Manila). Saved snapshots keep their original values; checkout void/refund rules still apply.</p>`).join('')}` : '') +
     `<h6>Notes</h6><p class="balance-audit">${balanceText(report.notes || 'No notes')}</p>`;
 }
 function dailyReportCard(r) {

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from math import isfinite
-
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import current_app, Blueprint, jsonify, render_template, request, session
 
 from app.repositories.receivable_repository import ReceivableRepository, ReceivableTabConflict
 from app.services.receivable_service import ReceivableService
-from app.utils.auth import login_required
+from app.utils.auth import staff_or_admin_required
 from app.core.idempotency import idempotent_request
 from app.core.socketio_handlers import emit_receivables_update
 
@@ -16,13 +14,13 @@ _service = ReceivableService(repo=ReceivableRepository())
 
 
 @staff_receivables_bp.route("", methods=["GET"])
-@login_required
+@staff_or_admin_required
 def view_receivables() -> str:
     return render_template("staff/receivables.html")
 
 
 @staff_receivables_bp.route("/api/receivables", methods=["GET"])
-@login_required
+@staff_or_admin_required
 def api_list_receivables() -> tuple:
     if any(key in request.args for key in ("page", "date", "search", "status", "per_page")):
         try:
@@ -38,7 +36,7 @@ def api_list_receivables() -> tuple:
 
 
 @staff_receivables_bp.get("/api/receivables/tabs")
-@login_required
+@staff_or_admin_required
 def api_tabs() -> tuple:
     try:
         page, per_page, _, search, chosen = _service.parse_filters(request.args)
@@ -47,8 +45,14 @@ def api_tabs() -> tuple:
     return jsonify({"success": True, **_service.tabs(chosen, search, page, per_page)}), 200
 
 
+@staff_receivables_bp.get("/api/receivables/menu")
+@staff_or_admin_required
+def api_receivable_menu() -> tuple:
+    return jsonify({"success": True, "data": _service.menu_catalog()}), 200
+
+
 @staff_receivables_bp.get("/api/receivables/customer-suggestions")
-@login_required
+@staff_or_admin_required
 def api_customer_suggestions() -> tuple:
     try:
         matches = _service.suggest_customers(request.args.get("q", ""))
@@ -58,14 +62,14 @@ def api_customer_suggestions() -> tuple:
 
 
 @staff_receivables_bp.get("/api/receivables/tabs/<int:tab_id>")
-@login_required
+@staff_or_admin_required
 def api_tab_detail(tab_id: int) -> tuple:
     detail = _service.tab_detail(tab_id)
     return (jsonify({"success": True, "data": detail}), 200) if detail else (jsonify({"error": "Tab not found"}), 404)
 
 
 @staff_receivables_bp.route("/api/receivables/tabs/<int:tab_id>/payments", methods=["GET", "POST"])
-@login_required
+@staff_or_admin_required
 @idempotent_request("staff-tab-receivable-payment")
 def api_tab_payments(tab_id: int) -> tuple:
     if request.method == "GET":
@@ -83,7 +87,7 @@ def api_tab_payments(tab_id: int) -> tuple:
 
 
 @staff_receivables_bp.route("/api/receivables/unpaid", methods=["GET"])
-@login_required
+@staff_or_admin_required
 def api_unpaid_receivables() -> tuple:
     """Return the small overdue/unpaid dataset used by the staff badge."""
     receivables = _service.list_unpaid()
@@ -91,28 +95,23 @@ def api_unpaid_receivables() -> tuple:
 
 
 @staff_receivables_bp.route("/api/receivables", methods=["POST"])
-@login_required
+@staff_or_admin_required
 @idempotent_request("staff-create-receivable")
 def api_create_receivable() -> tuple:
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Invalid receivable entry."}), 400
     user_id = session.get("user_id")
 
     if not user_id:
         return jsonify({"success": False, "error": "User session not found"}), 400
 
     try:
-        amount = float(data.get("amount_owed"))
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "Invalid amount"}), 400
-    if not isfinite(amount) or amount <= 0:
-        return jsonify({"success": False, "error": "Amount must be greater than zero"}), 400
-
-    try:
         result = _service.create(
             customer_name=data.get("customer_name"),
             customer_contact=data.get("customer_contact"),
             items_description=data.get("items_description"),
-            amount_owed=amount,
+            amount_owed=data.get("amount_owed"),
             due_date=data.get("due_date"),
             created_by=user_id,
             session_id=session.get("session_id"),
@@ -120,16 +119,24 @@ def api_create_receivable() -> tuple:
             notes=data.get("notes"),
             tab_id=data.get("tab_id"),
             actor_role="staff",
+            account_id=data.get("account_id"),
+            items=data.get("items"),
+            ordered_by=data.get("ordered_by"),
         )
     except ReceivableTabConflict as exc:
         return jsonify({"success": False, "error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
+    if result.get("success"):
+        try:
+            emit_receivables_update("create", result.get("data", {}))
+        except Exception:
+            current_app.logger.exception("Receivable saved; live notification failed")
     return jsonify(result), 201
 
 
 @staff_receivables_bp.route("/api/receivables/customer-payment", methods=["POST"])
-@login_required
+@staff_or_admin_required
 @idempotent_request("staff-record-customer-payment")
 def api_record_customer_payment() -> tuple:
     data = request.get_json(silent=True) or {}
@@ -144,7 +151,7 @@ def api_record_customer_payment() -> tuple:
 
 
 @staff_receivables_bp.route("/api/receivables/customer-payments", methods=["GET"])
-@login_required
+@staff_or_admin_required
 def api_customer_payments() -> tuple:
     customer_name = request.args.get("customer_name", "").strip()
     if not customer_name:
@@ -153,7 +160,7 @@ def api_customer_payments() -> tuple:
 
 
 @staff_receivables_bp.route("/api/receivables/<int:rec_id>/notes", methods=["PATCH"])
-@login_required
+@staff_or_admin_required
 @idempotent_request("staff-update-receivable-notes")
 def api_update_notes(rec_id: int) -> tuple:
     data = request.get_json(silent=True) or {}

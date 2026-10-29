@@ -23,7 +23,7 @@
     <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setExpenseDates('today')">Today</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setExpenseDates('all')">Show All</button>
   </div>
-  <p class="text-muted small mb-2">Net spending by method. Owner/external-funded expenses do not reduce business funds. A later void appears on its reversal date.</p>
+  <p class="text-muted small mb-2">This history shows ordinary expenses. Cash totals also include admin-recorded spending. Owner/external-funded expenses do not reduce business funds. A later void appears on its reversal date.</p>
   <div class="row g-3 mb-4" id="expense-method-cards" aria-live="polite"></div>
 
   <!-- Desktop Table View -->
@@ -75,8 +75,8 @@
             <label class="form-label fw-semibold" for="expenseCategory">Category <span class="text-danger">*</span></label>
             <select id="expenseCategory" class="form-select" required>
               <option value="">Select category...</option>
-              {% for cat in categories %}
-              <option value="{{ cat }}">{{ cat|capitalize }}</option>
+              {% for cat,label in categories.items() %}
+              <option value="{{ cat }}">{{ label }}</option>
               {% endfor %}
             </select>
           </div>

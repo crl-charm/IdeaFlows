@@ -1,18 +1,19 @@
 {% extends "layout.html" %}
 
-{% block title %}Staff Expenses - IdeaHub{% endblock %}
+{% block title %}Expenses - IdeaFlow{% endblock %}
 
 {% block content %}
 
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Staff Expenses</h1>
+    <h1>Expenses</h1>
     <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#addExpenseModal">
-      + Log Expense
+      + Log Expense / Salary
     </button>
   </div>
 
   <!-- Date Filter Section -->
+  <p><a class="btn btn-sm btn-outline-secondary" href="/admin/reports?view=monthly#attendance">View Employee Attendance / Monthly Accountant Report</a></p>
   <div class="card mb-4 border-0 shadow-sm" style="background-color: #f8fafc; border-radius: 12px;">
     <div class="card-body p-3">
       <div class="row align-items-center g-3">
@@ -89,15 +90,11 @@
           <label class="form-label">Category *</label>
           <select id="category" class="form-select" required>
             <option value="">Select category...</option>
-            <option value="supplies">Supplies</option>
-            <option value="utilities">Utilities</option>
-            <option value="food">Food</option>
-            <option value="transport">Transport</option>
-            <option value="misc">Miscellaneous</option>
+            {% for value,label in categories.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label">Description *</label>
+          <label class="form-label" id="expenseDescriptionLabel">Description *</label>
           <textarea id="description" class="form-control" rows="3" required></textarea>
         </div>
         <div class="mb-3">
@@ -105,9 +102,15 @@
           <input type="number" id="amount" class="form-control" step="0.01" required>
         </div>
         <div class="mb-3">
-          <label class="form-label">Receipt / Expense Date *</label>
+          <label class="form-label" id="expenseDateLabel">Receipt / Expense Date *</label>
           <input type="date" id="expenseDate" class="form-control" required>
           <small class="text-muted">Daily Balance uses the Manila date when you log this payment.</small>
+        </div>
+        <div class="border rounded p-3 mb-3 d-none" id="salaryExpenseFields">
+          <label for="salaryEmployee" class="form-label">Employee *</label>
+          <select id="salaryEmployee" class="form-select mb-2"><option value="">Choose employee...</option>{% for employee in salary_employees %}<option value="{{ employee.id }}">{{ employee.full_name }} · {{ employee.username }}{% if not employee.is_active %} (inactive){% elif employee.role != 'staff' %} (former staff){% endif %}</option>{% endfor %}</select>
+          <label for="salaryMonth" class="form-label">Salary month *</label><input type="month" placeholder="YYYY-MM" id="salaryMonth" value="{{ current_month }}" class="form-control">
+          <p class="small text-muted mt-2 mb-0">Assign this payment to its salary month. The paid date and actual recording date stay separate. This is a recorded payment, not an automatic payroll calculation.</p>
         </div>
         <div class="mb-3">
           <label class="form-label" for="expensePaymentMethod">Paid using *</label>
@@ -129,11 +132,28 @@
   </div>
 </div>
 
+<div class="modal fade" id="classifySalaryModal" tabindex="-1" aria-labelledby="classifySalaryTitle"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title h5" id="classifySalaryTitle">Classify an existing salary payment</h2><button class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+  <form id="classifySalaryForm"><div class="modal-body">
+    <p id="classifySalarySummary"></p><p class="small text-muted">Assign the employee and salary month to this existing payment. Its amount, paid/posted dates and cash movements are preserved. The original category and your classification are kept in history.</p>
+    <label for="classifySalaryEmployee" class="form-label">Employee *</label><select id="classifySalaryEmployee" class="form-select mb-2" required><option value="">Choose employee...</option>{% for employee in salary_employees %}<option value="{{ employee.id }}">{{ employee.full_name }} · {{ employee.username }}{% if not employee.is_active %} (inactive){% endif %}</option>{% endfor %}</select>
+    <label for="classifySalaryMonth" class="form-label">Salary month *</label><input type="month" placeholder="YYYY-MM" id="classifySalaryMonth" class="form-control mb-3" required>
+    <div class="form-check"><input type="checkbox" class="form-check-input" id="confirmSalaryClassification" required><label class="form-check-label" for="confirmSalaryClassification">This payment was a salary for the selected employee and month.</label></div>
+    <p id="classifySalaryError" class="text-danger mt-2" role="alert"></p>
+  </div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-warning" id="classifySalarySave">Assign salary details</button></div></form>
+</div></div></div>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/expense-summary.js') }}"></script>
 <script>
+function updateExpenseSalaryChoices() {
+  const salary = document.getElementById('category').value === 'salaries';
+  document.getElementById('salaryExpenseFields').classList.toggle('d-none', !salary);
+  document.getElementById('expenseDescriptionLabel').textContent = salary ? 'Notes (optional)' : 'Description *';
+  document.getElementById('expenseDateLabel').textContent = salary ? 'Salary payment date *' : 'Receipt / Expense Date *';
+}
+document.getElementById('category').addEventListener('change', updateExpenseSalaryChoices);
 function updateExpenseCashChoices() {
   const cash = document.getElementById('expensePaymentMethod').value === 'cash';
   document.getElementById('expenseCashGroup').classList.toggle('d-none', !cash);
@@ -240,12 +260,12 @@ function renderFilteredExpenses() {
       <tr>
         <td>${exp.business_date}${exp.expense_date !== exp.business_date ? `<div class="small text-muted">Receipt: ${exp.expense_date}</div>` : ''}</td>
         <td><span class="badge bg-secondary">${escapeHTML(exp.category)}</span></td>
-        <td>${escapeHTML(exp.description)}</td>
+        <td>${escapeHTML(exp.description)}${exp.is_salary ? `<div class="small fw-semibold">${escapeHTML(exp.salary_employee_name || 'Employee needs review')} · Salary month ${escapeHTML(exp.salary_month || 'needs review')}</div>` : ''}${exp.salary_assigned_at ? `<div class="small text-muted">Classified ${escapeHTML(exp.salary_assigned_at)} by user #${exp.salary_assigned_by}; original category ${escapeHTML(exp.salary_original_category || '')}.</div>` : ''}</td>
         <td>₱${exp.amount.toFixed(2)}</td>
         <td>${escapeHTML(exp.payment_method.toUpperCase())}<div class="small">${funding}</div>${balance}</td>
         <td>${escapeHTML(exp.logged_by)}</td>
         <td>${exp.voided_at ? `Voided ${exp.void_business_date} by ${escapeHTML(exp.voided_by || '')}: ${escapeHTML(exp.void_reason || '')}${voidBalance}` : 'Active'}</td>
-        <td>${exp.voided_at ? '' : `<button class="btn btn-sm btn-danger" onclick="deleteExpense(${exp.id}, this)">Void</button>`}</td>
+        <td>${exp.voided_at ? '' : `<button class="btn btn-sm btn-danger" onclick="deleteExpense(${exp.id}, this)">Void</button>${exp.is_salary && !exp.salary_month && !exp.salary_employee_id && !exp.salary_employee_name ? `<button class="btn btn-sm btn-outline-secondary mt-1" onclick="openSalaryClassification(${exp.id})">Classify salary</button>` : ''}`}</td>
       </tr>
     `;
   });
@@ -267,8 +287,13 @@ async function createExpense() {
     cash_box: document.getElementById('expensePaymentMethod').value === 'cash' ? document.getElementById('expenseCashBox').value : null,
     repay_owner: document.getElementById('expensePaymentMethod').value === 'cash' && document.getElementById('expenseCashBox').value === 'owner' ? document.getElementById('expenseRepayOwner').value === 'yes' : null,
   };
+  if (payload.category === 'salaries') {
+    payload.salary_employee_id = document.getElementById('salaryEmployee').value;
+    payload.salary_month = document.getElementById('salaryMonth').value;
+    if (!payload.salary_employee_id || !payload.salary_month) { showToast('Choose an employee and salary month.', 'warning'); return; }
+  }
 
-  if (!payload.category || !payload.description.trim() || !payload.amount || !payload.expense_date || !payload.payment_method) {
+  if (!payload.category || (payload.category !== 'salaries' && !payload.description.trim()) || !payload.amount || !payload.expense_date || !payload.payment_method) {
     showToast('Please fill in all required fields.', 'warning');
     return;
   }
@@ -298,6 +323,8 @@ async function createExpense() {
       showToast(data.data.funding_source === 'external' ? 'Expense logged as externally funded; business balance unchanged.' : 'Expense logged', 'success');
       bootstrap.Modal.getInstance(document.getElementById('addExpenseModal')).hide();
       document.getElementById('category').value = '';
+      document.getElementById('salaryEmployee').value = '';
+      updateExpenseSalaryChoices();
       document.getElementById('description').value = '';
       document.getElementById('amount').value = '';
       document.getElementById('expenseDate').value = '';
@@ -344,5 +371,32 @@ async function deleteExpense(expId, button) {
     showToast(err.message || 'Error deleting expense', 'error');
   }
 }
+
+let classifyingSalaryId = null;
+function openSalaryClassification(expenseId) {
+  const expense = expensesCache.find(item => item.id === expenseId);
+  if (!expense) return;
+  classifyingSalaryId = expenseId;
+  document.getElementById('classifySalaryForm').reset();
+  document.getElementById('classifySalaryError').textContent = '';
+  document.getElementById('classifySalarySummary').textContent = `E-${expense.id} · ₱${expense.amount.toFixed(2)} · Paid ${expense.expense_date} · ${expense.description}`;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('classifySalaryModal')).show();
+}
+document.getElementById('classifySalaryForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = document.getElementById('classifySalarySave');
+  try {
+    const result = await runButtonAction(button, {label:'Assigning salary details...'}, key => fetchJSON(`/admin/expenses/api/expenses/${classifyingSalaryId}/salary-metadata`, {
+      method:'PATCH', headers:{'Content-Type':'application/json','Idempotency-Key':key}, body:JSON.stringify({
+        salary_employee_id:document.getElementById('classifySalaryEmployee').value,
+        salary_month:document.getElementById('classifySalaryMonth').value,
+        confirmed:document.getElementById('confirmSalaryClassification').checked
+      })
+    }));
+    if (!result?.success) return;
+    bootstrap.Modal.getInstance(document.getElementById('classifySalaryModal')).hide();
+    refreshExpenses();
+  } catch (error) { document.getElementById('classifySalaryError').textContent = error.message || 'Could not classify this salary.'; }
+});
 </script>
 {% endblock %}

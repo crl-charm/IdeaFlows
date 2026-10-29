@@ -27,7 +27,7 @@ def list_payables() -> str:
 @payables_bp.route("/api/payables", methods=["GET"])
 @staff_or_admin_required
 def api_list_payables() -> tuple:
-    payables = _service.list_all()
+    payables = _service.list_all(include_salary=session.get("role") == "admin")
     return jsonify({"success": True, "data": payables}), 200
 
 
@@ -86,6 +86,7 @@ def api_mark_paid(p_id: int) -> tuple:
     result = _service.mark_paid(
         p_id, data.get("amount"), data.get("payment_method"), session["user_id"],
         request.headers.get("Idempotency-Key"), data.get("cash_box"),
+        include_salary=session.get("role") == "admin",
     )
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
@@ -105,5 +106,5 @@ api_mark_paid._idempotency_action = "admin-mark-payable-paid"
 @payables_bp.route("/api/due-count", methods=["GET"])
 @staff_or_admin_required
 def api_due_count() -> tuple:
-    count = _service.get_due_count()
+    count = _service.get_due_count(include_salary=session.get("role") == "admin")
     return jsonify({"success": True, "count": count}), 200

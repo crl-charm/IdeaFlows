@@ -7,6 +7,7 @@ from sqlalchemy import func, and_
 
 from app.models import Transaction, OrderItem, MenuItem, Order, CustomerSession
 from app.services.export_service import ExportService
+from app.utils.dates import manila_date, manila_day_bounds, manila_sql_datetime
 
 
 class AnalyticsSummary(TypedDict):
@@ -23,12 +24,12 @@ class AnalyticsReportService(ExportService):
         """Get daily sales and top food analytics."""
         # Default to last 30 days if not specified
         if not end_date:
-            end_date = datetime.utcnow().date()
+            end_date = manila_date(datetime.utcnow())
         else:
             try:
                 end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
             except:
-                end_date = datetime.utcnow().date()
+                end_date = manila_date(datetime.utcnow())
         
         if not start_date:
             start_date = end_date - timedelta(days=30)
@@ -39,20 +40,17 @@ class AnalyticsReportService(ExportService):
                 start_date = end_date - timedelta(days=30)
 
         # Get daily sales data
+        payment_day = func.date(manila_sql_datetime(Transaction.effective_paid_at))
+        paid_range = Transaction.payment_range(manila_day_bounds(start_date)[0], manila_day_bounds(end_date)[1])
         daily_sales_rows = (
             self._db.session.query(
-                func.date(Transaction.created_at).label("date"),
+                payment_day.label("date"),
                 func.sum(Transaction.total_bill).label("revenue"),
                 func.count(Transaction.id).label("transactions"),
             )
-            .filter(
-                and_(
-                    func.date(Transaction.created_at) >= start_date,
-                    func.date(Transaction.created_at) <= end_date,
-                )
-            )
-            .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
+            .filter(paid_range)
+            .group_by(payment_day)
+            .order_by(payment_day)
             .all()
         )
         
@@ -103,12 +101,7 @@ class AnalyticsReportService(ExportService):
                 func.sum(Transaction.total_bill).label("total_spent"),
             )
             .join(Transaction, Transaction.session_id == CustomerSession.id)
-            .filter(
-                and_(
-                    func.date(Transaction.created_at) >= start_date,
-                    func.date(Transaction.created_at) <= end_date,
-                )
-            )
+            .filter(paid_range)
             .group_by(CustomerSession.customer_name)
             .order_by(func.sum(Transaction.total_bill).desc())
             .limit(10)

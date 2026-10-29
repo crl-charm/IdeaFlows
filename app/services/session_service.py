@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+import logging
 from typing import Any, Optional
 
 from app import db
@@ -11,15 +12,16 @@ from app.core.interfaces import Clock, Notifier
 from app.core.socketio_handlers import emit_current_customers_changed
 from app.models import (
     BoardroomBooking, BookingChange, CheckoutVoidRequest, CustomerSession,
-    Order, Receivable, SessionTimeEvent, Transaction,
+    MissedCheckoutCorrection, Order, Receivable, SessionTimeEvent, Transaction,
 )
 from app.repositories.session_repository import SessionRepository
 from app.repositories.sales_repository import SalesRepository
-from app.utils.dates import manila_date
+from app.utils.dates import MANILA_OFFSET, manila_date
 from app.dto.serializers import serialize_void_request
 from app.utils.payment import normalize_payment_method, payment_method_label, parse_money_amount
 
 FOOD_LOCATIONS = {"Regular Lounge", "Premium Lounge", "Boardroom", "Take Out"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,37 @@ class SessionService:
         space_type_id: Optional[int],
         number_of_people: Any,
         void_request_id: Any = None,
-    ) -> dict[str, Any]:
+        checkin_mode: Any = "now",
+        arrival_time: Any = None,
+        actor_id: int | None = None,
+        actor_name: str = "Staff",
+        actor_role: str = "staff",
+    ) -> tuple[dict[str, Any], int]:
+        if checkin_mode not in ("now", "late"):
+            return {"error": "Choose normal or late customer check-in."}, 400
+        now = self.clock.now()
+        arrived_at = now
+        if checkin_mode == "late":
+            if actor_role not in ("staff", "admin") or type(actor_id) is not int or actor_id < 1:
+                return {"error": "Staff or admin account required for late check-in."}, 403
+            if void_request_id not in (None, ""):
+                return {"error": "Use normal check-in to correct an approved voided checkout."}, 400
+            try:
+                if not isinstance(arrival_time, str) or len(arrival_time) != 16:
+                    raise ValueError
+                local_arrival = datetime.strptime(arrival_time, "%Y-%m-%dT%H:%M")
+                if local_arrival.strftime("%Y-%m-%dT%H:%M") != arrival_time:
+                    raise ValueError
+            except ValueError:
+                return {"error": "Choose the customer's actual arrival date and time."}, 400
+            if local_arrival.date() != manila_date(now):
+                return {"error": "Late check-in must be for today in Manila time."}, 400
+            arrived_at = local_arrival - MANILA_OFFSET
+            if arrived_at > now:
+                return {"error": "Arrival time cannot be in the future (Manila time)."}, 400
+        elif arrival_time is not None:
+            return {"error": "Use Late Customer Check-in to enter an earlier arrival time."}, 400
+
         name = customer_name.strip() if isinstance(customer_name, str) else ""
         if not name or len(name) > 100:
             return {"error": "Enter a customer name of up to 100 characters."}, 400
@@ -69,6 +101,8 @@ class SessionService:
         space = self.repo.get_space_type(int(space_type_id), lock=True)
         if not space:
             return {"error": "Please select a valid space."}, 400
+        if checkin_mode == "late" and space.name not in {"Regular Lounge", "Premium Lounge"}:
+            return {"error": "Late check-in is available for Regular and Premium only."}, 400
         if space.name not in {"Regular Lounge", "Premium Lounge", "Boardroom"}:
             return {"error": "Choose a timed lounge or start a Boardroom booking."}, 400
         if space.name in {"Regular Lounge", "Premium Lounge"}:
@@ -81,20 +115,21 @@ class SessionService:
                 return {"error": "Number of people must be at least 1."}, 400
             number_of_people = int(number_of_people)
 
-        now = self.clock.now()
         sess = CustomerSession(
             customer_name=name,
             school=school,
             course=course,
             number_of_people=number_of_people,
             space_type_id=space.id,
-            time_in=now,
+            time_in=arrived_at,
             status="active",
             service_mode="timed",
         )
         blocking = self.repo.blocking_booking_at(now + timedelta(hours=8), whole_hub_only=space.name != "Boardroom")
         if blocking:
             return {"error": "This space is reserved for a booking right now."}, 409
+        if checkin_mode == "late" and self.repo.blocking_whole_hub_between(arrived_at, now):
+            return {"error": "The entered arrival overlaps a Whole Hub booking. Review the arrival time."}, 409
         occupied = self.repo.sum_active_occupancy(space.id, lock=True)
         if space.name == "Boardroom" and occupied:
             return {"error": "Boardroom is currently occupied.", "full": True}, 409
@@ -115,9 +150,19 @@ class SessionService:
         correction_error = self._attach_void_correction(sess, void_request_id)
         if correction_error:
             return correction_error
-        self.repo.add_session(sess)
+        try:
+            self.repo.add_session(sess, commit=False)
+            session_id = sess.id
+            if checkin_mode == "late":
+                self._record_time_event(sess, "late_checkin", now, actor_id,
+                                        actor_name, actor_role, 0, Decimal("0.00"))
+            self.repo.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Customer check-in could not be saved")
+            return {"error": "Could not save the customer check-in. Please try again."}, 500
         emit_current_customers_changed()
-        return {"message": "Customer checked in successfully", "session_id": sess.id}, 200
+        return {"message": "Customer checked in successfully", "session_id": session_id}, 200
 
     def _attach_void_correction(self, sess: CustomerSession, request_id: Any) -> tuple[dict[str, Any], int] | None:
         if request_id in (None, ""):
@@ -220,6 +265,7 @@ class SessionService:
                     "seconds_used": billable_microseconds(sess, now) // 1_000_000,
                     "paused": sess.paused_at is not None,
                     "has_time_pause": bool(sess.paused_at or sess.paused_microseconds),
+                    "has_time_history": bool(sess.has_time_history),
                     "current_bill": float(current_bill),
                 }
             )
@@ -319,12 +365,26 @@ class SessionService:
             return {"error": "Customer session not found."}, 404
         events = (SessionTimeEvent.query.filter_by(session_id=session_id)
                   .order_by(SessionTimeEvent.occurred_at, SessionTimeEvent.id).all())
+        correction = MissedCheckoutCorrection.query.filter_by(session_id=session_id).first()
         return {
             "customer_name": sess.customer_name,
             "space_type": sess.space_type.name,
+            "correction": {
+                "departure": (correction.departure_at + MANILA_OFFSET).strftime("%Y-%m-%d %I:%M %p"),
+                "paid_at": (correction.paid_at + MANILA_OFFSET).strftime("%Y-%m-%d %I:%M %p"),
+                "recorded_at": (correction.recorded_at + MANILA_OFFSET).strftime("%Y-%m-%d %I:%M:%S %p"),
+                "recorded_by": correction.actor_name, "received_by": correction.collector_name,
+                "reason": correction.reason, "note": correction.note,
+                "before": correction.before_snapshot, "after": correction.after_snapshot,
+                "amount_received": float(correction.amount_received), "payment_method": correction.payment_method,
+                "receipt_url": f"/receipt/{session_id}",
+            } if correction else None,
             "events": [{
                 "action": event.action,
                 "at": (event.occurred_at + timedelta(hours=8)).strftime("%B %d, %Y %I:%M:%S %p"),
+                # Time In is immutable here; MySQL may truncate audit microseconds.
+                "arrival_at": (sess.time_in + MANILA_OFFSET).strftime("%B %d, %Y %I:%M %p")
+                if event.action == "late_checkin" else None,
                 "actor": event.actor_name,
                 "role": event.actor_role,
                 "billable_seconds_before": event.billable_microseconds_before // 1_000_000,
@@ -401,6 +461,7 @@ class SessionService:
                 "reason": row.cancel_reason,
                 "uncollected_time_charge": float(row.cancelled_uncollected_amount or 0),
                 "has_time_pause": bool(row.paused_microseconds),
+                "has_time_history": bool(row.has_time_history),
             } for row in history.items],
             "page": page,
             "pages": history.pages,
@@ -467,7 +528,10 @@ class SessionService:
         discount_type: str | None = None, discount_item_id: Any = None,
         actor_name: str | None = None, actor_id: int | None = None,
         actor_role: str = "staff",
+        _missed: dict | None = None,
     ) -> dict[str, Any] | tuple[dict[str, Any], int]:
+        if _missed is not None and (actor_role != "admin" or not actor_id):
+            return {"error": "Admin account required for a missed checkout."}, 403
         sess = self.repo.get_session_for_update(session_id)
         if not sess:
             return {"error": "Session not found"}, 404
@@ -487,14 +551,15 @@ class SessionService:
                     )
                 }, 400
 
-        time_out = self.clock.now()
+        recorded_now = self.clock.now()
+        time_out = _missed["departure"] if _missed else recorded_now
         food_only = sess.service_mode == "food_only"
-        billable_us = 0 if food_only else billable_microseconds(sess, time_out)
+        billable_us = _missed["billable_us"] if _missed else (0 if food_only else billable_microseconds(sess, time_out))
         minutes_used = float(Decimal(billable_us) / Decimal(60_000_000))
         rate = 0 if food_only else sess.space_type.rate_per_minute
         linked = None if food_only else self.repo.get_active_boardroom_bookings_by_session_ids([session_id]).get(session_id)
 
-        time_bill = current_time_bill(sess, time_out, booking=linked)
+        time_bill = _missed["time_bill"] if _missed else current_time_bill(sess, time_out, booking=linked)
 
         food_total, _ = self._food_bill(sess)
         if food_only and food_total <= 0:
@@ -504,6 +569,8 @@ class SessionService:
         except ValueError as exc:
             return {"error": str(exc)}, 400
         total_bill = (time_bill + food_total - discount_amount).quantize(Decimal("0.01"))
+        if _missed and total_bill != _missed["amount"]:
+            return {"error": "The bill changed. Review a fresh missed-checkout preview."}, 409
         if food_only and total_bill <= 0:
             return {"error": "A food order must have a positive total."}, 400
 
@@ -517,17 +584,18 @@ class SessionService:
 
         if payment_method == "cash":
             if shortfall > 0:
-                if amount_tendered is None:
+                if amount_tendered is None and not _missed:
                     return {"error": "Amount tendered is required for cash payments."}, 400
-                try:
-                    tendered = parse_money_amount(amount_tendered)
-                except ValueError as e:
-                    return {"error": str(e)}, 400
-                if tendered < shortfall:
+                if amount_tendered is not None:
+                    try:
+                        tendered = parse_money_amount(amount_tendered)
+                    except ValueError as e:
+                        return {"error": str(e)}, 400
+                if tendered is not None and tendered < shortfall:
                     if credit_balance > 0:
                         return {"error": f"Amount tendered must be at least the required shortfall of ₱{shortfall:.2f}."}, 400
                     return {"error": f"Amount tendered must be at least the total bill of ₱{total_bill:.2f}."}, 400
-                change_given = (tendered - shortfall).quantize(Decimal("0.01"))
+                change_given = (tendered - shortfall).quantize(Decimal("0.01")) if tendered is not None else None
             else:
                 # Fully covered by credit; cash tendered not needed
                 tendered = None
@@ -542,7 +610,18 @@ class SessionService:
         sess.payment_method = payment_method
         sess.amount_tendered = tendered
 
-        if sess.paused_at:
+        if _missed:
+            sess.paused_microseconds = (time_out - sess.time_in) // timedelta(microseconds=1) - billable_us
+            sess.paused_at = None
+            db.session.add(SessionTimeEvent(
+                session_id=sess.id, action="missed_checkout", occurred_at=recorded_now,
+                business_date=manila_date(recorded_now), actor_id=actor_id,
+                actor_name=actor_name or "Admin", actor_role="admin",
+                billable_microseconds_before=_missed["before"]["billable_microseconds"],
+                billable_microseconds_after=billable_us,
+                time_bill_before=Decimal(_missed["before"]["time_bill"]), time_bill_after=time_bill,
+            ))
+        elif sess.paused_at:
             sess.paused_microseconds += max(0, (time_out - sess.paused_at) // timedelta(microseconds=1))
             sess.paused_at = None
             self._record_time_event(sess, "checked_out", time_out, actor_id, actor_name or "Staff",
@@ -554,7 +633,9 @@ class SessionService:
             food_bill=food_total,
             total_bill=total_bill,
             payment_method=payment_method,
-            collected_by=actor_name,
+            collected_by=_missed["collector_name"] if _missed else actor_name,
+            created_at=recorded_now,
+            paid_at=_missed["paid_at"] if _missed else recorded_now,
             discount_type=selected_type,
             discount_item_id=selected_item_id,
             discount_amount=discount_amount,
@@ -573,6 +654,22 @@ class SessionService:
         )
 
         self.repo.create_transaction(tx)
+        if _missed:
+            db.session.flush()
+            db.session.add(MissedCheckoutCorrection(
+                session_id=sess.id, transaction_id=tx.id,
+                departure_at=time_out, paid_at=tx.paid_at, recorded_at=recorded_now,
+                actor_id=actor_id, actor_name=actor_name or "Admin", actor_role="admin",
+                collector_id=_missed["collector_id"], collector_name=_missed["collector_name"],
+                reason=_missed["reason"], note=_missed["note"], amount_received=_missed["amount"],
+                payment_method=payment_method, before_snapshot=_missed["before"],
+                after_snapshot={"billable_microseconds": billable_us, "time_bill": str(time_bill),
+                                "food_bill": str(food_total), "discount": str(discount_amount),
+                                "total": str(total_bill), "departure_at": time_out.isoformat(),
+                                "paid_at": tx.paid_at.isoformat(), "tendered": str(tendered) if tendered is not None else None,
+                                "change": str(change_given) if change_given is not None else None},
+                preview_revision=_missed["revision"], request_key=_missed["request_key"],
+            ))
         self.repo.complete_session(sess, time_out)
         self.repo.link_booking_completion_if_any(sess.id, time_out, tx)
 
@@ -594,21 +691,10 @@ class SessionService:
         sess.retained_time_bill = None
         sess.voided_transaction_id = None
 
-        self.repo.commit()
-
-        self.notifier.session_checked_out(
-            {
-                "session_id": sess.id,
-                "customer_name": sess.customer_name,
-                "space_type": sess.space_type.name if sess.space_type else "N/A",
-                "total_bill": float(total_bill),
-            }
-        )
-
         amount_tendered_val = float(tx.amount_tendered) if tx.amount_tendered is not None else None
         change_given_val = float(tx.change_given) if tx.change_given is not None else None
 
-        return {
+        result = {
             "customer_name": sess.customer_name,
             "service_mode": sess.service_mode,
             "minutes_used": round(minutes_used, 2),
@@ -625,6 +711,20 @@ class SessionService:
             "credit_applied": float(credit_applied),
             "credit_refunded": float(overpayment),
         }
+        notification = {"session_id": sess.id, "customer_name": sess.customer_name,
+                        "space_type": sess.space_type.name if sess.space_type else "N/A",
+                        "total_bill": float(total_bill)}
+        try:
+            self.repo.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        try:
+            self.notifier.session_checked_out(notification)
+        except Exception:
+            logger.warning("Checkout saved; real-time notification unavailable", exc_info=True)
+            emit_current_customers_changed()
+        return result
 
     def checkout_records(self, page: int | None = None, per_page: int | None = None, *,
                          date_from=None, date_to=None, payment_method: str = "",
@@ -688,7 +788,7 @@ class SessionService:
                 }, 200
 
         now_utc = self.clock.now()
-        manila_dt = manila_date(tx.created_at)
+        manila_dt = manila_date(tx.effective_paid_at)
 
         req = CheckoutVoidRequest(
             transaction_id=tx.id,

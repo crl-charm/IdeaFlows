@@ -19,7 +19,7 @@ from app.models import (
     SpaceType,
     Transaction,
 )
-from app.utils.dates import manila_day_bounds
+from app.utils.dates import MANILA_OFFSET, manila_day_bounds
 from app.utils.payment import VALID_PAYMENT_METHODS
 
 
@@ -36,6 +36,7 @@ class SessionRepository:
         return (
             CustomerSession.query.options(selectinload(CustomerSession.space_type))
             .filter_by(id=session_id)
+            .populate_existing()
             .with_for_update()
             .first()
         )
@@ -127,9 +128,35 @@ class SessionRepository:
             query = query.filter(BoardroomBooking.booking_type == "whole_hub")
         return query.first()
 
-    def add_session(self, sess: CustomerSession) -> None:
+    def blocking_whole_hub_between(self, start_utc: datetime, end_utc: datetime) -> Optional[BoardroomBooking]:
+        local_start, local_end = start_utc + MANILA_OFFSET, end_utc + MANILA_OFFSET
+        candidates = BoardroomBooking.query.filter(
+            BoardroomBooking.booking_type == "whole_hub",
+            BoardroomBooking.status.in_(("booked", "active", "completed")),
+            BoardroomBooking.date <= local_end.date(),
+            or_(BoardroomBooking.date == local_start.date(),
+                BoardroomBooking.expected_end_at > local_start,
+                BoardroomBooking.ended_at > start_utc,
+                BoardroomBooking.status == "active"),
+        ).all()
+        for booking in candidates:
+            starts = datetime.combine(booking.date, booking.start_time)
+            ends = booking.expected_end_at or datetime.combine(booking.date, booking.end_time)
+            if booking.status == "completed":
+                starts = booking.started_at + MANILA_OFFSET if booking.started_at else starts
+                ends = booking.ended_at + MANILA_OFFSET if booking.ended_at else ends
+            elif booking.status == "active":
+                ends = max(ends, local_end + timedelta(microseconds=1))
+            if starts <= local_end and ends > local_start:
+                return booking
+        return None
+
+    def add_session(self, sess: CustomerSession, *, commit: bool = True) -> None:
         db.session.add(sess)
-        db.session.commit()
+        if commit:
+            db.session.commit()
+        else:
+            db.session.flush()
 
     def complete_session(self, session: CustomerSession, time_out_utc: datetime) -> None:
         session.time_out = time_out_utc
@@ -189,7 +216,7 @@ class SessionRepository:
                 selectinload(Transaction.session).selectinload(CustomerSession.space_type),
                 selectinload(Transaction.void_requests),
             )
-            .order_by(Transaction.created_at.desc())
+            .order_by(Transaction.effective_paid_at.desc(), Transaction.id.desc())
             .all()
         )
 
@@ -199,10 +226,10 @@ class SessionRepository:
             selectinload(Transaction.session).selectinload(CustomerSession.space_type),
             selectinload(Transaction.void_requests),
         )
-        if date_from:
-            query = query.filter(Transaction.created_at >= manila_day_bounds(date_from)[0])
-        if date_to:
-            query = query.filter(Transaction.created_at < manila_day_bounds(date_to)[1])
+        query = query.filter(Transaction.payment_range(
+            manila_day_bounds(date_from)[0] if date_from else None,
+            manila_day_bounds(date_to)[1] if date_to else None,
+        ))
         if payment_method:
             stored_method = func.lower(func.trim(Transaction.payment_method))
             if payment_method == "cash":
@@ -225,7 +252,7 @@ class SessionRepository:
             ))
         elif status == "voided":
             query = query.filter(Transaction.is_voided.is_(True))
-        return query.order_by(Transaction.created_at.desc(), Transaction.id.desc()).paginate(
+        return query.order_by(Transaction.effective_paid_at.desc(), Transaction.id.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         )
 

@@ -1,0 +1,4 @@
+<nav class="d-flex flex-wrap gap-2 mb-3" aria-label="Report type">
+  <a class="btn {{ 'btn-warning' if report_view == 'monthly' else 'btn-outline-secondary' }}" href="{{ url_for('reports.reports', view='monthly') }}" {% if report_view == 'monthly' %}aria-current="page"{% endif %}>Monthly Accountant Report</a>
+  <a class="btn {{ 'btn-warning' if report_view == 'customer-statements' else 'btn-outline-secondary' }}" href="{{ url_for('reports.reports', view='customer-statements') }}" {% if report_view == 'customer-statements' %}aria-current="page"{% endif %}>Customer Statement</a>
+</nav>

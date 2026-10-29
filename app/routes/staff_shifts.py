@@ -2,11 +2,12 @@
 
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, session
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from app import db
 from app.core.idempotency import idempotent_request
-from app.models import StaffShift, User
+from app.models import CustomerSession, SpaceType, StaffShift, User
 from app.utils.auth import login_required
 from app.utils.dates import MANILA_OFFSET
 
@@ -102,6 +103,29 @@ def time_out():
         return jsonify({"error": "There is no open shift to time out."}), 409
     if entered <= shift.time_in:
         return jsonify({"error": "Time Out must be after Time In."}), 400
+
+    active = (CustomerSession.query.join(SpaceType).filter(
+        CustomerSession.status == "active", CustomerSession.service_mode == "timed",
+        SpaceType.name.in_(("Regular Lounge", "Premium Lounge")),
+    ).order_by(CustomerSession.id).all())
+    if active:
+        signer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="staff-timeout-handover")
+        context = {"staff": user.id, "shift": shift.id, "time_out": data["time_out"],
+                   "visits": [[row.id, row.time_in.isoformat(), row.paused_at.isoformat() if row.paused_at else None]
+                              for row in active]}
+        acknowledgement = None
+        try:
+            if isinstance(data.get("handover_token"), str):
+                acknowledgement = signer.loads(data["handover_token"], max_age=300)
+        except BadSignature:
+            pass
+        if acknowledgement != context:
+            return jsonify({"error": "Customers are still checked in. Review them or confirm a handover.",
+                            "needs_handover": True, "handover_token": signer.dumps(context),
+                            "active_customers": [{"id": row.id, "name": row.customer_name,
+                                "space": row.space_type.name,
+                                "time_in": (row.time_in + MANILA_OFFSET).strftime("%Y-%m-%d %I:%M %p"),
+                                "paused": row.paused_at is not None} for row in active]}), 409
 
     shift.time_out = entered
     shift.time_out_recorded_at = datetime.now(timezone.utc).replace(tzinfo=None)

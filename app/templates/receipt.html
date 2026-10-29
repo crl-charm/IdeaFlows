@@ -19,6 +19,12 @@
             <p><strong>Receipt #:</strong> {{ session_id }}</p>
             <p><strong>Date:</strong> {{ receipt_date }}</p>
             <p><strong>Customer:</strong> {{ customer_name }}</p>
+            {% if paid_at %}<p><strong>Paid at (Manila):</strong> {{ paid_at }}</p>{% endif %}
+            {% if recorded_late %}
+            <p class="text-warning"><strong>Missed checkout — payment already received</strong></p>
+            <p><strong>Recorded at (Manila):</strong> {{ recorded_at }}</p>
+            <p><strong>Received by:</strong> {{ collected_by }}</p>
+            {% endif %}
           </div>
 
           <hr>

@@ -1,0 +1,117 @@
+{% extends "layout.html" %}
+{% block title %}Reports & Exports - IdeaFlow{% endblock %}
+{% block content %}
+<style>
+  .statement-page {max-width:1100px; margin:auto; overflow-wrap:anywhere;}
+  .statement-page input,.statement-page select,.statement-page .card {min-width:0;}
+  .statement-page summary {cursor:pointer; padding:1rem; font-weight:600;}
+  .statement-page dl {display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:.35rem 1rem; margin:0;}
+  .statement-page dd {margin:0;} .statement-page dt {font-weight:500; color:#526174;}
+  .statement-history {list-style:none; padding:0; margin:0;}
+  .statement-history>li {padding:1rem; border-top:1px solid #e2e8f0;}
+  .statement-ledger {display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; margin-top:.6rem;}
+  @media(max-width:575px) {.statement-page dl{grid-template-columns:minmax(0,1fr);} .statement-page dt{font-size:.85rem;} .statement-page dd{margin-bottom:.5rem;} .statement-page .btn{white-space:normal;} }
+</style>
+<main class="container-fluid statement-page">
+  <h1 class="h3">Reports &amp; Exports</h1>
+  {% set report_view = 'customer-statements' %}{% include 'partials/report_modes.html' %}
+  <p>Customer Statement <span class="text-muted">· All recorded receivable history, including settled cycles</span></p>
+  <div id="statement-error" class="alert alert-danger{% if not error %} d-none{% endif %}" role="alert">{{ error or '' }}</div>
+  {% if not error %}
+  <form method="get" class="card card-body mb-3">
+    <input type="hidden" name="view" value="customer-statements">
+    <label for="account-search" class="form-label">Find a customer or building account</label>
+    <div class="d-flex gap-2"><input id="account-search" type="search" name="q" value="{{ search }}" maxlength="100" class="form-control" placeholder="Name or contact"><button class="btn btn-warning">Search</button></div>
+  </form>
+  <details class="card mb-3" {% if not statement %}open{% endif %}>
+    <summary>Customer accounts · {{ accounts.total }} found</summary>
+    <ul class="statement-history">
+    {% for account in accounts.items %}<li>
+      <a class="fw-semibold" href="{{ url_for('reports.reports', account_id=account.id, q=search) }}">{{ account.customer_name }} · RA-{{ '%06d'|format(account.id) }}</a>
+      <div class="small text-muted">{{ account.customer_contact or 'No contact saved' }}{% if not account.history_reviewed_at %} · History needs review{% endif %}</div>
+    </li>{% else %}<li>No matching accounts. New customers are entered in Receivables.</li>{% endfor %}
+    </ul>
+    <div class="card-body d-flex justify-content-between gap-2">
+    {% if accounts.has_prev %}<a href="{{ url_for('reports.reports', q=search, page=accounts.prev_num, account_id=request.args.get('account_id')) }}">Previous</a>{% endif %}
+    <span>Page {{ accounts.page }} of {{ accounts.pages or 1 }}</span>
+    {% if accounts.has_next %}<a href="{{ url_for('reports.reports', q=search, page=accounts.next_num, account_id=request.args.get('account_id')) }}">Next</a>{% endif %}
+    </div>
+  </details>
+  {% if statement %}
+  {% set s = statement %}
+  <section class="card card-body mb-3">
+    <h2 class="h4">{{ s.account.name }}</h2>
+    <p class="small text-muted">{{ s.account.reference }} · {{ s.account.contact or 'No contact saved' }}<br>All recorded history through {{ s.generated_at }} (Asia/Manila)</p>
+    <form method="get" class="mb-3">
+      <input type="hidden" name="account_id" value="{{ s.account.id }}">
+      <label for="statement-attention" class="form-label">Attention / Contact person (optional)</label>
+      <div class="d-flex gap-2"><input name="attention" id="statement-attention" value="{{ s.attention }}" maxlength="100" class="form-control"><button class="btn btn-outline-secondary">Apply</button></div>
+    </form>
+    <div class="row g-2 mb-3">
+      {% for label,value in [('Total taken on credit',s.total_charged),('Total paid / known credits',s.total_paid),('Still owed',s.remaining)] %}
+      <div class="col-sm-4"><div class="border rounded p-3 h-100"><small>{{ label }}</small><div class="h4 mt-1 mb-0">₱{{ '%.2f'|format(value) }}</div></div></div>
+      {% endfor %}
+    </div>
+    {% if s.remaining == 0 %}<p class="text-success fw-semibold">Settled as of {{ s.generated_at }} (Manila)</p>{% endif %}
+    {% for message in s.notices %}<p class="alert alert-warning mb-2">{{ message }}</p>{% endfor %}
+    {% for message in s.issues %}<p class="alert alert-danger mb-2">{{ message }}</p>{% endfor %}
+    <button type="button" id="export-customer-statement" class="btn btn-warning align-self-start" data-url="{{ url_for('reports.customer_pdf', account_id=s.account.id, attention=s.attention) }}" {% if not s.can_export %}disabled{% endif %}>Export Customer Statement PDF</button>
+    <small class="text-muted mt-2">Downloads this customer's information only. No payment or balance is changed.</small>
+  </section>
+
+  <details class="card mb-3" {% if not s.account.reviewed_at %}open{% endif %}>
+    <summary>Review customer history {% if s.account.reviewed_at %}· confirmed {{ s.account.reviewed_at }}{% endif %}</summary>
+    <div class="card-body pt-0">
+      <p>Check the charges below and any older cycles. Similar names may belong to different people. Only associate a cycle after checking its records.</p>
+      <form method="get" class="mb-3">
+        <input type="hidden" name="account_id" value="{{ s.account.id }}">
+        <label for="review-search" class="form-label">Find another cycle by customer name or contact</label>
+        <div class="d-flex gap-2"><input id="review-search" name="review_q" value="{{ review_search }}" maxlength="100" class="form-control"><button class="btn btn-outline-secondary">Find</button></div>
+      </form>
+      {% for tab in candidates.items %}
+      <details class="border rounded mb-2">
+        <summary>{{ tab.customer_name }} · Cycle #{{ tab.id }} · {{ 'Closed' if tab.closed_at else 'Open' }} · {{ tab.receivables|length }} debt(s)</summary>
+        <div class="p-3 pt-0"><p>{{ tab.customer_contact or 'No contact saved' }} · Current account {{ tab.account_id or 'unassigned' }}</p>
+        <ul>{% for debt in tab.receivables %}<li class="mb-2">R-{{ debt.id }} · {{ debt.customer_name }} · {{ debt.incurred_date or 'Date not saved' }} · {{ debt.items_description }} · ₱{{ '%.2f'|format(debt.amount_owed) }}<br><button type="button" class="btn btn-sm btn-outline-secondary" data-associate-debt="{{ debt.id }}">Associate only R-{{ debt.id }} with this account</button></li>{% endfor %}</ul>
+        <button type="button" class="btn btn-outline-warning" data-associate-tab="{{ tab.id }}">Associate cycle #{{ tab.id }} with {{ s.account.name }}</button></div>
+      </details>
+      {% else %}<p class="text-muted">No other matching cycles found.</p>{% endfor %}
+      <div class="d-flex justify-content-between gap-2 mb-3">
+        {% if candidates.has_prev %}<a href="{{ url_for('reports.reports', account_id=s.account.id, review_q=review_search, review_page=candidates.prev_num) }}">Previous cycles</a>{% endif %}
+        {% if candidates.has_next %}<a href="{{ url_for('reports.reports', account_id=s.account.id, review_q=review_search, review_page=candidates.next_num) }}">More cycles</a>{% endif %}
+      </div>
+      <form id="confirm-customer-history" data-account-id="{{ s.account.id }}">
+        <div class="form-check mb-2"><input id="confirm-membership" class="form-check-input" type="checkbox" required><label for="confirm-membership" class="form-check-label">I reviewed the recorded history and matching accounts. These selected debts belong to this customer; other accounts are kept separate.</label></div>
+        <button class="btn btn-outline-success">Confirm customer history</button>
+      </form>
+    </div>
+  </details>
+
+  <details class="card mb-3" open><summary>Charges and food details · {{ s.charges|length }}</summary>
+    <ul class="statement-history">{% for charge in s.charges %}<li>
+      <h3 class="h6">{{ charge.reference }} · {{ charge.taken }} · ₱{{ '%.2f'|format(charge.charged) }}</h3>
+      <p>{{ charge.description }}</p>
+      {% for line in charge.lines %}<p class="small mb-1">{{ line.quantity }} × {{ line.name }}{% if line.no_rice %} (no rice){% endif %}{% if line.no_egg %} (no egg){% endif %} · ₱{{ '%.2f'|format(line.unit_price) }} each = ₱{{ '%.2f'|format(line.line_total) }}</p>{% else %}<p class="small text-muted">Original written description; item quantities were not recorded.</p>{% endfor %}
+      <dl class="small mt-2"><dt>Ordered / taken by</dt><dd>{{ charge.ordered_by }}</dd><dt>Recorded by</dt><dd>{{ charge.recorded_by }} · {{ charge.recorded_at }} (Manila)</dd><dt>Paid / still owed</dt><dd>₱{{ '%.2f'|format(charge.paid) }} / ₱{{ '%.2f'|format(charge.remaining) }}</dd><dt>Due / cycle</dt><dd>{{ charge.due }} · #{{ charge.tab_id }}</dd></dl>
+    </li>{% else %}<li>No charges associated.</li>{% endfor %}</ul>
+  </details>
+  <details class="card mb-3"><summary>Payment receipts · {{ s.payments|length }}</summary>
+    <ul class="statement-history">{% for payment in s.payments %}<li><h3 class="h6">{{ payment.reference }} · {{ payment.when }} (Manila) · ₱{{ '%.2f'|format(payment.amount) }}</h3><p>{{ payment.method }} · Recorded by {{ payment.recorded_by }}</p><ul>{% for a in payment.allocations %}<li>{{ a.reference }}: ₱{{ '%.2f'|format(a.amount) }}</li>{% endfor %}</ul></li>{% else %}<li>No detailed receipts recorded.</li>{% endfor %}</ul>
+  </details>
+  <details class="card mb-3"><summary>Account ledger and running balance</summary>
+    <ul class="statement-history">{% for entry in s.ledger %}<li><strong>{{ entry.when }} · {{ entry.reference }}</strong><p class="mb-0 small">{{ entry.description }}</p><div class="statement-ledger small"><span>Charge<br>₱{{ '%.2f'|format(entry.charge) }}</span><span>Payment / credit<br>₱{{ '%.2f'|format(entry.payment) }}</span><strong>Balance<br>₱{{ '%.2f'|format(entry.balance) }}</strong></div></li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if unassigned.total %}
+  <details class="card mb-3" open><summary>Unassigned older debts · {{ unassigned.total }} need account review</summary>
+    <div class="card-body pt-0"><p>These debts are not included in an account statement yet. Select the correct account above before associating a debt.</p>
+    {% for debt in unassigned.items %}<div class="border rounded p-3 mb-2"><strong>R-{{ debt.id }} · {{ debt.customer_name }}</strong><p>{{ debt.items_description }} · ₱{{ '%.2f'|format(debt.amount_owed) }}</p>{% if statement %}<button type="button" class="btn btn-outline-warning" data-associate-debt="{{ debt.id }}">Associate R-{{ debt.id }} with {{ statement.account.name }}</button>{% endif %}</div>{% endfor %}
+    {% if unassigned.has_prev %}<a href="{{ url_for('reports.reports', account_id=request.args.get('account_id'), review_q=review_search, unassigned_page=unassigned.prev_num) }}">Previous debts</a>{% endif %}
+    {% if unassigned.has_next %}<a href="{{ url_for('reports.reports', account_id=request.args.get('account_id'), review_q=review_search, unassigned_page=unassigned.next_num) }}">More debts</a>{% endif %}
+    </div>
+  </details>
+  {% endif %}
+  {% endif %}
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/customer-statements.js') }}?v=2"></script>{% endblock %}
