@@ -83,6 +83,9 @@ def create_client(values: tuple[str, str, str]):
         "s3", endpoint_url=endpoint, aws_access_key_id=access_key,
         aws_secret_access_key=secret_key, region_name="auto",
         config=Config(signature_version="s3v4", connect_timeout=10, read_timeout=60,
+                      # R2 rejects the optional GetObject checksum header on the VPS.
+                      # Read-back bytes still receive independent SHA-256 verification.
+                      response_checksum_validation="when_required",
                       retries={"mode": "standard", "total_max_attempts": 4}),
     )
 

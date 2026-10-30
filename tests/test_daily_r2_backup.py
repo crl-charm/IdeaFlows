@@ -130,6 +130,28 @@ def test_manual_prompts_preserved_and_unattended_never_prompts(tmp_path, monkeyp
     assert uploader.main([str(folder)]) == 0
 
 
+def test_r2_download_omits_optional_checksum_header(monkeypatch):
+    monkeypatch.setenv("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_supported")
+    client = uploader.create_client(("https://account.r2.cloudflarestorage.com", "a" * 32, "fake-secret"))
+    headers = {}
+
+    class RequestCaptured(Exception):
+        pass
+
+    def capture(request, **kwargs):
+        headers.update((name.lower(), value) for name, value in request.headers.items())
+        raise RequestCaptured  # Inspect the signed request without making a network call.
+
+    client.meta.events.register("before-send.s3.GetObject", capture)
+    try:
+        with pytest.raises(RequestCaptured):
+            client.get_object(Bucket=uploader.BUCKET, Key="daily-test/pos_db.sql")
+    finally:
+        client.close()
+    assert "x-amz-checksum-mode" not in headers
+    assert headers["authorization"].startswith(b"AWS4-HMAC-SHA256 ")
+
+
 def test_network_retry_is_bounded_and_redacts_provider_errors(monkeypatch):
     calls = []
 

@@ -39,6 +39,10 @@ sudo bash /var/www/pos/scripts/run_daily_backup.sh --preflight
 
 Failures must be fixed before proceeding. This includes non-InnoDB tables, missing media directories, insufficient disk space, or a Git revision that cannot be recorded. Existing backups are preserved.
 
+### R2 metadata succeeds but downloads report a signature error
+
+During October 30 acceptance, the saved credentials passed `HeadObject`, but the SDK's default `GetObject` request returned `SignatureDoesNotMatch`. Setting `response_checksum_validation="when_required"` made the download and the saved backup's upload/read-back succeed. The shared uploader now pins that [supported SDK setting](https://docs.aws.amazon.com/botocore/latest/reference/config.html). It still streams both uploaded files back and independently checks their complete sizes and SHA-256 hashes before publishing a completion manifest. Keep the working credentials private; a download-specific signature error alone does not prove they are incorrect.
+
 ## 2. Install the reviewed units, without enabling the timer
 
 ```bash
