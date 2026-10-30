@@ -6,6 +6,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import gzip
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,9 @@ import signal
 import subprocess
 import tarfile
 import tempfile
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 from dotenv import dotenv_values
@@ -26,8 +30,11 @@ else:
 
 
 MANILA = ZoneInfo("Asia/Manila")
-CORE_TABLES = {"users", "customer_sessions", "transactions", "expenses", "receivables", "payables"}
+CORE_TABLES = {"users", "customer_sessions", "transactions", "expenses", "receivables", "payables", "menu_items"}
 MEDIA_PATHS = ("static/uploads", "static/images")
+EXTERNAL_MEDIA_HOST = "media.idea-flows.online"
+EXTERNAL_MEDIA_ROOT = "external-media"
+MAX_IMAGE_BYTES = 20 * 1024 ** 2
 MIN_FREE_BYTES = 1024 ** 3
 
 
@@ -83,6 +90,63 @@ def command(arguments: list[str], *, output=None, timeout=120):
     return result.stdout.decode("utf-8").strip() if output is None else None
 
 
+def external_media_inventory() -> list[dict]:
+    rows = command(["mysql", "--batch", "--raw", "--skip-column-names", "--connect-timeout=10", "pos_db", "-e",
+                    "SELECT JSON_OBJECT('menu_item_id',id,'url',image_url) FROM menu_items "
+                    "WHERE image_url IS NOT NULL AND image_url <> '' ORDER BY id"])
+    sources = []
+    for line in rows.splitlines():
+        item = json.loads(line)
+        url = item["url"]
+        parsed = urlsplit(url)
+        if not parsed.scheme and not parsed.netloc:
+            continue  # Local images are already included by the local tar paths.
+        if (type(item["menu_item_id"]) is not int or item["menu_item_id"] <= 0
+                or parsed.scheme != "https" or parsed.netloc.lower() != EXTERNAL_MEDIA_HOST
+                or parsed.fragment or not parsed.path or parsed.path == "/"
+                or any(ord(char) < 32 for char in url)):
+            raise uploader.BackupError("Unsupported external menu image address; review media backup scope")
+        sources.append(item)
+    return sources
+
+
+class NoMediaRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # A trusted media URL must never redirect a root backup to another host.
+
+
+def download_menu_image(item: dict, destination: Path) -> dict:
+    def transfer():
+        try:
+            response = build_opener(NoMediaRedirects()).open(
+                Request(item["url"], headers={"User-Agent": "IdeaFlowBackup/1.0"}), timeout=15)
+        except HTTPError as error:
+            error.close()
+            if error.code in (408, 429, 500, 502, 503, 504):
+                raise OSError("Media download temporarily unavailable") from None
+            raise uploader.BackupError("Menu image unavailable or redirected; no completed backup recorded") from None
+        with response:
+            content_type = response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0].lower()
+            expected = response.headers.get("Content-Length")
+            expected = int(expected) if expected is not None else None
+            if (response.status != 200 or (expected is not None and not 0 < expected <= MAX_IMAGE_BYTES)
+                    or not (content_type.startswith("image/") or content_type == "application/octet-stream")):
+                raise uploader.BackupError("Menu image response is invalid or exceeds the 20 MiB backup limit")
+            digest, size = hashlib.sha256(), 0
+            with destination.open("wb") as output:
+                while chunk := response.read(uploader.CHUNK_SIZE):
+                    size += len(chunk)
+                    if size > MAX_IMAGE_BYTES:
+                        raise uploader.BackupError("Menu image exceeds the 20 MiB backup limit")
+                    digest.update(chunk)
+                    output.write(chunk)
+            if not size or expected is not None and size != expected:
+                raise OSError("Incomplete menu image download")
+            return {**item, "file": f"files/{destination.name}", "size": size,
+                    "sha256": digest.hexdigest(), "content_type": content_type}
+    return uploader.network_retry(transfer)
+
+
 def preflight(app_dir: Path, root: Path) -> dict:
     for tool in ("mysql", "mysqldump", "tar", "git"):
         if not shutil.which(tool):
@@ -109,18 +173,23 @@ def preflight(app_dir: Path, root: Path) -> dict:
         db_bytes += int(size)
     if not CORE_TABLES.issubset(tables):
         raise uploader.BackupError("Required application tables missing from pos_db")
-    required = max(MIN_FREE_BYTES, db_bytes * 4 + media_bytes + 256 * 1024 ** 2)
+    external = external_media_inventory()
+    # ponytail: budget two maximum-size copies; use measured sizes if menus outgrow this conservative bound.
+    external_bytes = len(external) * MAX_IMAGE_BYTES * 2
+    required = max(MIN_FREE_BYTES, db_bytes * 4 + media_bytes + external_bytes + 256 * 1024 ** 2)
     if shutil.disk_usage(root).free < required:
         raise uploader.BackupError("Insufficient free backup space; existing backups were preserved")
     revision = command(["git", "-C", str(app_dir), "rev-parse", "HEAD"])
     if not re.fullmatch(r"[a-f0-9]{40}", revision):
         raise uploader.BackupError("Cannot record the application Git revision")
     return {"git_revision": revision, "expected_table_count": len(tables),
+            "external_media_inventory": external,
             "scope": {"database": "pos_db", "local_media": list(MEDIA_PATHS),
-                      "external_media": "not included; inventory separately before enablement"}}
+                      "external_media": {"host": EXTERNAL_MEDIA_HOST, "image_count": len(external),
+                                         "archive_path": EXTERNAL_MEDIA_ROOT + "/"}}}
 
 
-def validate_local(folder: Path, expected_tables: int) -> dict:
+def validate_local(folder: Path, expected_tables: int, external_sources=()) -> dict:
     definitions, inserts, found, last_line = 0, 0, set(), b""
     with (folder / "pos_db.sql").open("rb") as source:
         # Inspect short prefixes without loading an extended INSERT into memory.
@@ -139,46 +208,90 @@ def validate_local(folder: Path, expected_tables: int) -> dict:
         raise uploader.BackupError("Database dump incomplete or schema count changed; no upload accepted")
     archive = folder / "production-files.tar.gz"
     entries, media_roots = 0, set()
+    roots = (*MEDIA_PATHS, EXTERNAL_MEDIA_ROOT) if external_sources else MEDIA_PATHS
+    seen_names, external_files, external_index = set(), {}, None
     with tarfile.open(archive, "r|gz") as source:
         for member in source:
             entries += 1
+            if member.name in seen_names:
+                raise uploader.BackupError("Duplicate archive entry; no upload accepted")
+            seen_names.add(member.name)
             if member.isdir() and member.name in MEDIA_PATHS:
                 media_roots.add(member.name)
-            if (not any(member.name == name or member.name.startswith(name + "/") for name in MEDIA_PATHS)
+            if (not any(member.name == name or member.name.startswith(name + "/") for name in roots)
                     or not (member.isfile() or member.isdir()) or ".." in Path(member.name).parts):
                 raise uploader.BackupError("Unexpected archive entry; no upload accepted")
             if member.isfile():
                 with source.extractfile(member) as data:
-                    while data.read(uploader.CHUNK_SIZE):
-                        pass
+                    if member.name == EXTERNAL_MEDIA_ROOT + "/manifest.json":
+                        if member.size > 1024 ** 2:
+                            raise uploader.BackupError("External media index exceeds the backup limit")
+                        external_index = json.loads(data.read())
+                    else:
+                        digest, size = hashlib.sha256(), 0
+                        while chunk := data.read(uploader.CHUNK_SIZE):
+                            if member.name.startswith(EXTERNAL_MEDIA_ROOT + "/"):
+                                digest.update(chunk)
+                                size += len(chunk)
+                        if member.name.startswith(EXTERNAL_MEDIA_ROOT + "/"):
+                            name = member.name[len(EXTERNAL_MEDIA_ROOT) + 1:]
+                            if not re.fullmatch(r"files/[1-9][0-9]*\.bin", name):
+                                raise uploader.BackupError("Unexpected external media file")
+                            external_files[name] = (size, digest.hexdigest())
     # Tar readers can stop before the gzip trailer/CRC, so also drain gzip to EOF.
     with gzip.open(archive, "rb") as source:
         while source.read(uploader.CHUNK_SIZE):
             pass
     if media_roots != set(MEDIA_PATHS):
         raise uploader.BackupError("Files archive is missing a required media directory")
+    if external_sources:
+        try:
+            images = external_index["images"]
+            if (external_index["schema_version"] != 1
+                    or [{"menu_item_id": image["menu_item_id"], "url": image["url"]} for image in images] != list(external_sources)
+                    or set(external_files) != {image["file"] for image in images}
+                    or any(image["file"] != f"files/{image['menu_item_id']}.bin"
+                           or external_files[image["file"]] != (image["size"], image["sha256"]) for image in images)):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise uploader.BackupError("External media files/index failed count or SHA-256 validation") from None
     for name in uploader.REQUIRED_FILES:
         uploader.file_details(folder / name)
-    return {"table_definitions": definitions, "insert_statements": inserts, "archive_entries": entries}
+    return {"table_definitions": definitions, "insert_statements": inserts, "archive_entries": entries,
+            "external_media_images": len(external_sources)}
 
 
-def create_local(folder: Path, app_dir: Path, stage) -> None:
+def create_local(folder: Path, app_dir: Path, stage, external_sources=()) -> None:
     stage("database-dump")
     with (folder / "pos_db.sql").open("xb") as output:
         command(["mysqldump", "--single-transaction", "--quick", "--routines", "--triggers",
                  "--events", "--hex-blob", "--no-tablespaces", "--dump-date", "pos_db"],
                 output=output, timeout=900)
-    stage("media-archive")
-    # Retry a changing-file archive once, without regenerating the database dump.
-    for attempt in range(2):
-        try:
-            with (folder / "production-files.tar.gz").open("wb") as output:
-                command(["tar", "-C", str(app_dir), "-czf", "-", *MEDIA_PATHS],
-                        output=output, timeout=600)
-            break
-        except uploader.BackupError:
-            if attempt:
-                raise
+    sources = list(external_sources)
+    if external_media_inventory() != sources:
+        raise uploader.BackupError("Menu image references changed during the dump; retry in a quiet window")
+    with tempfile.TemporaryDirectory(prefix=".external-media-", dir=folder) as temporary:
+        if sources:
+            stage("external-media-download")
+            media_dir = Path(temporary) / EXTERNAL_MEDIA_ROOT
+            (media_dir / "files").mkdir(mode=0o700, parents=True)
+            images = [download_menu_image(item, media_dir / "files" / f"{item['menu_item_id']}.bin") for item in sources]
+            uploader.atomic_json(media_dir / "manifest.json", {"schema_version": 1, "images": images})
+            if external_media_inventory() != sources:
+                raise uploader.BackupError("Menu image references changed during download; retry in a quiet window")
+        stage("media-archive")
+        arguments = ["tar", "-C", str(app_dir), "-czf", "-", *MEDIA_PATHS]
+        if sources:
+            arguments.extend(["-C", temporary, EXTERNAL_MEDIA_ROOT])
+        # Retry a changing-file archive once, without regenerating the dump or downloads.
+        for attempt in range(2):
+            try:
+                with (folder / "production-files.tar.gz").open("wb") as output:
+                    command(arguments, output=output, timeout=600)
+                break
+            except uploader.BackupError:
+                if attempt:
+                    raise
 
 
 def run(args) -> int:
@@ -223,7 +336,7 @@ def run_locked(args, root: Path) -> int:
             status.update(run_id=folder.name, metadata=metadata, local_complete=True,
                           local_files=saved["local_files"])
             stage("local-validation")
-            validate_local(folder, metadata["expected_table_count"])
+            validate_local(folder, metadata["expected_table_count"], metadata.get("external_media_inventory", ()))
             if [uploader.file_details(folder / name) for name in uploader.REQUIRED_FILES] != saved["local_files"]:
                 raise uploader.BackupError("Saved local backup changed; refusing to upload different bytes under the same run ID")
         else:
@@ -238,9 +351,9 @@ def run_locked(args, root: Path) -> int:
                             started_at_manila=start.astimezone(MANILA).isoformat(),
                             scheduled_for_manila=scheduled_for(start) if args.scheduled else None)
             status.update(run_id=folder.name, metadata=metadata)
-            create_local(folder, args.app_dir.resolve(), stage)
+            create_local(folder, args.app_dir.resolve(), stage, metadata["external_media_inventory"])
             stage("local-validation")
-            metadata["validation"] = validate_local(folder, metadata["expected_table_count"])
+            metadata["validation"] = validate_local(folder, metadata["expected_table_count"], metadata["external_media_inventory"])
         status.update(run_id=folder.name, metadata=metadata, local_complete=True,
                       local_files=[uploader.file_details(folder / name) for name in uploader.REQUIRED_FILES])
         stage("r2-upload-and-verification")

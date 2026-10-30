@@ -2,7 +2,7 @@
 
 Updated: October 30, 2026.
 
-**Status: implemented locally; not installed or enabled on the VPS.** VPS preflight, a real unattended backup, an isolated restore test, and timer enablement remain required. **Telegram alerts and independent missed-run monitoring are deferred at the user's request.**
+**Status: source implementation complete; VPS acceptance is in progress.** On October 30, the private credential file and the base preflight checks passed. The owner then requested copies of the 29 externally stored menu images; this source release adds that coverage. Install/test the image-aware version and complete the restore/failure checks before enabling the timer. **Telegram alerts and independent missed-run monitoring remain deferred.**
 
 Installation and operational commands: [VPS setup and acceptance guide](DAILY_R2_BACKUP_SETUP.md). No database migration is needed for these scripts.
 
@@ -21,9 +21,11 @@ The intended daily operation keeps IdeaFlow available. Confirm transactional dat
 | Item | Current evidence |
 | --- | --- |
 | Manual R2 backup | Successful uploads have been reported in this conversation. |
-| Repository uploader | Preserves manual prompts; adds `--non-interactive`, bounded retries, streamed remote SHA-256 verification, and a completion manifest. The previously deployed VPS helper stays unchanged until this release is deployed. |
+| Repository uploader | Preserves manual prompts; supports `--non-interactive`, bounded retries, streamed remote SHA-256 verification, and a completion manifest. |
 | Existing automation document | Was a draft, not evidence of an installed job. The user now selected 23:30 instead of the previous midnight plan. |
-| Existing VPS timer or cron job | Not inspected in this task. Check before installing anything, to avoid duplicate jobs. |
+| Existing VPS timer or cron job | October 30 checks found no IdeaFlow backup timer and no matching cron entry. The named timer was not installed at the start of acceptance. |
+| VPS prerequisites | Root-owned mode-700 backup folder, mode-600 credentials, synchronized UTC clock, and base local preflight passed. MySQL is 8.4.11; the schedule explicitly uses Asia/Manila. |
+| External menu images | 29 references use `media.idea-flows.online`. The owner requested that each automated backup include their file bytes too. |
 | Restore from the proposed automated backup | Not tested yet. Required before calling the new workflow verified. |
 | Telegram alerts / independent monitor | Deferred. No bot, sender, external monitor, or alert unit is included in this implementation. |
 
@@ -43,7 +45,7 @@ Use a **VPS systemd service and daily timer**, the existing MySQL tools, and the
 | --- | --- |
 | `scripts/upload_backup_to_r2.py` | Preserve manual prompting by default. Add explicit unattended credentials, manifest support, bounded network retries/timeouts, and streamed remote SHA-256 verification. |
 | `scripts/run_daily_backup.sh` | Thin private-umask wrapper invoking the existing VPS Python environment. |
-| `scripts/run_daily_backup.py` | Linux `flock`, credential/tool/database/space preflight, dump, bounded archive retries, validation, upload, private atomic status, and `--retry-upload`. No Flask import or app stop. |
+| `scripts/run_daily_backup.py` | Linux `flock`, credential/tool/database/space preflight, dump, public menu-image capture, archive validation, upload, private atomic status, and `--retry-upload`. No Flask import or app stop. |
 | `deploy/ideaflow-daily-backup.service` | New reviewed service template using the current `/var/www/pos` installation. |
 | `deploy/ideaflow-daily-backup.timer` | New 11:30 p.m. Asia/Manila timer template. |
 | `deploy/backup.env.example` | Empty credential template; the real `backup.env` is ignored by Git. |
@@ -51,7 +53,7 @@ Use a **VPS systemd service and daily timer**, the existing MySQL tools, and the
 | `/var/backups/ideaflow/` on the VPS | Private staging folders, failed-attempt evidence, and last-success metadata. |
 | Targeted tests | Cover unattended mode, failures, verification, and completion ordering without production credentials. |
 
-Only local files are changed. No VPS command, real R2 upload, notification, or timer activation is performed by this implementation.
+Deploying these files alone does not install or activate the timer. Follow the separate VPS acceptance steps; inspect actual systemd status before describing the job as live.
 
 ## 4. Backup contents and destination
 
@@ -70,25 +72,27 @@ The unique ID prevents a manual retry from overwriting an earlier run. Existing 
 | Object | Contents |
 | --- | --- |
 | `pos_db.sql` | All application tables/data in `pos_db`, plus routines, triggers, and events. This is not an export of MySQL system accounts. |
-| `production-files.tar.gz` | Current local `static/uploads` and `static/images`, matching the established manual backup scope. Confirm any additional mutable asset paths before finalizing the archive list. |
-| `manifest.json` | Run ID, scheduled backup date in Manila time, actual start/completion times in UTC and Manila time, application Git revision, file sizes and SHA-256 hashes, scope, and verification outcome. No passwords or tokens. |
+| `production-files.tar.gz` | Local `static/uploads` and `static/images`, plus `external-media/files/<menu-item-id>.bin` and an `external-media/manifest.json` index when remote menu images are referenced. The index maps each copy to its saved image URL, content type, byte size and SHA-256. |
+| `manifest.json` | Run ID, scheduled backup date in Manila time, actual start/completion times in UTC and Manila time, application Git revision, file sizes and SHA-256 hashes, image inventory, scope, and verification outcome. No backup credentials are added. |
 
-Inventory media storage during preflight. Images already stored in a separate R2 media bucket are not captured by a local tar archive; if production uses those assets, include a versioned backup copy/export of the referenced media before claiming complete media recovery.
+The image-aware runner inventories menu image references directly from MySQL. It fetches external images only from `https://media.idea-flows.online`, refuses redirects, streams at most 20 MiB per image, and validates every saved copy's size/hash against the archive index. Other external hosts fail preflight for review rather than silently losing coverage. Local image paths remain covered by the existing local archive directories. Unreferenced objects elsewhere in a media bucket are outside this scope.
+
+Public image retrieval does not need a second R2 credential. The private backup-bucket credential still provides upload and read-back verification. The menu image bucket is never modified by this job. Image references are checked around the dump/download window; a changed reference, missing image, invalid response or incomplete download prevents completion. Upload retry reuses the already saved image snapshot, not the current live catalog.
 
 Application code can be restored from its recorded Git revision. Configuration, credentials, database grants, and server setup need a separately maintained secure recovery record. Do not silently add plaintext `.env`, SSH keys, or R2 secrets to this archive. Redis login leases are transient and do not belong in a business-data restore.
 
 ## 5. Run sequence and consistency
 
 1. Acquire an exclusive `flock` lock. Both scheduled runs and manual invocations of the new wrapper use this lock. An old hand-written backup command outside the wrapper does not automatically share it.
-2. Set `umask 077`; require a root-owned mode-700 backup directory and root-owned private credentials. Check tools, local media directories, MySQL access, required tables, all base-table engines, Git revision, and available space. The space estimate is the larger of 1 GiB or four times estimated database bytes plus uncompressed local media bytes plus 256 MiB; it is a preflight estimate, not a guarantee against later disk exhaustion. Create a unique private staging folder.
+2. Set `umask 077`; require a root-owned mode-700 backup directory and root-owned private credentials. Check tools, local media directories, MySQL access, required tables, menu image addresses, all base-table engines, Git revision, and available space. Budget the larger of 1 GiB or four times estimated database bytes plus local media, two maximum-size copies of each external image, and 256 MiB of reserve. This is conservative and does not guarantee against concurrent disk use. Create a unique private staging folder.
 3. Dump `pos_db` with the established flags plus streaming rows:
 
    ```text
    mysqldump --single-transaction --quick --routines --triggers --events --hex-blob --no-tablespaces --result-file=<private-folder>/pos_db.sql pos_db
    ```
 
-4. Archive the confirmed mutable local media directories. A failed or changing-file archive is not accepted as a successful backup; retry the archive within a bounded limit or fail visibly.
-5. Require successful tool exits, non-empty files, a completed SQL dump, expected schema presence, and a readable gzip/tar archive. Record diagnostic table/archive counts without hard-coding a permanently fixed table count. An INSERT-statement count is not a row count.
+4. Copy the inventoried public menu images into private temporary staging and build their address/hash index. Archive these copies together with the local media directories. Retry a changing-file archive within a bounded limit without redumping or redownloading the saved images.
+5. Require successful tool exits, non-empty files, a completed SQL dump, expected schema presence, a readable gzip/tar archive, and matching external image inventory/bytes/checksums. Record diagnostic table/archive/image counts without hard-coding a permanently fixed table count. An INSERT-statement count is not a row count.
 6. Compute SHA-256 and sizes for the two local files, then upload them to the new R2 prefix.
 7. Read back each remote object as a stream and compute its SHA-256. Require matching size and hash. Do not treat an ETag or a user-supplied hash metadata field as an independent verification of the uploaded bytes.
 8. Upload `manifest.json` last, only after both data objects pass verification. Read back and validate the small manifest as well. A missing/invalid manifest means an incomplete backup set.
@@ -258,7 +262,7 @@ Failed local attempts and incomplete remote prefixes need their own reviewed cle
 
 ### Phase A — local implementation and isolated checks
 
-Local evidence (October 30): across the full backup suite and focused follow-ups, **31 distinct checks passed**, with one native Linux `flock` test skipped on Windows. The follow-ups include a real native `tar` archive and completion-status failure ordering. Bash syntax and both CLI help commands passed. Tests use synthetic files and fake database/R2 clients, not production credentials. Native Linux lock execution, `systemd-analyze` validation, real R2 access, restore testing, and the first scheduled run are still pending on Linux/VPS.
+Local image-extension evidence (October 30): **44 backup checks passed**, with one native Linux `flock` test skipped on Windows. Tests cover the existing uploader/failure paths plus a real native tar containing local and downloaded images, per-image hash validation, retry without redownloading, rejected external addresses/redirects, incomplete/oversized/HTML responses, and changed image references. Tests use synthetic data and fake R2/HTTP clients. The base release's Linux CI also passed. The image-aware VPS upload, isolated restore, controlled failure and first scheduled run must be verified separately.
 
 - Extend the existing uploader and add the wrapper/unit templates listed above.
 - Keep manual upload usage compatible.

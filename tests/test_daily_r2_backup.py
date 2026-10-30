@@ -3,6 +3,7 @@
 from argparse import Namespace
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import hashlib
 import io
 import json
 import os
@@ -11,6 +12,9 @@ import shutil
 import subprocess
 import tarfile
 from types import SimpleNamespace
+from urllib.error import HTTPError
+from urllib.request import HTTPSHandler, build_opener
+from urllib.response import addinfourl
 
 from botocore.exceptions import ClientError
 import pytest
@@ -189,6 +193,8 @@ def setup_run(tmp_path, monkeypatch):
         calls.append(arguments)
         tool = arguments[0]
         if tool == "mysql":
+            if "JSON_OBJECT" in arguments[-1]:
+                return "\n".join(json.dumps(item) for item in getattr(args, "media_sources", []))
             return "\n".join(f"{table}\tInnoDB\t100" for table in sorted(runner.CORE_TABLES))
         if tool == "git":
             return "a" * 40
@@ -196,7 +202,10 @@ def setup_run(tmp_path, monkeypatch):
             fixture = local_set(tmp_path / "fixture")
             output.write((fixture / "pos_db.sql").read_bytes())
         elif tool == "tar":
-            output.write((tmp_path / "fixture" / "production-files.tar.gz").read_bytes())
+            if runner.EXTERNAL_MEDIA_ROOT in arguments:
+                subprocess.run(arguments, stdout=output, stderr=subprocess.PIPE, timeout=15, check=True)
+            else:
+                output.write((tmp_path / "fixture" / "production-files.tar.gz").read_bytes())
         else:
             pytest.fail(f"Unexpected tool: {tool}")
 
@@ -440,3 +449,146 @@ def test_timer_templates_and_linux_line_endings():
     assert "Telegram" not in service and "systemctl stop" not in service
     for name in ("scripts/run_daily_backup.sh", "deploy/ideaflow-daily-backup.service", "deploy/ideaflow-daily-backup.timer"):
         assert b"\r" not in (project / name).read_bytes()
+
+
+class MediaResponse(io.BytesIO):
+    status = 200
+
+    def __init__(self, body, *, length=None, content_type="image/png"):
+        super().__init__(body)
+        self.headers = {"Content-Length": str(len(body) if length is None else length),
+                        "Content-Type": content_type}
+
+
+@pytest.fixture
+def media_http(monkeypatch):
+    responses, requests = {}, []
+
+    def open_media(request, **kwargs):
+        requests.append(request.full_url)
+        return responses[request.full_url]()
+
+    monkeypatch.setattr(runner, "build_opener", lambda *handlers: SimpleNamespace(open=open_media))
+    return responses, requests
+
+
+@pytest.mark.skipif(shutil.which("tar") is None, reason="Native tar is required for the media archive check")
+def test_menu_images_archive_round_trip_and_retry_uses_saved_snapshot(setup_run, media_http, tmp_path):
+    args, root, client, calls = setup_run
+    responses, requests = media_http
+    sources = [{"menu_item_id": 4, "url": "https://media.idea-flows.online/menu/first.png"},
+               {"menu_item_id": 9, "url": "https://media.idea-flows.online/menu/second.png"}]
+    args.media_sources = sources + [{"menu_item_id": 10, "url": "/static/uploads/local.png"}]
+    bodies = {sources[0]["url"]: b"first-image-bytes", sources[1]["url"]: b"second-image-bytes"}
+    for url, body in bodies.items():
+        responses[url] = lambda body=body: MediaResponse(body)
+    (args.app_dir / "static/images/logo.jpg").write_bytes(b"local-logo")
+    client.failures = 3
+    assert runner.run_locked(args, root) == 1
+    status = json.loads((root / "last-attempt.json").read_text())
+    assert status["local_complete"] and not (root / "last-success.json").exists()
+    folder = root / status["run_id"]
+    metadata = status["metadata"]
+    assert metadata["scope"]["external_media"]["image_count"] == 2
+    assert metadata["validation"]["external_media_images"] == 2
+    with tarfile.open(folder / "production-files.tar.gz", "r:gz") as archive:
+        assert archive.extractfile("static/images/logo.jpg").read() == b"local-logo"
+        index = json.load(archive.extractfile("external-media/manifest.json"))
+        for image in index["images"]:
+            body = archive.extractfile("external-media/" + image["file"]).read()
+            assert body == bodies[image["url"]]
+            assert image["size"] == len(body) and image["sha256"] == hashlib.sha256(body).hexdigest()
+    # A saved backup retries without querying changed live images or downloading again.
+    responses.clear()
+    args.media_sources = []
+    args.retry_upload, args.scheduled = folder, False
+    assert runner.run_locked(args, root) == 0
+    assert requests == [item["url"] for item in sources]
+    assert sum(call[0] == "mysqldump" for call in calls) == 1
+    marker = json.loads(client.objects[f"{folder.name}/manifest.json"])
+    assert marker["files"] == [uploader.file_details(folder / name) for name in uploader.REQUIRED_FILES]
+    # A valid gzip with altered image bytes must still fail its per-image checksum.
+    damaged = tmp_path / "damaged"
+    damaged.mkdir()
+    shutil.copyfile(folder / "pos_db.sql", damaged / "pos_db.sql")
+    with tarfile.open(folder / "production-files.tar.gz", "r:gz") as source:
+        with tarfile.open(damaged / "production-files.tar.gz", "w:gz") as target:
+            for member in source:
+                body = source.extractfile(member).read() if member.isfile() else None
+                if member.name == "external-media/files/4.bin":
+                    body = b"changed"
+                    member.size = len(body)
+                target.addfile(member, io.BytesIO(body) if body is not None else None)
+    with pytest.raises(uploader.BackupError, match="SHA-256"):
+        runner.validate_local(damaged, len(runner.CORE_TABLES), sources)
+
+
+@pytest.mark.parametrize("url", [
+    "http://media.idea-flows.online/a.png", "https://127.0.0.1/a.png", "file:///etc/passwd",
+    "https://media.idea-flows.online.evil.invalid/a.png", "https://user:secret@media.idea-flows.online/a.png",
+])
+def test_untrusted_menu_image_addresses_fail_before_download(setup_run, media_http, url):
+    args, root, client, calls = setup_run
+    args.media_sources = [{"menu_item_id": 1, "url": url}]
+    assert runner.run_locked(args, root) == 1
+    assert not media_http[1] and not client.events
+    assert not any(call[0] == "mysqldump" for call in calls)
+    assert not (root / "last-success.json").exists()
+
+
+@pytest.mark.parametrize("failure", ["forbidden", "short-body", "oversized", "html"])
+def test_bad_menu_image_response_preserves_last_success(setup_run, media_http, capsys, failure):
+    args, root, client, calls = setup_run
+    url = "https://media.idea-flows.online/menu/a.png?token=secret-must-never-appear"
+    args.media_sources = [{"menu_item_id": 1, "url": url}]
+    previous = b'{"prefix":"previous-verified"}'
+    (root / "last-success.json").write_bytes(previous)
+
+    def response():
+        if failure == "forbidden":
+            raise HTTPError(url, 403, "secret-must-never-appear", {}, io.BytesIO(b"secret"))
+        return MediaResponse(b"image", length=10 if failure == "short-body" else runner.MAX_IMAGE_BYTES + 1
+                             if failure == "oversized" else None,
+                             content_type="text/html" if failure == "html" else "image/png")
+
+    media_http[0][url] = response
+    assert runner.run_locked(args, root) == 1
+    status = json.loads((root / "last-attempt.json").read_text())
+    assert status["stage"] == "external-media-download" and not status["local_complete"]
+    assert (root / "last-success.json").read_bytes() == previous and not client.events
+    assert "secret-must-never-appear" not in capsys.readouterr().out
+
+
+def test_media_redirect_is_rejected_without_contacting_redirect_target(tmp_path, monkeypatch):
+    requests = []
+
+    class RedirectResponse(HTTPSHandler):
+        def https_open(self, request):
+            requests.append(request.full_url)
+            response = addinfourl(io.BytesIO(b""), {"Location": "https://127.0.0.1/private"}, request.full_url, 302)
+            response.msg = "Found"
+            return response
+
+    monkeypatch.setattr(runner, "build_opener", lambda *handlers: build_opener(*handlers, RedirectResponse()))
+    item = {"menu_item_id": 1, "url": "https://media.idea-flows.online/menu/a.png"}
+    with pytest.raises(uploader.BackupError, match="redirected"):
+        runner.download_menu_image(item, tmp_path / "image.bin")
+    assert requests == [item["url"]]
+
+
+@pytest.mark.parametrize("change_at", [2, 3])
+def test_changing_menu_references_prevents_completion(setup_run, media_http, monkeypatch, change_at):
+    args, root, client, calls = setup_run
+    source = {"menu_item_id": 1, "url": "https://media.idea-flows.online/menu/original.png"}
+    inventories = []
+
+    def inventory():
+        inventories.append(1)
+        return [source] if len(inventories) < change_at else [{**source, "url": source["url"] + "?v=new"}]
+
+    monkeypatch.setattr(runner, "external_media_inventory", inventory)
+    media_http[0][source["url"]] = lambda: MediaResponse(b"image")
+    assert runner.run_locked(args, root) == 1
+    status = json.loads((root / "last-attempt.json").read_text())
+    assert "references changed" in status["error"] and not status["local_complete"]
+    assert not client.events and not (root / "last-success.json").exists()

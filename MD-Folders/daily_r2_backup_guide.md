@@ -2,7 +2,7 @@
 
 **Updated:** October 30, 2026 (Asia/Manila).
 
-**Current VPS method:** manual backup through the VPS SSH terminal. The deployed helper remains interactive until the new release is deployed. Unattended backups and the daily 11:30 p.m. timer are implemented locally but need separate VPS setup and validation. Telegram alerts are deferred.
+**Current VPS method:** manual backups remain available. The deployed uploader also supports unattended credentials and streamed remote SHA-256 verification. The daily 11:30 p.m. timer needs separate VPS acceptance and activation. The image-aware automation release adds referenced public menu images to the files archive. Telegram alerts remain deferred.
 
 ## Latest verified backup — October 27, 2026
 
@@ -94,7 +94,7 @@ sudo bash -c 'set -euo pipefail; umask 077; set -o noclobber; tar -C /var/www/po
 
 Proceed only after **`FILES ARCHIVE COMPLETE`** appears with no warning or error. A `file changed as we read it` warning is not a clean result; investigate/retry rather than silently calling that archive verified.
 
-The scope is the complete `pos_db` dump plus these local uploads/images. It is not a whole-server backup and does not include `.env`, SSH keys, MySQL system accounts, or assets that exist only in a separate R2 media bucket. Keep server/configuration recovery information separately and protect credentials.
+This manual tar command covers local uploads/images. Along with the database dump, it is not a whole-server backup and does not include `.env`, SSH keys, MySQL system accounts or separate R2 media objects. The image-aware automated runner additionally copies referenced menu images from `media.idea-flows.online` into `external-media/` inside its files archive. That extra capture does not happen merely by running this manual tar command. Keep server/configuration recovery information separately and protect credentials.
 
 ### 4. Verify the local backup before uploading
 
@@ -136,7 +136,7 @@ You can also open Cloudflare → **R2 object storage** → **ideaflow-backups** 
 
 A downloaded checksum comparison or an isolated MySQL restore is additional verification. Neither is implied by the current size-check message. Never test a restore by importing over the live `pos_db` database.
 
-After the new local uploader is deployed, it also prints `SHA-256 matched`, reads the remote file bytes back, and publishes `manifest.json` last. Its normal manual prompts stay available. That stronger verification still does not replace an isolated restore test; historical backups made with the older deployed helper were checked by size only.
+The updated uploader prints `SHA-256 matched`, reads remote file bytes back, and publishes `manifest.json` last. Its normal manual prompts stay available. That stronger verification still does not replace an isolated restore test; historical backups made with the older helper were checked by size only.
 
 ### 7. Record the result and retain the local copy
 

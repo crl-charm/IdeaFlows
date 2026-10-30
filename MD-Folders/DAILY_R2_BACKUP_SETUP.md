@@ -1,6 +1,6 @@
 # Daily R2 backup — VPS installation and checks
 
-Updated: October 30, 2026. **Local implementation only; these VPS steps have not been run.**
+Updated: October 30, 2026. **VPS acceptance is in progress.** Credential permissions, clock synchronization and the base preflight passed; the image-aware upload/restore and schedule activation must still be verified. Read actual systemd status rather than assuming a timer is active because the source files are deployed.
 
 Schedule: **11:30 p.m. Asia/Manila every day**. No application shutdown, automatic deletion, Telegram alerts, or independent missed-run monitor is included. No database migration is needed for this feature.
 
@@ -8,7 +8,7 @@ Schedule: **11:30 p.m. Asia/Manila every day**. No application shutdown, automat
 
 Deploy the reviewed backup files to `/var/www/pos` through the usual release procedure first. Check for existing backup timers and cron jobs; do not create duplicate schedules. Confirm time synchronization, root's unattended MySQL socket access, and that no migration or schema change overlaps the backup window.
 
-Inventory media storage. This version includes all `pos_db` data plus local `static/uploads` and `static/images`. It does **not** copy images from a separate R2 media bucket, server configuration, or credentials. If external media is in use, arrange its separate versioned recovery before describing the backup as complete.
+Inventory media storage. This version includes all `pos_db` data, local `static/uploads` and `static/images`, and copies of referenced public menu images from `media.idea-flows.online`. The latter are indexed under `external-media/` inside `production-files.tar.gz`. The owner confirmed this extension after 29 external image references were found. It does not copy unreferenced media-bucket objects, server configuration or credentials.
 
 Review the destination's private permissions and these local directories before changing their modes:
 
@@ -49,7 +49,7 @@ systemd-analyze calendar '*-*-* 23:30:00 Asia/Manila'
 sudo systemctl daemon-reload
 ```
 
-The timer templates do not start or stop `ideahub`. The backup unit runs for at most 30 minutes. It is normally inactive after a successful run.
+The timer templates do not start or stop `ideahub`. The backup unit runs for at most 30 minutes. It is normally inactive after a successful run. Installing only updated backup scripts requires no POS restart or database migration.
 
 ## 3. Controlled backup and isolated restore
 
@@ -64,9 +64,9 @@ sudo cat /var/backups/ideaflow/last-success.json
 
 Require `Result=success`, `ExecMainStatus=0`, and a newly verified prefix. The unit associates the run with the latest due 11:30 p.m. schedule, so a daytime manual service test can refer to yesterday's scheduled date. Its folder and snapshot timestamps still reflect the real backup time.
 
-In private R2, require both files and `manifest.json` in that prefix. The uploader has streamed the remote bytes back and compared their SHA-256 hashes. The manifest records the source revision, scope, scheduled date, actual timestamps, file hashes/sizes, and validation counts.
+In private R2, require both files and `manifest.json` in that prefix. The uploader streams the remote bytes back and compares their SHA-256 hashes. Require the external image count in scope/validation to match the saved menu image inventory. The manifest records the source revision, scope, scheduled date, actual timestamps, file hashes/sizes, and validation counts.
 
-Download the set to a separate private restore-test directory. Match the downloaded hashes/sizes to the manifest, import into a **new isolated database**, and extract the archive into a **new isolated directory**. Check representative customer, checkout, expense, debt, inventory, and cash-history records plus media. Never restore over live `pos_db` or the live `static` directories as a test.
+Download the set to a separate private restore-test directory. Match downloaded hashes/sizes to the manifest. For a full dump containing routines/events, use a **separate isolated MySQL instance**, with its event scheduler disabled and no connection to the live database. A temporary constrained Docker container without published ports or live data-directory mounts is suitable; check host memory first. Import there and extract the archive into a **new private directory outside the web root**. Check representative customer, checkout, expense, debt, inventory and cash-history records, local media, and every extracted external image against its index. Never restore over live `pos_db` or live `static` directories as a test.
 
 Also test a controlled failure without modifying production data, using a temporary test environment file with missing credentials and a separate backup root. Require a failure exit/result, a sanitized failed attempt, and no change to the real last-success record. No phone notification will arrive in this version.
 
