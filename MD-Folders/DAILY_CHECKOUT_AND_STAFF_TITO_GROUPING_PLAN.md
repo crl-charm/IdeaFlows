@@ -42,6 +42,13 @@
 
 ## Local implementation check
 
+### October 30 local layout update
+
+- Checkout Records now reuses one complete responsive card per record on all screen sizes, replacing the 15-column desktop table that required horizontal scrolling. Desktop uses two columns of cards when space permits; phones/tablets use one column.
+- All former desktop information remains visible: Time In/Out, billable time, time/food bills, discounts, payment, collector, late payment/recording timestamps, total, credit, tendered cash, change, status, and the existing Void/Review/Details/Time history actions. Date grouping, search, filters, pagination, and billing logic are retained.
+- **24 billing/request-management checks passed.** Isolated Chrome checks found no page, card, or action-button horizontal overflow at 320, 375, 768, 1024, 1366, 1708, and 1920 CSS pixels. The desktop widths include normal and 80%-zoom-equivalent layouts. Existing dialogs, staff/admin action differences, long names, null cash values, search, day grouping, and load-more behavior passed with no JavaScript page errors.
+- Local change only; no VPS deployment or database migration was performed.
+
 - Checkout Records now uses Manila checkout-day headings, a day picker with Today/Show All, server-side search/status/payment filters, and Load older pagination. The existing API array response remains available to older callers.
 - Admin Staff Time In/Out now shows Time In and Time Out as separate dated events, including overnight shifts and visible legacy login records, with date filtering and Load older pagination.
 - Focused boundary/filter/authorization tests and the full suite passed locally (276 tests). Manual checks on the deployed site remain to be done after deployment.

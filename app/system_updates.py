@@ -1,6 +1,50 @@
-"""Reviewed notes bundled with this build; add a new ID when an instruction changes."""
+"""Published patch notes with fixed dates; code edits never generate or rewrite them."""
+
+from datetime import date
 
 SYSTEM_UPDATES = (
+    {
+        "id": "2026-10-30-customer-visit-filters",
+        "date": "2026-10-30",
+        "title": "Customer visits by day or month",
+        "summary": "See today's customer visits, yesterday's visits or a chosen month without losing older records.",
+        "changed": "The Customer visits card starts with Today in Manila time. Each visit counts separately, including repeat visits, food-only visits and started Boardroom bookings. Cancelled check-ins are excluded. A new day changes the view, not the saved history.",
+        "location": "Admin Panel → Customer visits → Customer Records",
+        "steps": (
+            "Open Admin Panel and tap the Customer visits card.",
+            "Choose Today, Yesterday or a month and year. The current month shows visits up to now.",
+            "Choose Show All to review older visits. The card total follows the selected period.",
+        ),
+        "paths": {"admin": "/admin"},
+    },
+    {
+        "id": "2026-10-30-staff-attendance-filters",
+        "date": "2026-10-30",
+        "title": "Staff Time In/Out by day or month",
+        "summary": "Find staff attendance events for Today, Yesterday or a selected month.",
+        "changed": "Staff Time In/Out now has its own date filters using each event's Manila date. Staff Members, Active / Online and Offline still show the current staff account counts.",
+        "location": "Admin Panel → Staff Members → Staff Time In/Out",
+        "steps": (
+            "Open Admin Panel and tap the Staff Members card.",
+            "Choose Today, Yesterday or a month and year to review the attendance events.",
+            "Choose Show All for the full saved history. These filters do not change Customer Records.",
+        ),
+        "paths": {"admin": "/admin"},
+    },
+    {
+        "id": "2026-10-30-checkout-records-layout",
+        "date": "2026-10-30",
+        "title": "Checkout records fit your screen",
+        "summary": "Read each customer's bill, payment and checkout actions without scrolling sideways.",
+        "changed": "Checkout Records uses cards that fit desktop, tablet and phone screens. The time and food bills, discounts, payment details, status and available actions stay together. Billing amounts and saved records are unchanged.",
+        "location": "Checkout Records",
+        "steps": (
+            "Open Checkout Records and use the existing date or search filters to find a checkout.",
+            "Read the customer's card for the full bill and payment breakdown.",
+            "Use the available Details, Time history or void controls as before. Use Load older for more records.",
+        ),
+        "paths": {"admin": "/checkout-records", "staff": "/checkout-records"},
+    },
     {
         "id": "2026-10-29-monthly-accountant",
         "date": "2026-10-29",
@@ -95,5 +139,7 @@ def updates_for(role):
         if role in update["paths"]:
             note = update.copy()
             note["url"] = note.pop("paths")[role]
+            released_on = date.fromisoformat(note["date"])
+            note["date_label"] = f"{released_on:%B} {released_on.day}, {released_on.year}"
             notes.append(note)
     return notes

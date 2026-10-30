@@ -218,6 +218,8 @@ input, button, select, textarea {
 /* M4: Checkout Records Filters - responsive layout */
 .checkout-filters {
   display: flex;
+  flex: 1;
+  min-width: 0;
   gap: 0.75rem;
   align-items: flex-end;
   flex-wrap: wrap;
@@ -231,6 +233,63 @@ input, button, select, textarea {
 
 .checkout-filters>button {
   flex-shrink: 0;
+}
+
+.checkout-filters>.d-flex {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.checkout-filters .form-control {
+  min-width: 0;
+}
+
+/* Complete checkout records at every width, without a wide duplicate table. */
+.checkout-record-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.checkout-record-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+.checkout-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.75rem;
+}
+
+.checkout-card-header>div:first-child { flex: 1 1 180px; min-width: 0; }
+.checkout-card-customer { font-weight: 600; color: var(--text); }
+.checkout-card-space { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
+.checkout-card-badges { display: flex; flex-wrap: wrap; gap: 0.35rem; max-width: 100%; }
+.checkout-card-badges .badge { white-space: normal; text-align: start; }
+.checkout-card-body { display: flex; flex: 1; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem; }
+.checkout-card-row { display: grid; grid-template-columns: minmax(90px, 40%) minmax(0, 1fr); gap: 0.75rem; font-size: 0.875rem; }
+.checkout-card-label { color: var(--muted); font-weight: 500; }
+.checkout-card-value { color: var(--text); font-weight: 600; text-align: end; min-width: 0; }
+.checkout-card-footer { display: flex; flex-wrap: wrap; gap: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.checkout-card-total { font-size: 1.1rem; font-weight: 700; color: var(--brand-dark); }
+.checkout-card-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; min-width: 0; }
+.checkout-card-actions .btn { min-height: 44px; white-space: normal; }
+
+@media (min-width: 1200px) {
+  .checkout-record-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 #floatingAddBtn {
@@ -756,77 +815,6 @@ input, button, select, textarea {
     display: grid;
     grid-template-columns: 1fr;
     gap: 0.75rem;
-  }
-
-  .checkout-record-card {
-    background: #ffffff;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1rem;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
-    transition: all 0.2s ease;
-  }
-
-  .checkout-record-card:active {
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
-    transform: translateY(-1px);
-  }
-
-  .checkout-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 0.75rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.75rem;
-  }
-
-  .checkout-card-customer {
-    font-weight: 600;
-    color: var(--text);
-    font-size: 0.95rem;
-  }
-
-  .checkout-card-space {
-    font-size: 0.8rem;
-    color: var(--muted);
-    margin-top: 0.25rem;
-  }
-
-  .checkout-card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .checkout-card-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.85rem;
-  }
-
-  .checkout-card-label {
-    color: var(--muted);
-    font-weight: 500;
-  }
-
-  .checkout-card-value {
-    color: var(--text);
-    font-weight: 600;
-  }
-
-  .checkout-card-footer {
-    display: flex;
-    justify-content: flex-end;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
-  }
-
-  .checkout-card-total {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--brand-dark);
   }
 
   /* Toast responsive width */

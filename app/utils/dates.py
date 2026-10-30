@@ -1,6 +1,6 @@
 """Helpers for index-friendly filtering of naive datetime columns."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 
 # Database timestamps are naive UTC; Philippine business days are UTC+8.
@@ -65,3 +65,43 @@ def manila_day_bounds(target_date: date) -> tuple[datetime, datetime]:
 def inclusive_manila_bounds(start_date: date, end_date: date) -> tuple[datetime, datetime]:
     start, end = inclusive_date_bounds(start_date, end_date)
     return start - MANILA_OFFSET, end - MANILA_OFFSET
+
+
+def history_period(period="today", month=None, *, now=None):
+    """Shared visit/event window; SQL bounds are naive UTC, labels are Manila dates."""
+    now = now or datetime.now(timezone.utc)
+    now = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo else now
+    today = manila_date(now)
+    if period not in {"today", "yesterday", "month", "all"}:
+        raise ValueError("Choose Today, Yesterday, Month, or Show All.")
+    if (period == "month") != (month is not None):
+        raise ValueError("Choose a month only when using the Month filter.")
+    start = None
+    end = now
+    last = today
+    if period == "month":
+        first, after = month_bounds(month)
+        if first > today:
+            raise ValueError("Choose the current month or an earlier month.")
+        start = datetime.combine(first, time.min) - MANILA_OFFSET
+        end = min(datetime.combine(after, time.min) - MANILA_OFFSET, now)
+        last = min(after - timedelta(days=1), today)
+        label = first.strftime("%B %Y") + f" · {first:%b} 1–{last.day}"
+    elif period in {"today", "yesterday"}:
+        selected = today - timedelta(days=period == "yesterday")
+        last = selected
+        start, boundary = manila_day_bounds(selected)
+        end = min(boundary, now)
+        label = period.title() + " · " + selected.strftime("%B %d, %Y")
+    else:
+        label = "All history"
+    next_day, _ = manila_day_bounds(today + timedelta(days=1))
+    info = {
+        "period": period, "month": month, "label": label,
+        "start_date": manila_date(start).isoformat() if start else None,
+        "end_date": last.isoformat(),
+        "today": today.isoformat(), "current_month": today.strftime("%Y-%m"),
+        "as_of": now.isoformat() + "Z",
+        "next_day_in_seconds": (next_day - now).total_seconds(),
+    }
+    return start, end, info

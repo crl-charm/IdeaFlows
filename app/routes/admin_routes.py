@@ -9,8 +9,29 @@ from app.utils.auth import login_required, admin_required
 from app.core.idempotency import idempotent_request
 from app.core.session_leases import SessionLeaseUnavailable
 from app.core.socketio_handlers import emit_session_revoked
+from app.utils.dates import history_period
 
 _service = AdminService(repo=AdminRepository())
+
+
+def _history_arguments():
+    for key in ("period", "month", "date", "page", "per_page", "events"):
+        if len(request.args.getlist(key)) > 1:
+            raise ValueError("Choose only one value for each history filter.")
+    if "date" in request.args:
+        raise ValueError("Use a period or month, not a separate date.")
+    return history_period(request.args.get("period", "today"), request.args.get("month"))
+
+
+def _history_pagination():
+    try:
+        page = int(request.args.get("page", "1"))
+        per_page = int(request.args.get("per_page", "50"))
+    except (ValueError, OverflowError):
+        raise ValueError("Invalid page or page size.") from None
+    if not 1 <= page <= 1_000_000 or not 1 <= per_page <= 100:
+        raise ValueError("Page must be 1–1,000,000 and page size must be 1–100.")
+    return page, per_page
 
 
 # ── Blueprint ─────────────────────────────────────────────────────────────────
@@ -179,14 +200,26 @@ def reactivate_user(user_id):
 @login_required
 @admin_required
 def get_customer_records():
-    return jsonify(_service.customer_records())
+    try:
+        start, end, info = _history_arguments()
+        page, per_page = _history_pagination()
+    except (ValueError, OverflowError) as error:
+        return jsonify({"error": str(error)}), 400
+    total = _service.customer_count(start, end)
+    return jsonify({"data": _service.customer_records(start, end, page=page, per_page=per_page),
+                    "total": total, "page": page, "per_page": per_page,
+                    "has_next": page * per_page < total, "filter": info})
 
 
 @admin_bp.route("/api/admin/customer-count", methods=["GET"])
 @login_required
 @admin_required
 def get_customer_count():
-    return jsonify({"count": _service.customer_count()})
+    try:
+        start, end, info = _history_arguments()
+    except (ValueError, OverflowError) as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({"count": _service.customer_count(start, end), "filter": info})
 
 
 @admin_bp.route("/api/admin/staff-attendance", methods=["GET"])
@@ -194,20 +227,29 @@ def get_customer_count():
 @admin_required
 def get_staff_attendance():
     try:
+        new_period = "period" in request.args or "month" in request.args
         if request.args.get("events") != "1":
+            if new_period:
+                return jsonify({"error": "Use events=1 with period filters."}), 400
             return jsonify(_service.staff_attendance())
         try:
-            page = int(request.args.get("page", "1"))
-            per_page = int(request.args.get("per_page", "50"))
-            target_date = date.fromisoformat(request.args["date"]) if request.args.get("date") else None
-        except (ValueError, OverflowError):
-            return jsonify({"error": "Invalid page, page size, or date."}), 400
-        if not 1 <= page <= 1_000_000 or not 1 <= per_page <= 100:
-            return jsonify({"error": "Page must be 1–1,000,000 and page size must be 1–100."}), 400
-        events = _service.staff_attendance_events(target_date)
+            page, per_page = _history_pagination()
+            info = None
+            if new_period:
+                start, end, info = _history_arguments()
+                events = _service.staff_attendance_events(start=start, end=end)
+            else:
+                # Preserve the legacy all-events/single-date API for existing callers.
+                if any(len(request.args.getlist(key)) > 1 for key in ("date", "page", "per_page", "events")):
+                    raise ValueError("Choose only one value for each history filter.")
+                target_date = date.fromisoformat(request.args["date"]) if request.args.get("date") else None
+                events = _service.staff_attendance_events(target_date)
+        except (ValueError, OverflowError) as error:
+            return jsonify({"error": str(error)}), 400
         start = (page - 1) * per_page
         return jsonify({"data": events[start:start + per_page], "total": len(events),
-                        "page": page, "per_page": per_page, "has_next": start + per_page < len(events)})
+                        "page": page, "per_page": per_page, "has_next": start + per_page < len(events),
+                        **({"filter": info} if info else {})})
     except SessionLeaseUnavailable:
         return jsonify({"error": "Session registry temporarily unavailable"}), 503
 

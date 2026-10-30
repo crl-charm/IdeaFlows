@@ -9,6 +9,7 @@ from flask import current_app
 from app.dto.serializers import serialize_user
 from app.models import Admin, User
 from app.repositories.admin_repository import AdminRepository, STAFF_RECOVERY_WINDOW
+from app.utils.dates import manila_day_bounds
 
 
 @dataclass(frozen=True)
@@ -121,14 +122,14 @@ class AdminService:
         self.repo.save()
         return {"message": "Staff reactivated."}
 
-    def customer_records(self):
-        sessions = self.repo.list_customer_sessions()
+    def customer_records(self, start=None, end=None, *, page=None, per_page=50):
+        sessions = self.repo.list_customer_sessions(start, end, page=page, per_page=per_page)
         records = []
         for s in sessions:
             ordered_items = []
             for order in s.orders:
                 for item in order.items:
-                    ordered_items.append(f"{item.menu_item.name} x{item.quantity}")
+                    ordered_items.append(f"{item.menu_item.name if item.menu_item else 'Removed menu item'} x{item.quantity}")
             food_only = s.service_mode == "food_only"
             records.append(
                 {
@@ -136,7 +137,9 @@ class AdminService:
                     "name": s.customer_name,
                     "orders": ", ".join(ordered_items) if ordered_items else "No orders",
                     "room": s.space_type.name if s.space_type else "N/A",
-                    "time_in": "Food only" if food_only else (s.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
+                    "visit_date": (s.time_in + timedelta(hours=8)).date().isoformat(),
+                    "service_mode": s.service_mode,
+                    "time_in": (s.time_in + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p"),
                     "time_out": "Food only" if food_only else (
                         (s.time_out + timedelta(hours=8)).strftime("%Y-%m-%d %I:%M %p") if s.time_out else "Active"
                     ),
@@ -144,8 +147,8 @@ class AdminService:
             )
         return records
 
-    def customer_count(self) -> int:
-        return self.repo.count_customer_sessions()
+    def customer_count(self, start=None, end=None) -> int:
+        return self.repo.count_customer_sessions(start, end)
 
     def space_prices(self) -> list[dict[str, Any]]:
         data = []
@@ -163,10 +166,10 @@ class AdminService:
             )
         return data
 
-    def staff_attendance(self):
+    def staff_attendance(self, start=None, end=None):
         self.active_staff_ids()
-        shifts = self.repo.list_staff_shifts()
-        logs = self.repo.list_staff_attendance()
+        shifts = self.repo.list_staff_shifts(start, end)
+        logs = self.repo.list_staff_attendance(start, end)
         manual = [
             {
                 "id": shift.id,
@@ -205,13 +208,18 @@ class AdminService:
             del row["sort_at"]
         return rows
 
-    def staff_attendance_events(self, target_date=None):
+    def staff_attendance_events(self, target_date=None, *, start=None, end=None):
+        if target_date is not None:
+            start, end = manila_day_bounds(target_date)
         events = []
-        for row in self.staff_attendance():
+        for row in self.staff_attendance(start, end):
             for action in ("time_in", "time_out"):
                 at = row[f"{action}_at"]
                 event_date = row[f"{action}_date"]
-                if not at or target_date and event_date != target_date.isoformat():
+                if not at:
+                    continue
+                timestamp = datetime.fromisoformat(at)
+                if (start is not None and timestamp < start) or (end is not None and timestamp >= end):
                     continue
                 events.append({
                     "id": f"{row['source']}:{row['id']}:{action}",

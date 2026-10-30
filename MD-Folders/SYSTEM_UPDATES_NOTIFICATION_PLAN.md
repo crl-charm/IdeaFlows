@@ -1,7 +1,8 @@
 # System Updates icon beside IdeaFlow
 
-**Date:** October 29, 2026  
-**Status:** Implemented and verified on localhost on October 29, 2026, and included in this source release. This feature required no database migration. VPS deployment has not been performed.
+**Updated:** October 30, 2026
+
+**Status:** October 30 dated-patch/history update implemented and verified on localhost, and included in this source release. Not deployed to the VPS. The previous October 29 patch notes are preserved unchanged. No database migration is required.
 
 ## Goal
 
@@ -11,11 +12,12 @@ Keep the first view short. Each update has a title and one-sentence summary; exp
 
 ## Implemented user flow
 
-1. A signed-in admin or staff member sees the bell beside IdeaFlow. A small dot means there are new updates for this account on this browser/device.
-2. Tap the bell to open one **System updates** modal. Show newest updates first, with their release date, title, short summary, and **View details** control.
-3. Expand an update to see **What changed**, **Where to find it**, and **How to use it** in two to four steps.
-4. Tap **Open page** to close the modal and navigate to the relevant page. For a feature inside an existing modal, open its parent page and explain which button to tap; do not trigger a financial or customer action automatically.
-5. Opening the updates list clears the new dot for the visible entries on this browser. The user can reopen and read the history anytime. A later release adds the dot again.
+1. A signed-in admin or staff member sees the bell beside IdeaFlow. A small dot means the latest patch has unread notes for this account on this browser/device.
+2. Tap the bell to open one **System updates** modal. Show only **Latest patch — October 30, 2026** first, with each feature's title, short summary and **View details** control.
+3. Tap **Show All** to see the latest patch followed by **Previous patch — October 29, 2026**, including all previous entries allowed for this role. **Show latest only** hides the history again. Reopening the bell starts with the latest patch.
+4. Expand an update to see **What changed**, **Where to find it**, and **How to use it** in two to four steps.
+5. Tap **Open page** to close the modal and navigate to the relevant page. For a feature inside an existing modal, open its parent page and explain which button to tap; do not trigger a financial or customer action automatically.
+6. Opening the modal marks the latest patch read and clears its dot on this browser. Hidden older notes are marked read only after Show All reveals them. Unread older history does not keep the latest-patch dot lit. A newly published latest patch adds the dot again.
 
 The bell is its own button, outside the IdeaFlow dashboard link. Clicking it must not also navigate to Dashboard.
 
@@ -38,7 +40,17 @@ The bell is its own button, outside the IdeaFlow dashboard link. Clicking it mus
 
 This describes the feature. It contains no actual employee names, pay amounts, customer records, or business totals.
 
-## Initial content to prepare
+## Published patch catalog
+
+### October 30, 2026 — latest local patch
+
+| Update | Audience | Location / usage summary |
+| --- | --- | --- |
+| Customer visits by day or month | Admin | Admin Panel → Customer visits → Today, Yesterday, month/year or Show All. Counts visits, excludes cancelled check-ins, and preserves all history. |
+| Staff Time In/Out by day or month | Admin | Admin Panel → Staff Members → attendance date filters. Current staff account/online/offline counts are unchanged. |
+| Checkout records fit your screen | Admin and staff | Checkout Records → full bill, payment and actions in responsive cards without sideways scrolling. Existing filters, totals and records are preserved. |
+
+### October 29, 2026 — previous patch
 
 Use concise, verified notes for the recent features below. The entries become visible only in an application release that actually contains the feature; a local build must not be described as already deployed to production.
 
@@ -91,7 +103,7 @@ Implementation locations:
 | `app/templates/partials/system_updates.html` | Render the summary list, expandable details, and destination links. |
 | `static/js/system-updates.js` | Open/read-state handling using the current Bootstrap modal and browser storage. Reuse existing navigation conventions. |
 
-Render the role-filtered content with Jinja and ordinary escaped text. Maintain the catalog alongside the feature it documents and review the note before release. A note about a newly changed instruction gets a new ID so it can appear as new again.
+Render the role-filtered content with Jinja and ordinary escaped text. Group by the explicitly saved date, newest first. Format that saved date for display; never derive a patch date from the current clock, file modification time, Git history or build time. A note about a newly changed instruction gets a new ID only when explicitly publishing that note.
 
 Keep read state in browser local storage, scoped to the current account ID and role. It stores only seen update IDs, not credentials or business data. This avoids a database migration for the first version. Read status is independent on another device; clearing browser storage may show the dot again. If storage is unavailable, the list still opens and works.
 
@@ -102,7 +114,7 @@ The current PWA banner in `static/js/pwa-register.js` already handles installing
 1. Admin sees all applicable entries; staff responses omit admin-only entries and destinations. Anonymous/public pages have no internal updates list.
 2. Bell opens the modal without following the brand link. Close, Escape, keyboard navigation, and focus return work.
 3. Summary-first layout and expansion work for every seeded entry; Open page reaches the correct role-specific page and performs no business write.
-4. New dot clears after the list opens, stays cleared on refresh for the same account/browser, and returns when a new allowed update ID is added. Another account on the same device has its own read state.
+4. New dot clears after the latest patch opens, stays cleared on refresh for the same account/browser, and returns when a new allowed latest-patch ID is published. Opening latest does not mark hidden history read; Show All does. Another account on the same device has its own read state.
 5. Blocking local storage does not break the page or modal. Existing pages also load when real-time connectivity is unavailable.
 6. Check 320, 375, 768, and 1366-pixel widths with long titles and expanded instructions. Header actions and modal have no sideways scrolling.
 7. Check regular page loads and existing in-app navigation: one bell, one modal, no duplicate handlers, and the correct account's content after logout/login or Back navigation.
@@ -110,9 +122,9 @@ The current PWA banner in `static/js/pwa-register.js` already handles installing
 
 ## Scope of the local delivery
 
-The local implementation delivers the header bell, shared update modal, six initial notes, and per-account/device new-dot state. Publishing this source release to GitHub does not deploy it to the VPS; production rollout remains a separate requested step.
+The October 30 local update delivers dated latest/history groups, Show All, three new feature notes, the six unchanged October 29 notes, and per-account/device latest-patch read state. Admins receive nine notes in total; staff receive four, including one from the latest patch. Publishing source to GitHub does not deploy it to the VPS; production rollout remains a separate requested step.
 
-## Local verification completed
+## Earlier bell verification (October 29–30)
 
 - **14 automated checks passed**, covering server-side audience filtering, correct role-specific destinations, the real icon markup, anonymous/public pages, account-scoped read state, new note IDs, blocked/corrupt storage, repeated script execution, and adjacent shared-page startup/request behavior.
 - The browser confirmed the real Bootstrap icon font renders, summaries start collapsed, details work with the keyboard, Escape closes the modal, focus returns to the bell, and opening/closing preserves an unsaved form value.
@@ -123,8 +135,16 @@ The local implementation delivers the header bell, shared update modal, six init
 - All browser writes used isolated sample users in an in-memory database. This feature made no changes to business records.
 - **Release verification, October 30:** all 460 distinct cases have passing results across the full regression and affected-suite follow-up runs. This includes rendering PDF templates without a browser request, and customer statement/API privacy independently of admin-only update instructions.
 
+## October 30 dated-patch verification
+
+- **17 automated checks passed** across system updates, staff page startup and shared request handling. The approved October 29 catalog snapshot is unchanged; all patch dates and IDs are explicitly saved.
+- Browser checks confirmed October 30 appears first, Show All reveals October 29, Show latest only hides history, and reopening starts with the latest patch. Read state records only the shown patches, stays account-scoped and survives refresh.
+- Admins receive all nine entries; staff receive four with no admin-only instructions or links. Existing Open page links, account switching, Back navigation, keyboard details, Escape/focus return and an unsaved form value still work.
+- Admin/staff notes fit **320, 375, 768 and 1366-pixel widths** without sideways scrolling. Desktop and phone screenshots were visually inspected, including the latest-first phone view. The real bell font rendered and there were **zero browser page errors**.
+- Tests used isolated sample users and an in-memory database, including blocked browser storage and unavailable real-time connections. No VPS access or production writes were performed. GitHub publication is a separate release step.
+
 ## Maintaining future notes
 
-Add reviewed entries at the top of `SYSTEM_UPDATES` in `app/system_updates.py`, with a new stable ID, release date, short summary, instructions, and explicit role-specific `paths`. Only roles present in `paths` receive that note; the other paths are removed before the template receives it. Instructions are ordinary escaped text.
+Add reviewed entries at the top of `SYSTEM_UPDATES` in `app/system_updates.py` only when a new patch note is explicitly requested for publication, with a new stable ID, fixed release date, short summary, instructions, and explicit role-specific `paths`. Only roles present in `paths` receive that note; the other paths are removed before the template receives it. Instructions are ordinary escaped text.
 
-Ship a feature and its notes together. When instructions change materially, publish a new ID so the new-dot state can draw attention to that change. Read status stays local to each account/browser and does not sync across devices.
+Keep published IDs, dates and wording intact. Routine code edits, tests, server restarts, midnight and builds do not update or generate patch notes. When a new patch is explicitly published, append its dated entries; keep previous patches under Show All. Corrected instructions should be a new entry rather than silently rewriting an older patch. Read status stays local to each account/browser and does not sync across devices.

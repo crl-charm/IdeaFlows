@@ -5,7 +5,10 @@
   modal.dataset.updatesBound = 'true';
   const dot = document.getElementById('systemUpdatesDot');
   const status = document.getElementById('systemUpdatesStatus');
+  const showAll = document.getElementById('systemUpdatesShowAll');
+  const patches = [...modal.querySelectorAll('[data-update-patch]')];
   const ids = [...modal.querySelectorAll('[data-update-id]')].map(entry => entry.dataset.updateId);
+  const latestIds = [...patches[0].querySelectorAll('[data-update-id]')].map(entry => entry.dataset.updateId);
   const key = modal.dataset.readKey;
   let remembered = new Set();
 
@@ -20,16 +23,32 @@
 
   function refreshDot() {
     const seen = seenIds();
-    const unread = ids.some(id => !seen.has(id));
+    const unread = latestIds.some(id => !seen.has(id));
     dot.hidden = !unread;
-    status.textContent = unread ? 'New system updates available.' : 'System updates are up to date.';
+    status.textContent = unread ? 'New patch notes available.' : 'Latest patch notes read.';
   }
 
-  modal.addEventListener('shown.bs.modal', () => {
+  function markSeen(visibleIds) {
     remembered = seenIds();
-    ids.forEach(id => remembered.add(id));
+    visibleIds.forEach(id => remembered.add(id));
     try { localStorage.setItem(key, JSON.stringify([...remembered])); } catch (_) {}
     refreshDot();
+  }
+
+  function showHistory(expanded) {
+    patches.slice(1).forEach(patch => { patch.hidden = !expanded; });
+    if (showAll) {
+      showAll.setAttribute('aria-expanded', String(expanded));
+      showAll.textContent = expanded ? 'Show latest only' : 'Show All';
+    }
+  }
+
+  modal.addEventListener('show.bs.modal', () => showHistory(false));
+  modal.addEventListener('shown.bs.modal', () => markSeen(latestIds));
+  showAll?.addEventListener('click', () => {
+    const expanded = showAll.getAttribute('aria-expanded') !== 'true';
+    showHistory(expanded);
+    if (expanded) markSeen(ids);
   });
   modal.addEventListener('click', event => {
     if (event.target.closest('.system-update-link')) window.bootstrap.Modal.getInstance(modal)?.hide();

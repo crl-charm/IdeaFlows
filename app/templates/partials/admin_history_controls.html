@@ -1,0 +1,21 @@
+<div class="mb-3" data-history-controls="{{ history_kind }}">
+  <p class="form-label small mb-2">{{ 'Customer visit period' if history_kind == 'customer' else 'Staff event period' }} (Asia/Manila)</p>
+  <div class="history-controls">
+    {% for value, label in [('today', 'Today'), ('yesterday', 'Yesterday'), ('all', 'Show All')] %}
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-period="{{ value }}"
+      aria-pressed="{{ 'true' if value == 'today' else 'false' }}"
+      onclick="setHistoryPeriod('{{ history_kind }}', '{{ value }}')">{{ label }}</button>
+    {% endfor %}
+    <div class="history-month-field">
+      <label for="{{ history_kind }}-history-month" class="form-label small mb-1">Month and year</label>
+      <input type="month" id="{{ history_kind }}-history-month" class="form-control"
+        placeholder="YYYY-MM" pattern="[0-9]{4}-[0-9]{2}" aria-describedby="{{ history_kind }}-month-help">
+      <small id="{{ history_kind }}-month-help" class="text-muted d-none">Enter YYYY-MM, for example 2026-09.</small>
+    </div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-period="month"
+      aria-pressed="false" onclick="setHistoryPeriod('{{ history_kind }}', 'month')">View month</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="refreshHistory('{{ history_kind }}')">Refresh / Retry</button>
+  </div>
+  <p id="{{ history_kind }}-history-period" class="small text-muted history-period-label mt-2 mb-1" aria-live="polite">Today</p>
+  <p id="{{ history_kind }}-history-count" class="small text-muted mb-0" aria-live="polite"></p>
+</div>

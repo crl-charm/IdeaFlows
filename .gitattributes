@@ -1,0 +1,4 @@
+# Linux service/script templates must work after a Windows checkout or edit.
+scripts/run_daily_backup.sh text eol=lf
+deploy/ideaflow-daily-backup.service text eol=lf
+deploy/ideaflow-daily-backup.timer text eol=lf

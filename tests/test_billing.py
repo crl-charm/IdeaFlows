@@ -121,7 +121,6 @@ def test_eligible_discount_applies_to_one_unit_and_appears_in_checkout_records(a
         assert record['discount_amount'] == 24
         page = client.get('/checkout-records')
         assert page.status_code == 200
-        assert b'<th>Discount</th>' in page.data
         assert b'checkout-card-label">Discount:' in page.data
 
 

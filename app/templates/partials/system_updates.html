@@ -8,11 +8,23 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close system updates"></button>
       </div>
       <div class="modal-body">
-        <p class="text-muted small mb-3">Recent changes and a quick guide to using them. Choose an update to see the details.</p>
-        {% for update in system_updates %}
+        <p class="text-muted small mb-3">The latest dated patch is shown first. Choose an update for details, or Show All for previous patches.</p>
+        {% set patches = system_updates | groupby('date') | reverse | list %}
+        {% if patches | length > 1 %}
+        <button type="button" id="systemUpdatesShowAll" class="btn btn-outline-secondary btn-sm mb-3"
+                aria-expanded="false" aria-controls="systemUpdatesPatches">Show All</button>
+        {% endif %}
+        <div id="systemUpdatesPatches">
+        {% for patch in patches %}
+        <section data-update-patch="{{ patch.grouper }}" aria-labelledby="systemUpdateDate-{{ patch.grouper }}"
+                 {% if loop.first %}data-latest-patch{% else %}hidden{% endif %}>
+          <h6 id="systemUpdateDate-{{ patch.grouper }}" class="d-flex flex-wrap gap-2 align-items-center mb-3">
+            <span class="badge {{ 'bg-warning text-dark' if loop.first else 'bg-secondary' }}">{{ 'Latest patch' if loop.first else 'Previous patch' }}</span>
+            <time datetime="{{ patch.grouper }}">{{ patch.list[0].date_label }}</time>
+          </h6>
+        {% for update in patch.list %}
         <details class="system-update border rounded-3 p-3 mb-3" data-update-id="{{ update.id }}">
           <summary>
-            <time class="small text-muted d-block mb-1" datetime="{{ update.date }}">{{ update.date }}</time>
             <strong class="d-block mb-1">{{ update.title }}</strong>
             <span class="d-block small text-secondary">{{ update.summary }}</span>
             <span class="system-update-expand d-block small fw-semibold mt-2"><i class="bi bi-chevron-down me-1" aria-hidden="true"></i>View details</span>
@@ -33,6 +45,9 @@
           </div>
         </details>
         {% endfor %}
+        </section>
+        {% endfor %}
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>

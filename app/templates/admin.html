@@ -361,6 +361,14 @@
   }
 
   /* Responsive */
+  .history-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; }
+  .history-controls button { min-height: 40px; }
+  .history-month-field { flex: 1 1 180px; max-width: 240px; min-width: 0; }
+  .history-month-field input { width: 100%; min-width: 0; }
+  .history-period-label { overflow-wrap: anywhere; }
+  #customerRecordsModal .modal-body, #staffAttendanceModal .modal-body { min-width: 0; }
+  .history-table { width: 100%; table-layout: fixed; }
+  .history-table th, .history-table td { overflow-wrap: anywhere; white-space: normal; }
   @media (max-width: 768px) {
     .filter-section {
       flex-direction: column;
@@ -370,6 +378,16 @@
     .filter-section .form-select {
       width: 100%;
     }
+    #customerRecordsModal .modal-body, #staffAttendanceModal .modal-body { padding: 1rem; }
+    .history-table, .history-table tbody, .history-table tr, .history-table td { display: block; width: 100%; }
+    .history-table thead { display: none; }
+    .history-table tr { border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: .75rem; }
+    .history-table td { display: grid; grid-template-columns: minmax(80px, 32%) minmax(0, 1fr); gap: .6rem; padding: .5rem .75rem; border: 0; }
+    .history-table td::before { content: attr(data-label); font-weight: 600; color: #64748b; }
+    .history-table td[colspan] { display: block; }
+    .history-table td[colspan]::before { content: none; }
+    .history-table tr.history-day { border: 0; margin: .5rem 0; }
+    .history-table tr.history-day th { display: block; padding: .5rem 0; }
   }
 </style>
 
@@ -398,15 +416,16 @@
   <div class="row g-3 mb-4">
 
     <div class="col-lg-3 col-md-6">
-      <div class="stat-card" onclick="openCustomerRecords()" style="cursor: pointer;">
+      <div class="stat-card" onclick="openCustomerRecords()" role="button" tabindex="0" onkeydown="if(event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCustomerRecords(); }" aria-label="Open customer visits">
         <div class="stat-icon"><i class="bi bi-people-fill"></i></div>
         <h4 id="total-customers">—</h4>
-        <p>Total Customers</p>
+        <p class="mb-1">Customer visits</p>
+        <small id="customer-period-caption" class="d-block text-muted history-period-label" aria-live="polite">Today · Asia/Manila</small>
       </div>
     </div>
 
     <div class="col-lg-3 col-md-6">
-      <div class="stat-card" onclick="openStaffAttendance()" style="cursor: pointer;">
+      <div class="stat-card" onclick="openStaffAttendance()" role="button" tabindex="0" onkeydown="if(event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openStaffAttendance(); }" aria-label="Open staff Time In/Out">
         <div class="stat-icon"><i class="bi bi-person-badge-fill"></i></div>
         <h4 id="total-staff">—</h4>
         <p>Staff Members</p>
@@ -593,22 +612,25 @@
 </div>
 
 <!-- CUSTOMER RECORDS MODAL -->
-<div class="modal fade" id="customerRecordsModal" tabindex="-1">
+<div class="modal fade" id="customerRecordsModal" tabindex="-1" aria-labelledby="customerRecordsTitle">
   <div class="modal-dialog modal-dialog-centered modal-xl">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-people-fill me-2 text-warning"></i>Customer Records</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="customerRecordsTitle"><i class="bi bi-people-fill me-2 text-warning"></i>Customer Records</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="table-responsive">
-          <table class="modern-table">
+        {% set history_kind = 'customer' %}
+        {% include 'partials/admin_history_controls.html' %}
+        <p class="small text-muted">Each visit counts once. Cancelled check-ins are excluded. Dates use Asia/Manila.</p>
+        <div>
+          <table class="modern-table history-table">
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Order</th>
-                <th>Room</th>
-                <th>Time In</th>
+                <th>Space / Visit</th>
+                <th>Time In / Created</th>
                 <th>Time Out</th>
               </tr>
             </thead>
@@ -619,31 +641,27 @@
             </tbody>
           </table>
         </div>
+        <div id="customer-history-pagination" class="text-center mt-3 d-none">
+          <button type="button" class="btn btn-outline-secondary" onclick="loadCustomerRecords(customerHistory.page + 1)">Load older visits</button>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <!-- STAFF ATTENDANCE MODAL -->
-<div class="modal fade" id="staffAttendanceModal" tabindex="-1">
+<div class="modal fade" id="staffAttendanceModal" tabindex="-1" aria-labelledby="staffAttendanceTitle">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-clock-history me-2 text-warning"></i>Staff Time In/Out</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="staffAttendanceTitle"><i class="bi bi-clock-history me-2 text-warning"></i>Staff Time In/Out</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
-          <div>
-            <label for="staff-attendance-date" class="form-label small mb-1">Event date (Asia/Manila)</label>
-            <input type="date" id="staff-attendance-date" class="form-control" onchange="loadStaffAttendanceData()">
-          </div>
-          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setStaffAttendanceDate(new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date()))">Today</button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setStaffAttendanceDate('')">Show All</button>
-          <small id="staff-attendance-count" class="text-muted ms-auto" aria-live="polite"></small>
-        </div>
-        <div class="table-responsive">
-          <table class="modern-table">
+        {% set history_kind = 'staff' %}
+        {% include 'partials/admin_history_controls.html' %}
+        <div>
+          <table class="modern-table history-table">
             <thead>
               <tr>
                 <th>Event</th>
@@ -661,8 +679,8 @@
             </tbody>
           </table>
         </div>
-        <div id="staff-attendance-pagination" class="text-center mt-3 d-none">
-          <button type="button" class="btn btn-outline-secondary" onclick="loadStaffAttendanceData(staffAttendancePage + 1)">Load older events</button>
+        <div id="staff-history-pagination" class="text-center mt-3 d-none">
+          <button type="button" class="btn btn-outline-secondary" onclick="loadStaffAttendanceData(staffHistory.page + 1)">Load older events</button>
         </div>
       </div>
     </div>
@@ -953,107 +971,153 @@
       });
   }
 
-  function loadCustomerStats() {
-    fetch("/api/admin/customer-count", { credentials: "include" })
-      .then(res => res.json())
-      .then(data => {
-        if (Number.isInteger(data.count)) {
-          document.getElementById("total-customers").textContent = data.count;
-        }
-      })
-      .catch(() => {
-        document.getElementById("total-customers").textContent = "—";
-      });
-  }
+  const customerHistory = {period: 'today', month: null, page: 0, items: [], request: 0};
+  const staffHistory = {period: 'today', month: null, page: 0, items: [], request: 0};
 
-  function openCustomerRecords() {
-    fetch("/api/admin/customer-records", { credentials: "include" })
-      .then(res => res.json())
-      .then(data => {
-        const body = document.getElementById("customer-records-body");
-        if (!Array.isArray(data) || !data.length) {
-          body.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No customer records yet.</td></tr>`;
-        } else {
-          body.innerHTML = data.map(r => `
-        <tr>
-          <td>${escapeHTML(r.name)}</td>
-          <td>${escapeHTML(r.orders)}</td>
-          <td>${escapeHTML(r.room)}</td>
-          <td>${escapeHTML(r.time_in)}</td>
-          <td>${escapeHTML(r.time_out)}</td>
-        </tr>
-      `).join("");
-        }
+  function historyState(kind) { return kind === 'customer' ? customerHistory : staffHistory; }
+  function historyModal(kind) { return document.getElementById(kind === 'customer' ? 'customerRecordsModal' : 'staffAttendanceModal'); }
+  function historyBody(kind) { return document.getElementById(kind === 'customer' ? 'customer-records-body' : 'staff-attendance-body'); }
 
-        new bootstrap.Modal(document.getElementById("customerRecordsModal")).show();
-      })
-      .catch(() => {
-        showToast("Failed to load customer records.", "error");
-      });
-  }
-
-  let staffAttendanceEvents = [];
-  let staffAttendancePage = 0;
-  let staffAttendanceRequest = 0;
-
-  function setStaffAttendanceDate(day) {
-    document.getElementById('staff-attendance-date').value = day;
-    loadStaffAttendanceData();
-  }
-
-  function loadStaffAttendanceData(page = 1) {
-    const requestNumber = ++staffAttendanceRequest;
-    const day = document.getElementById('staff-attendance-date').value;
-    const params = new URLSearchParams({events: '1', page: String(page), per_page: '50'});
-    if (day) params.set('date', day);
-    return fetchJSON(`/api/admin/staff-attendance?${params}`).then(result => {
-      if (requestNumber !== staffAttendanceRequest) return;
-      if (!Array.isArray(result.data)) throw new Error('Invalid attendance response.');
-      staffAttendanceEvents = page === 1 ? result.data : [...staffAttendanceEvents, ...result.data];
-      staffAttendancePage = page;
-      document.getElementById('staff-attendance-count').textContent = `Showing ${staffAttendanceEvents.length} of ${result.total} event(s)`;
-      document.getElementById('staff-attendance-pagination').classList.toggle('d-none', !result.has_next);
-      const body = document.getElementById('staff-attendance-body');
-      if (!staffAttendanceEvents.length) {
-        body.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">No staff events on this date.</td></tr>`;
-        return;
-      }
-      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-      let previousDay = '';
-      body.innerHTML = staffAttendanceEvents.map(event => {
-        let heading = '';
-        if (event.event_date !== previousDay) {
-          previousDay = event.event_date;
-          const [year, month, date] = previousDay.split('-').map(Number);
-          heading = `<tr class="table-light"><th scope="rowgroup" colspan="6">${months[month - 1]} ${date}, ${year}</th></tr>`;
-        }
-        return `${heading}<tr>
-          <td><strong>${escapeHTML(event.event)}</strong></td>
-          <td>${escapeHTML(event.name)}</td>
-          <td>${escapeHTML(event.shift_role)}</td>
-          <td>${escapeHTML(event.time)}</td>
-          <td>${escapeHTML(event.paired_time)}</td>
-          <td>${escapeHTML(event.source)}</td>
-        </tr>`;
-      }).join('');
-    }).catch(error => {
-      if (requestNumber !== staffAttendanceRequest) return;
-      if (page === 1) {
-        staffAttendanceEvents = [];
-        staffAttendancePage = 0;
-        document.getElementById('staff-attendance-count').textContent = 'Could not load events';
-        document.getElementById('staff-attendance-pagination').classList.add('d-none');
-        document.getElementById('staff-attendance-body').innerHTML =
-          `<tr><td colspan="6" class="text-center text-danger py-4">Could not load staff attendance.</td></tr>`;
-      }
-      showToast(error.message || 'Failed to load staff attendance records.', 'error');
+  function setHistoryPeriod(kind, period) {
+    const state = historyState(kind);
+    const monthInput = document.getElementById(`${kind}-history-month`);
+    if (period === 'month' && (!/^\d{4}-\d{2}$/.test(monthInput.value) || !monthInput.checkValidity())) {
+      monthInput.focus();
+      showToast('Choose a month and year, such as 2026-09.', 'error');
+      return;
+    }
+    state.period = period;
+    state.month = period === 'month' ? monthInput.value : null;
+    state.page = 0;
+    state.items = [];
+    window.clearTimeout(state.rollover);
+    document.querySelectorAll(`[data-history-controls="${kind}"] [data-period]`).forEach(button => {
+      const selected = button.dataset.period === period;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', String(selected));
     });
+    document.getElementById(`${kind}-history-period`).textContent = 'Loading selected period…';
+    if (kind === 'customer') {
+      document.getElementById('total-customers').textContent = '—';
+      document.getElementById('customer-period-caption').textContent = 'Loading selected period…';
+    }
+    refreshHistory(kind);
   }
 
+  function historyInfo(kind, info) {
+    const state = historyState(kind);
+    state.info = info;
+    document.getElementById(`${kind}-history-period`).textContent = info.label;
+    const monthInput = document.getElementById(`${kind}-history-month`);
+    monthInput.max = info.current_month;
+    if (!monthInput.value) monthInput.value = info.current_month;
+    if (kind === 'customer') document.getElementById('customer-period-caption').textContent = info.label;
+    window.clearTimeout(state.rollover);
+    if (state.period === 'today' || state.period === 'yesterday' || state.month === info.current_month) {
+      // A relative duration from the server avoids using the device clock/timezone.
+      const delay = Math.max(250, info.next_day_in_seconds * 1000 + 100);
+      state.rollover = window.setTimeout(() => {
+        if (document.contains(historyModal(kind)) && (kind === 'customer' || historyModal(kind).classList.contains('show'))) refreshHistory(kind);
+      }, delay);
+    }
+  }
+
+  function renderHistory(kind) {
+    const state = historyState(kind);
+    const columns = kind === 'customer' ? 5 : 6;
+    if (!state.items.length) {
+      historyBody(kind).innerHTML = `<tr><td colspan="${columns}" class="text-center text-muted py-4">${kind === 'customer' ? 'No visits in this period.' : 'No staff events in this period.'}</td></tr>`;
+      return;
+    }
+    let previousDay = '';
+    historyBody(kind).innerHTML = state.items.map(row => {
+      const day = kind === 'customer' ? row.visit_date : row.event_date;
+      let heading = '';
+      if (day !== previousDay) {
+        previousDay = day;
+        const title = new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric'}).format(new Date(day + 'T00:00:00Z'));
+        heading = `<tr class="history-day table-light"><th scope="rowgroup" colspan="${columns}">${escapeHTML(title)}</th></tr>`;
+      }
+      const values = kind === 'customer'
+        ? [['Name', row.name], ['Order', row.orders], ['Space', row.service_mode === 'food_only' ? 'Food only' : row.room], ['Time In / Created', row.time_in], ['Time Out', row.time_out]]
+        : [['Event', row.event], ['Name', row.name], ['Shift role', row.shift_role], ['Event time', row.time], ['Paired time', row.paired_time], ['Source', row.source]];
+      return heading + '<tr>' + values.map(([label, value]) => `<td data-label="${label}"><span>${escapeHTML(value)}</span></td>`).join('') + '</tr>';
+    }).join('');
+  }
+
+  async function requestHistory(kind, page = null) {
+    const state = historyState(kind);
+    if (!historyModal(kind)) return;
+    const request = ++state.request;
+    if (state.controller) state.controller.abort();
+    state.controller = new AbortController();
+    state.loading = true;
+    const records = page !== null;
+    const pagination = document.getElementById(`${kind}-history-pagination`);
+    pagination.querySelector('button').disabled = true;
+    if (records && page === 1) {
+      state.items = [];
+      state.page = 0;
+      historyBody(kind).innerHTML = `<tr><td colspan="${kind === 'customer' ? 5 : 6}" class="text-center text-muted py-4">Loading…</td></tr>`;
+      pagination.classList.add('d-none');
+    }
+    const params = new URLSearchParams({period: state.period});
+    if (state.month) params.set('month', state.month);
+    if (records) { params.set('page', String(page)); params.set('per_page', '50'); }
+    if (kind === 'staff') params.set('events', '1');
+    const endpoint = kind === 'staff' ? 'staff-attendance' : records ? 'customer-records' : 'customer-count';
+    try {
+      const result = await fetchJSON(`/api/admin/${endpoint}?${params}`, {signal: state.controller.signal, cache: 'no-store'});
+      if (request !== state.request || !historyModal(kind)) return;
+      const total = records ? result.total : result.count;
+      if (!Number.isInteger(total) || total < 0 || !result.filter || typeof result.filter.label !== 'string' || (records && !Array.isArray(result.data))) throw new Error('Invalid history response. Please retry.');
+      const rolled = state.info && state.info.today !== result.filter.today && ['today', 'yesterday'].includes(state.period);
+      historyInfo(kind, result.filter);
+      if (kind === 'customer') document.getElementById('total-customers').textContent = total;
+      if (records) {
+        state.items = page === 1 ? result.data : Array.from(new Map([...state.items, ...result.data].map(row => [row.id, row])).values());
+        state.page = page;
+        document.getElementById(`${kind}-history-count`).textContent = `Showing ${state.items.length} of ${total} ${kind === 'customer' ? 'visit(s)' : 'event(s)'}`;
+        pagination.classList.toggle('d-none', !result.has_next);
+        renderHistory(kind);
+      } else if (rolled && historyModal(kind).classList.contains('show')) {
+        return loadCustomerRecords(1);
+      }
+    } catch (error) {
+      if (request !== state.request || error.name === 'AbortError' || !historyModal(kind)) return;
+      document.getElementById(`${kind}-history-count`).textContent = records && page > 1 ? 'Could not load more records. Please retry.' : 'Could not load this period. Please retry.';
+      if (kind === 'customer' && (!records || page === 1)) {
+        document.getElementById('total-customers').textContent = '—';
+        document.getElementById('customer-period-caption').textContent = 'Could not load selected visits';
+      }
+      if (records && page === 1) historyBody(kind).innerHTML = `<tr><td colspan="${kind === 'customer' ? 5 : 6}" class="text-center text-danger py-4">${error.status === 403 ? 'Admin access is required.' : 'Could not load records. Use Refresh / Retry.'}</td></tr>`;
+    } finally {
+      if (request === state.request) {
+        state.loading = false;
+        pagination.querySelector('button').disabled = false;
+      }
+    }
+  }
+
+  function loadCustomerStats() { return requestHistory('customer'); }
+  function loadCustomerRecords(page = 1) { return requestHistory('customer', page); }
+  function loadStaffAttendanceData(page = 1) { return requestHistory('staff', page); }
+  function refreshHistory(kind) {
+    return kind === 'staff' ? loadStaffAttendanceData() : historyModal(kind).classList.contains('show') ? loadCustomerRecords() : loadCustomerStats();
+  }
+  function openCustomerRecords() {
+    bootstrap.Modal.getOrCreateInstance(historyModal('customer')).show();
+    loadCustomerRecords();
+  }
   function openStaffAttendance() {
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('staffAttendanceModal')).show();
+    bootstrap.Modal.getOrCreateInstance(historyModal('staff')).show();
     loadStaffAttendanceData();
   }
+  ['customer', 'staff'].forEach(kind => {
+    const input = document.getElementById(`${kind}-history-month`);
+    if (input.type !== 'month') document.getElementById(`${kind}-month-help`).classList.remove('d-none');
+    document.querySelector(`[data-history-controls="${kind}"] [data-period="today"]`).classList.add('active');
+  });
 
   function loadCapacity() {
     fetch("/api/admin/space-capacity", { credentials: "include" })
@@ -1414,6 +1478,21 @@
   loadCustomerStats();
   loadCapacity();
   loadSpacePrices();
+  window.createSmartPoller(function () {
+    if (!customerHistory.loading) {
+      if (historyModal('customer').classList.contains('show') && customerHistory.page <= 1) return loadCustomerRecords();
+      return loadCustomerStats();
+    }
+  }, 30000, { runImmediately: false });
+  window.createSmartPoller(function () {
+    if (historyModal('staff').classList.contains('show') && staffHistory.page <= 1 && !staffHistory.loading) return loadStaffAttendanceData();
+  }, 30000, { runImmediately: false });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+      if (historyModal('staff')?.classList.contains('show')) refreshHistory('staff');
+      // The smart customer poller refreshes on return; a rollover resets older pages.
+    }
+  });
   window.createSmartPoller(loadUsers, 30000, { runImmediately: false });
   window.createSmartPoller(function () {
     if (document.getElementById("activeSessionsModal")?.classList.contains("show")) {
@@ -1433,7 +1512,7 @@
 
     // Reload the attendance records in-place if the modal is currently open!
     const modalEl = document.getElementById("staffAttendanceModal");
-    if (modalEl && modalEl.classList.contains("show") && staffAttendancePage <= 1) {
+    if (modalEl && modalEl.classList.contains("show") && staffHistory.page <= 1 && !staffHistory.loading) {
       loadStaffAttendanceData();
     }
   }, 150);

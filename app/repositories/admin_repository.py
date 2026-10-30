@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import selectinload
 
 from app import db
@@ -71,20 +71,30 @@ class AdminRepository:
         for row in StaffAttendance.query.filter_by(user_id=user.id, time_out=None).all():
             row.time_out = ended_at
 
-    def list_customer_sessions(self) -> list[CustomerSession]:
-        return (
-            CustomerSession.query.options(
+    def customer_sessions_query(self, start=None, end=None):
+        query = CustomerSession.query.filter(CustomerSession.status != "cancelled")
+        if start is not None:
+            query = query.filter(CustomerSession.time_in >= start)
+        if end is not None:
+            query = query.filter(CustomerSession.time_in < end)
+        return query
+
+    def list_customer_sessions(self, start=None, end=None, *, page=None, per_page=50) -> list[CustomerSession]:
+        query = (
+            self.customer_sessions_query(start, end).options(
                 selectinload(CustomerSession.orders)
                 .selectinload(Order.items)
                 .selectinload(OrderItem.menu_item),
                 selectinload(CustomerSession.space_type),
             )
-            .order_by(CustomerSession.time_in.desc())
-            .all()
+            .order_by(CustomerSession.time_in.desc(), CustomerSession.id.desc())
         )
+        if page is not None:
+            query = query.limit(per_page).offset((page - 1) * per_page)
+        return query.all()
 
-    def count_customer_sessions(self) -> int:
-        return CustomerSession.query.count()
+    def count_customer_sessions(self, start=None, end=None) -> int:
+        return self.customer_sessions_query(start, end).count()
 
     def list_spaces_with_latest_price_change(self):
         latest_history = (
@@ -106,17 +116,33 @@ class AdminRepository:
             .all()
         )
 
-    def list_staff_attendance(self) -> list[StaffAttendance]:
+    @staticmethod
+    def event_range(query, model, start, end):
+        if start is None and end is None:
+            return query
+        clauses = []
+        for column in (model.time_in, model.time_out):
+            bounds = []
+            if start is not None:
+                bounds.append(column >= start)
+            if end is not None:
+                bounds.append(column < end)
+            clauses.append(and_(*bounds))
+        return query.filter(or_(*clauses))
+
+    def list_staff_attendance(self, start=None, end=None) -> list[StaffAttendance]:
         return (
-            StaffAttendance.query.options(selectinload(StaffAttendance.user))
+            self.event_range(StaffAttendance.query, StaffAttendance, start, end)
+            .options(selectinload(StaffAttendance.user))
             .filter(StaffAttendance.show_in_history.is_(True))
             .order_by(StaffAttendance.time_in.desc())
             .all()
         )
 
-    def list_staff_shifts(self) -> list[StaffShift]:
+    def list_staff_shifts(self, start=None, end=None) -> list[StaffShift]:
         return (
-            StaffShift.query.options(selectinload(StaffShift.user))
+            self.event_range(StaffShift.query, StaffShift, start, end)
+            .options(selectinload(StaffShift.user))
             .order_by(StaffShift.time_in.desc())
             .all()
         )

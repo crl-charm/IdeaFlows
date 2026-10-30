@@ -536,85 +536,37 @@ function loadCheckoutRecords(page = 1) {
       const label   = key === "Unknown" ? "Unknown Date" : checkoutDayLabel(key);
       const records = groups[key];
 
-      // Desktop table view
+      // One complete record layout at every width; no wide/hidden duplicate table.
       html += `
-        <div class="mb-4 d-none d-md-block">
+        <section class="mb-4 checkout-day-group" aria-label="${escapeCheckoutText(label)}">
           <h6 class="text-muted fw-semibold mb-2 border-bottom pb-1">${label}</h6>
-          <div class="card shadow-sm">
-            <div class="table-responsive">
-              <table class="table table-striped mb-0 align-middle">
-                <thead>
-                  <tr>
-                    <th>Customer</th>
-                    <th>Space</th>
-                    <th>Time In</th>
-                    <th>Time Out</th>
-                    <th>Billable time</th>
-                    <th>Time Bill</th>
-                    <th>Food Bill</th>
-                    <th>Discount</th>
-                    <th>Payment</th>
-                    <th>Collected by</th>
-                    <th>Total</th>
-                    <th>Tendered</th>
-                    <th>Change</th>
-                    <th>Status</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${records.map(record => `
-                    <tr class="${record.is_voided ? 'opacity-75 bg-light' : ''}">
-                      <td>${escapeCheckoutText(record.customer_name)}</td>
-                      <td>${escapeCheckoutText(record.space_type)}${record.service_mode === 'food_only' ? ' · Food only' : ''}</td>
-                      <td>${record.service_mode === 'food_only' ? '—' : record.time_in}</td>
-                      <td>${record.service_mode === 'food_only' ? '—' : record.time_out}</td>
-                      <td>${record.service_mode === 'food_only' ? '—' : formatTime(record.seconds_spent)}</td>
-                      <td>${record.service_mode === 'food_only' ? '—' : '₱' + record.time_bill.toFixed(2)}</td>
-                      <td>₱${record.food_bill.toFixed(2)}</td>
-                      <td>${discountLabel(record)}</td>
-                      <td>${paymentBadge(record.payment_method)}</td>
-                      <td>${escapeCheckoutText(record.collected_by || 'Unknown')}${record.recorded_late ? `<br><small>Paid ${escapeCheckoutText(record.paid_at)}<br>Recorded ${escapeCheckoutText(record.recorded_at)}</small>` : ''}</td>
-                      <td>
-                        <strong>₱${record.total_bill.toFixed(2)}</strong>
-                        ${record.credit_applied > 0 ? `<br><small class="text-info">Credit used: ₱${record.credit_applied.toFixed(2)}</small>` : ''}
-                      </td>
-                      <td>${record.payment_method === 'cash' && record.amount_tendered !== null ? '₱' + record.amount_tendered.toFixed(2) : '—'}</td>
-                      <td>${record.payment_method === 'cash' && record.change_given !== null ? '₱' + record.change_given.toFixed(2) : '—'}</td>
-                      <td>${statusBadge(record)}</td>
-                      <td>${renderActions(record)}</td>
-                    </tr>
-                  `).join("")}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      `;
-
-      // Mobile card view
-      html += `
-        <div class="mb-4 d-md-none">
-          <h6 class="text-muted fw-semibold mb-2 border-bottom pb-1">${label}</h6>
-          <div class="d-flex flex-column gap-2">
+          <div class="checkout-record-list">
             ${records.map(record => `
-              <div class="checkout-record-card ${record.is_voided ? 'opacity-75 border-danger-subtle' : ''}">
+              <article class="checkout-record-card ${record.is_voided ? 'opacity-75 border-danger-subtle' : ''}" aria-label="Checkout #${record.transaction_id} for ${escapeCheckoutText(record.customer_name)}">
                 <div class="checkout-card-header">
                   <div>
                     <div class="checkout-card-customer">${escapeCheckoutText(record.customer_name)}</div>
                     <div class="checkout-card-space">${escapeCheckoutText(record.space_type)}${record.service_mode === 'food_only' ? ' · Food only' : ''}</div>
                   </div>
-                  <div class="d-flex flex-column align-items-end gap-1">
+                  <div class="checkout-card-badges">
                     ${paymentBadge(record.payment_method)}
                     ${statusBadge(record)}
                   </div>
                 </div>
                 <div class="checkout-card-body">
                   <div class="checkout-card-row">
-                    <span class="checkout-card-label">Date:</span>
-                    <span class="checkout-card-value">${record.payment_date || record.created_date || '—'}${record.recorded_late ? `<br><small>Recorded ${escapeCheckoutText(record.recorded_at)}</small>` : ''}</span>
+                    <span class="checkout-card-label">Payment date:</span>
+                    <span class="checkout-card-value">${escapeCheckoutText(record.payment_date || record.created_date || '—')}</span>
                   </div>
                   ${record.service_mode === 'food_only' ? '' : `<div class="checkout-card-row">
+                    <span class="checkout-card-label">Time In:</span>
+                    <span class="checkout-card-value">${escapeCheckoutText(record.time_in)}</span>
+                  </div>
+                  <div class="checkout-card-row">
+                    <span class="checkout-card-label">Time Out:</span>
+                    <span class="checkout-card-value">${escapeCheckoutText(record.time_out)}</span>
+                  </div>
+                  <div class="checkout-card-row">
                     <span class="checkout-card-label">Billable time:</span>
                     <span class="checkout-card-value">${formatTime(record.seconds_spent)}</span>
                   </div>
@@ -634,12 +586,19 @@ function loadCheckoutRecords(page = 1) {
                     <span class="checkout-card-label">Collected by:</span>
                     <span class="checkout-card-value">${escapeCheckoutText(record.collected_by || 'Unknown')}</span>
                   </div>
-                  ${record.payment_method === 'cash' && record.amount_tendered !== null ? `
-                  <div class="checkout-card-row text-success">
+                  ${record.recorded_late ? `<div class="checkout-card-row">
+                    <span class="checkout-card-label">Paid at:</span>
+                    <span class="checkout-card-value">${escapeCheckoutText(record.paid_at)}</span>
+                  </div>
+                  <div class="checkout-card-row">
+                    <span class="checkout-card-label">Recorded at:</span>
+                    <span class="checkout-card-value">${escapeCheckoutText(record.recorded_at)}</span>
+                  </div>` : ''}
+                  ${record.payment_method === 'cash' && record.amount_tendered !== null ? `<div class="checkout-card-row text-success">
                     <span class="checkout-card-label">Amount Given:</span>
                     <span class="checkout-card-value fw-semibold">₱${record.amount_tendered.toFixed(2)}</span>
-                  </div>
-                  <div class="checkout-card-row text-success">
+                  </div>` : ''}
+                  ${record.payment_method === 'cash' && record.change_given !== null ? `<div class="checkout-card-row text-success">
                     <span class="checkout-card-label">Change:</span>
                     <span class="checkout-card-value fw-semibold">₱${record.change_given.toFixed(2)}</span>
                   </div>
@@ -650,14 +609,14 @@ function loadCheckoutRecords(page = 1) {
                     <span class="checkout-card-total">₱${record.total_bill.toFixed(2)}</span>
                     ${record.credit_applied > 0 ? `<div class="text-info small">Credit used: ₱${record.credit_applied.toFixed(2)}</div>` : ''}
                   </div>
-                  <div>
+                  <div class="checkout-card-actions">
                     ${renderActions(record)}
                   </div>
                 </div>
-              </div>
+              </article>
             `).join("")}
           </div>
-        </div>
+        </section>
       `;
     }
 

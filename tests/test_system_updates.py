@@ -1,4 +1,7 @@
-"""Update notes use the shared role-aware header and harmless per-browser read state."""
+"""Fixed dated patches, role-aware history and harmless per-browser read state."""
+from datetime import date
+import hashlib
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import shutil
@@ -18,7 +21,7 @@ def app():
     return app
 
 
-@pytest.mark.parametrize("role,user_id,count", [("admin", 1, 6), ("staff", 1, 3), ("customer", 1, 0), ("admin", None, 0)])
+@pytest.mark.parametrize("role,user_id,count", [("admin", 1, 9), ("staff", 1, 4), ("customer", 1, 0), ("admin", None, 0)])
 def test_header_filters_notes_before_rendering_and_uses_real_bell(app, role, user_id, count):
     with app.test_request_context("/dashboard"):
         session.update(role=role, user_id=user_id)
@@ -32,6 +35,8 @@ def test_header_filters_notes_before_rendering_and_uses_real_bell(app, role, use
     if role != "admin" or not user_id:
         assert "Monthly accountant PDF" not in html
         assert "salary-expenses" not in html
+        assert "2026-10-30-customer-visit-filters" not in html
+        assert "2026-10-30-staff-attendance-filters" not in html
         assert 'href="/admin/reports?view=' not in html
     if role == "staff":
         assert 'href="/expenses-view"' in html and 'href="/admin/expenses"' not in html
@@ -40,6 +45,46 @@ def test_header_filters_notes_before_rendering_and_uses_real_bell(app, role, use
 def test_rendering_without_http_request_does_not_require_a_browser_session(app):
     with app.app_context():
         assert render_template_string("{{ system_updates|length }}") == "0"
+
+
+def test_published_dates_and_previous_patch_stay_fixed():
+    # Approved October 29 notes stay intact when later patches or code edits ship.
+    previous = [entry for entry in SYSTEM_UPDATES if entry["date"] == "2026-10-29"]
+    assert hashlib.sha256(json.dumps(previous, sort_keys=True).encode()).hexdigest() == (
+        "f00f5c98928b3cabc52f4b1b57bdea9c842e13f1d6390e88fb285052ab74cc32"
+    )
+    for entry in SYSTEM_UPDATES:
+        assert entry["id"].startswith(entry["date"] + "-")
+        assert date.fromisoformat(entry["date"]).isoformat() == entry["date"]
+    assert max(entry["date"] for entry in SYSTEM_UPDATES) == "2026-10-30"
+
+
+@pytest.mark.parametrize("role", ["admin", "staff"])
+def test_latest_patch_is_first_and_previous_patch_is_in_hidden_history(app, role):
+    class PatchParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.patches = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "section" and "data-update-patch" in attrs:
+                self.patches.append(attrs)
+
+    with app.test_request_context("/dashboard"):
+        session.update(role=role, user_id=1)
+        html = render_template("layout.html")
+    markup = PatchParser()
+    markup.feed(html)
+    latest, previous = markup.patches
+    assert latest["data-update-patch"] == "2026-10-30"
+    assert "data-latest-patch" in latest and "hidden" not in latest
+    assert previous["data-update-patch"] == "2026-10-29" and "hidden" in previous
+    assert '<time datetime="2026-10-30">October 30, 2026</time>' in html
+    assert '<time datetime="2026-10-29">October 29, 2026</time>' in html
+    assert 'aria-controls="systemUpdatesPatches">Show All</button>' in html
+    # The catalog is copied for rendering; role links/date labels do not rewrite it.
+    assert all("paths" in entry and "url" not in entry and "date_label" not in entry for entry in SYSTEM_UPDATES)
 
 
 def test_catalog_links_work_for_the_intended_role_and_public_pages_stay_public(app):
@@ -67,39 +112,62 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const source = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 const saved = new Map();
-function page(account, ids, blocked=false) {
+function page(account, latestIds, olderIds=[], blocked=false) {
   const handlers = {}, windowHandlers = {}, dot = {hidden:true}, status = {textContent:''};
+  const buttonHandlers = {}, attrs = {'aria-expanded':'false'};
+  const entries = ids => ids.map(id=>({dataset:{updateId:id}}));
+  const patches = [{querySelectorAll:()=>entries(latestIds),hidden:false}];
+  if(olderIds.length)patches.push({querySelectorAll:()=>entries(olderIds),hidden:true});
+  const showAll = olderIds.length ? {textContent:'Show All',
+    setAttribute:(name,value)=>{attrs[name]=value;},getAttribute:name=>attrs[name],
+    addEventListener:(event,fn)=>{assert(!buttonHandlers[event]);buttonHandlers[event]=fn;}} : null;
   let hidden = 0;
   const modal = {dataset:{readKey:`ideaflow:updates:seen:${account}`},
-    querySelectorAll:() => ids.map(id=>({dataset:{updateId:id}})),
+    querySelectorAll:selector => selector==='[data-update-patch]' ? patches : entries([...latestIds,...olderIds]),
     addEventListener:(event,fn)=>{assert(!handlers[event]);handlers[event]=fn;}};
-  const document = {getElementById:id=>({systemUpdatesModal:modal,systemUpdatesDot:dot,systemUpdatesStatus:status}[id])};
+  const document = {getElementById:id=>({systemUpdatesModal:modal,systemUpdatesDot:dot,systemUpdatesStatus:status,systemUpdatesShowAll:showAll}[id])};
   const localStorage = {getItem:key=>{if(blocked)throw Error('Blocked');return saved.get(key)||null;},
     setItem:(key,value)=>{if(blocked)throw Error('Blocked');saved.set(key,value);}};
   const window = {addEventListener:(event,fn)=>{assert(!windowHandlers[event]);windowHandlers[event]=fn;},
     bootstrap:{Modal:{getInstance:()=>({hide:()=>{hidden++;}})}}};
   const context = vm.createContext({document,window,localStorage});
   vm.runInContext(source,context);
-  return {dot,status,modal,handlers,windowHandlers,context,hidden:()=>hidden};
+  return {dot,status,modal,handlers,windowHandlers,context,showAll,patches,buttonHandlers,hidden:()=>hidden};
 }
-const first = page('1:admin',['a','b']);
+const first = page('1:admin',['a','b'],['old']);
 assert.equal(first.dot.hidden,false);
+first.handlers['show.bs.modal']();
 first.handlers['shown.bs.modal']();
 assert.equal(first.dot.hidden,true);
+assert.equal(first.patches[1].hidden,true);
 assert.deepEqual(JSON.parse(saved.get(first.modal.dataset.readKey)),['a','b']);
-assert.equal(page('1:admin',['a','b']).dot.hidden,true);
-assert.equal(page('1:admin',['a','b','c']).dot.hidden,false);
+assert.equal(page('1:admin',['a','b'],['old']).dot.hidden,true);
+assert.equal(page('1:admin',['a','b','c'],['old']).dot.hidden,false);
 assert.equal(page('2:admin',['a','b']).dot.hidden,false);
 assert.equal(page('1:staff',['a','b']).dot.hidden,false);
+first.buttonHandlers.click();
+assert.equal(first.patches[1].hidden,false);
+assert.equal(first.showAll.getAttribute('aria-expanded'),'true');
+assert.equal(first.showAll.textContent,'Show latest only');
+assert.deepEqual(JSON.parse(saved.get(first.modal.dataset.readKey)),['a','b','old']);
+first.buttonHandlers.click();
+assert.equal(first.patches[1].hidden,true);
+assert.equal(first.showAll.textContent,'Show All');
+first.buttonHandlers.click();
+first.handlers['show.bs.modal']();
+assert.equal(first.patches[1].hidden,true);
+assert.equal(first.showAll.getAttribute('aria-expanded'),'false');
 vm.runInContext(source,first.context);
 first.handlers.click({target:{closest:()=>true}});
 assert.equal(first.hidden(),1);
-const blocked = page('blocked:staff',['a'],true);
+const blocked = page('blocked:staff',['a'],['old'],true);
 assert.equal(blocked.dot.hidden,false);
 blocked.handlers['shown.bs.modal']();
 assert.equal(blocked.dot.hidden,true);
 blocked.windowHandlers.pageshow();
 assert.equal(blocked.dot.hidden,true);
+blocked.buttonHandlers.click();
+assert.equal(blocked.patches[1].hidden,false);
 saved.set('ideaflow:updates:seen:bad:staff','{bad json');
 assert.equal(page('bad:staff',['a']).dot.hidden,false);
 const concurrent = page('3:staff',['a']);

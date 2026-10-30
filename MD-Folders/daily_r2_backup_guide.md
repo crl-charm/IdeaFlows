@@ -1,8 +1,8 @@
 # Daily Cloudflare R2 Backup Guide
 
-**Updated:** October 27, 2026 (Asia/Manila).
+**Updated:** October 30, 2026 (Asia/Manila).
 
-**Current method:** manual backup through the VPS SSH terminal. The upload helper is interactive. Midnight scheduling, credentials loaded from `backup.env`, and Telegram alerts remain planned, not enabled by this procedure.
+**Current VPS method:** manual backup through the VPS SSH terminal. The deployed helper remains interactive until the new release is deployed. Unattended backups and the daily 11:30 p.m. timer are implemented locally but need separate VPS setup and validation. Telegram alerts are deferred.
 
 ## Latest verified backup — October 27, 2026
 
@@ -136,6 +136,8 @@ You can also open Cloudflare → **R2 object storage** → **ideaflow-backups** 
 
 A downloaded checksum comparison or an isolated MySQL restore is additional verification. Neither is implied by the current size-check message. Never test a restore by importing over the live `pos_db` database.
 
+After the new local uploader is deployed, it also prints `SHA-256 matched`, reads the remote file bytes back, and publishes `manifest.json` last. Its normal manual prompts stay available. That stronger verification still does not replace an isolated restore test; historical backups made with the older deployed helper were checked by size only.
+
 ### 7. Record the result and retain the local copy
 
 Record the date, prefix, byte sizes, local SHA-256 values, diagnostic counts, final upload status, and whether any download/restore test was performed. Do not record secret values or customer rows.
@@ -173,6 +175,6 @@ This assignment does not create or overwrite files. For an upload retry, use ste
 
 The deployed helper used here prompts interactively for R2 credentials. Merely writing `/etc/ideaflow/backup.env` does not make this current script unattended or create a schedule.
 
-The proposed **12:00 a.m. Asia/Manila** schedule, unattended credentials, stronger upload verification, and Telegram alerts are documented in [Daily R2 Backup Automation Plan](DAILY_R2_BACKUP_AUTOMATION.md). They need implementation, testing, and explicit VPS enablement before being described as active.
+The **11:30 p.m. Asia/Manila** schedule, unattended credentials, and stronger upload verification are implemented locally as described in [Daily R2 Backup Automation](DAILY_R2_BACKUP_AUTOMATION.md). Normal runs start and are dated on the same business day. Follow the [VPS setup and acceptance checks](DAILY_R2_BACKUP_SETUP.md) before enabling it; it is not active just because the files exist. Telegram alerts and independent missed-run monitoring are deferred.
 
 Related operational references: [Owner Maintenance Runbook](OWNER_MAINTENANCE_RUNBOOK.md) and [VPS Deployment Guide](VPS_DEPLOY_GUIDE.md). Use this guide for the verified manual backup flow; use deployment instructions only when a deployment is separately requested.
